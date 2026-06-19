@@ -6,8 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist/index.js",
-    "dist/index.d.ts",
+    "dist",
     "package.json"
   ],
   "scripts": {
@@ -15,7 +14,15 @@
     "dev": "tsc --watch",
     "test": "node test/run-tests.js"
   },
-  "keywords": ["uv", "unwrap", "texture", "three.js", "blender", "lscm", "abf"],
+  "keywords": [
+    "uv",
+    "unwrap",
+    "texture",
+    "three.js",
+    "blender",
+    "lscm",
+    "abf"
+  ],
   "license": "MIT",
   "peerDependencies": {
     "three": ">=0.128.0"
@@ -24,5 +31,15 @@
     "@types/three": "^0.156.0",
     "three": "^0.156.0",
     "typescript": "^5.3.0"
+  },
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-uv-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

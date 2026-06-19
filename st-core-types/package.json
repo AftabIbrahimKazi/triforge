@@ -11,7 +11,10 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist", "package.json"],
+  "files": [
+    "dist",
+    "package.json"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "node test/run-tests.js"
@@ -24,5 +27,15 @@
   "peerDependencies": {
     "three": ">=0.159.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-core-types"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
+  }
 }

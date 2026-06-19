@@ -6,8 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist/index.js",
-    "dist/index.d.ts",
+    "dist",
     "package.json"
   ],
   "scripts": {
@@ -34,5 +33,15 @@
   "dependencies": {
     "three-bvh-csg": "^0.0.18",
     "three-mesh-bvh": "^0.9.10"
+  },
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-modifier-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -18,5 +18,19 @@
     "@types/three": "^0.165.0",
     "three": "^0.165.0",
     "typescript": "^5.3.0"
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-metaball-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

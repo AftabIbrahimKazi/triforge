@@ -6,11 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist/index.js",
-    "dist/index.d.ts",
-    "package.json",
-    "README.md",
-    "LICENSE"
+    "dist",
+    "package.json"
   ],
   "scripts": {
     "build": "tsc && esbuild src/index.ts --bundle --format=esm --external:three --outfile=dist/bundle.js",
@@ -24,7 +21,7 @@
     "materials",
     "blender"
   ],
-  "author": "",
+  "author": "Aftab Ibrahim Kazi",
   "license": "MIT",
   "peerDependencies": {
     "three": ">=0.128.0"
@@ -34,5 +31,14 @@
     "esbuild": "^0.28.0",
     "three": "^0.156.0",
     "typescript": "^5.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-shader-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

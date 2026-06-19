@@ -6,17 +6,15 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist/index.js",
-    "dist/index.d.ts",
-    "package.json",
-    "LICENSE"
+    "dist",
+    "package.json"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "node test/run-tests.js"
   },
-  "author": "",
+  "author": "Aftab Ibrahim Kazi",
   "license": "MIT",
   "peerDependencies": {
     "three": ">=0.159.0",
@@ -27,5 +25,14 @@
     "@types/three": "^0.165.0",
     "three": "^0.165.0",
     "typescript": "^5.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-pathtracer-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

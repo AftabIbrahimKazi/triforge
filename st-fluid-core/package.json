@@ -6,8 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist/index.js",
-    "dist/index.d.ts",
+    "dist",
     "package.json"
   ],
   "scripts": {
@@ -38,5 +37,15 @@
   },
   "dependencies": {
     "conjugate-gradient": "^0.0.2"
+  },
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-fluid-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

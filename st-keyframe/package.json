@@ -6,8 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist/index.js",
-    "dist/index.d.ts",
+    "dist",
     "package.json"
   ],
   "scripts": {
@@ -16,9 +15,25 @@
     "test": "node test/run-tests.js",
     "bench": "node bench/run-bench.js"
   },
-  "keywords": ["keyframe", "animation", "three.js", "blender", "tween"],
+  "keywords": [
+    "keyframe",
+    "animation",
+    "three.js",
+    "blender",
+    "tween"
+  ],
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.3.0"
+  },
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-keyframe"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }
