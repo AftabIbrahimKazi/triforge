@@ -1,5 +1,5 @@
 {
-  "name": "@st-core-types",
+  "name": "@triforge/core-types",
   "version": "0.1.0",
   "description": "Shared TypeScript interfaces for the st- Three.js ecosystem",
   "type": "module",

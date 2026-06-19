@@ -1,5 +1,5 @@
 {
-  "name": "@st-particle-core",
+  "name": "@triforge/particle-core",
   "version": "0.1.0",
   "description": "Blender-matched particle system for Three.js — Newtonian physics, force fields, emitters, render modes",
   "type": "module",

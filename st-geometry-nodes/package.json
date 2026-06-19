@@ -1,5 +1,5 @@
 {
-  "name": "@st-geometry-nodes",
+  "name": "@triforge/geometry-nodes",
   "version": "0.1.0",
   "description": "Blender Geometry Nodes-style procedural geometry graph for Three.js",
   "type": "module",

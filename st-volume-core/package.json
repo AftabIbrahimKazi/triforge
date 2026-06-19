@@ -1,5 +1,5 @@
 {
-  "name": "@st-volume-core",
+  "name": "@triforge/volume-core",
   "version": "0.1.0",
   "description": "Volumetric fog, smoke and fire rendering for Three.js — Blender Volume shaders",
   "type": "module",

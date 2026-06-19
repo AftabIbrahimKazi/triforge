@@ -1,5 +1,5 @@
 {
-  "name": "@st-animation-core",
+  "name": "@triforge/animation-core",
   "version": "0.1.0",
   "description": "Blender-matched shape keys, armature/bones, and NLA animation for Three.js",
   "type": "module",

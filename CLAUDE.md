@@ -25,11 +25,11 @@ addons/st-addon-human  ✓  — parametric human generator (HumanGenerator)
 #### Non-Negotiable Addon Rules
 
 **1 — Three.js is the only hard dependency.**
-Every addon must work with `npm install three @st-addon-*` alone.
+Every addon must work with `npm install three @triforge/addon-*` alone.
 No core ST package may be a required dependency of an addon.
 
 **2 — Every feature that uses a core package must ship a built-in fallback.**
-If a feature is enhanced by `@st-shader-core`, `@st-geometry-nodes`, etc.,
+If a feature is enhanced by `@triforge/shader-core`, `@triforge/geometry-nodes`, etc.,
 the addon must also contain a self-contained Three.js implementation of that feature.
 The core package version is the upgrade path, never the only path.
 
@@ -43,7 +43,7 @@ This keeps the dependency graph explicit and bundler-friendly.
 const human = new HumanGenerator({ shaderCore: ShaderCore })
 
 // WRONG — hidden runtime dependency
-const sc = await import('@st-shader-core')  // never do this inside an addon
+const sc = await import('@triforge/shader-core')  // never do this inside an addon
 ```
 
 **4 — Core packages go in `optionalDependencies` in package.json, not `peerDependencies`.**
@@ -52,7 +52,7 @@ install warnings when absent.
 
 **5 — The public API must be identical regardless of which path is active.**
 Swapping in a core package must never change method signatures or the `parameters` shape.
-A developer should be able to add `@st-shader-core` later without touching any other code.
+A developer should be able to add `@triforge/shader-core` later without touching any other code.
 
 ```
 st-geometry-nodes  ✓  — procedural geometry node graph (Blender Geometry Nodes)

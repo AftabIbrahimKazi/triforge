@@ -1,5 +1,5 @@
 {
-  "name": "@st-pathtracer-core",
+  "name": "@triforge/pathtracer-core",
   "version": "0.1.0",
   "description": "Path-tracer renderer for the three-js ecosystem — toggle between rasterizer and WebGPU path tracing",
   "type": "module",

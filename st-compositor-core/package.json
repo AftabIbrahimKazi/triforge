@@ -1,5 +1,5 @@
 {
-  "name": "@st-compositor-core",
+  "name": "@triforge/compositor-core",
   "version": "0.1.0",
   "description": "Blender-matched compositor node graph for Three.js — backend-agnostic (three/addons or pmndrs/postprocessing)",
   "type": "module",

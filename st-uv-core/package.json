@@ -1,5 +1,5 @@
 {
-  "name": "@st-uv-core",
+  "name": "@triforge/uv-core",
   "version": "0.1.0",
   "description": "Blender-matched UV unwrapping algorithms for Three.js BufferGeometry",
   "type": "module",

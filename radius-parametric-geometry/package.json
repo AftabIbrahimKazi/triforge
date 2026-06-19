@@ -1,5 +1,5 @@
 {
-  "name": "@three-radius-parametric",
+  "name": "@triforge/radius-parametric-geometry",
   "version": "0.1.0",
   "description": "Parametric geometry for Three.js - 90.6% triangle reduction",
   "type": "module",

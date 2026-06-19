@@ -1,5 +1,5 @@
 {
-  "name": "@st-metaball-core",
+  "name": "@triforge/metaball-core",
   "version": "0.1.0",
   "description": "Blender-style metaball system for Three.js — organic blobs with live field evaluation",
   "type": "module",

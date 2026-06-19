@@ -1,5 +1,5 @@
 {
-  "name": "@st-physics-core",
+  "name": "@triforge/physics-core",
   "version": "0.1.0",
   "description": "Blender-matched cloth simulation with Verlet integration, spring constraints, and colliders for Three.js",
   "type": "module",

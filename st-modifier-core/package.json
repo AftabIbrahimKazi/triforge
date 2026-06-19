@@ -1,5 +1,5 @@
 {
-  "name": "@st-modifier-core",
+  "name": "@triforge/modifier-core",
   "version": "0.1.0",
   "description": "Blender-matched non-destructive geometry modifier stack for Three.js",
   "type": "module",

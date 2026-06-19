@@ -1,5 +1,5 @@
 {
-  "name": "@st-fluid-core",
+  "name": "@triforge/fluid-core",
   "version": "0.1.0",
   "description": "SPH fluid simulation for Three.js — Blender-matched particle fluid",
   "type": "module",

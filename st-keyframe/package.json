@@ -1,5 +1,5 @@
 {
-  "name": "@st-keyframe",
+  "name": "@triforge/keyframe",
   "version": "0.1.0",
   "description": "Blender-matched keyframe animation driver for Three.js ecosystem parameters",
   "type": "module",

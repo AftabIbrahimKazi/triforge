@@ -1,5 +1,5 @@
 {
-  "name": "@st-hair-core",
+  "name": "@triforge/hair-core",
   "version": "0.1.0",
   "description": "Hair and fur strand rendering for Three.js — Blender Hair Particle System",
   "type": "module",

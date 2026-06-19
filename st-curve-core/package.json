@@ -1,5 +1,5 @@
 {
-  "name": "@st-curve-core",
+  "name": "@triforge/curve-core",
   "version": "0.1.0",
   "description": "Blender-matched Bezier/NURBS/Catmull-Rom curves with tube, bevel, and path-follow for Three.js",
   "type": "module",
