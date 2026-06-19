@@ -1,0 +1,527 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>@st-particle-core — Example</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #06080f; overflow: hidden; font: 12px/1.5 monospace; color: #ccc; }
+  canvas { display: block; }
+
+  /* ── HUD ─────────────────────────────────────────────────────────────── */
+  #hud {
+    position: fixed; top: 14px; left: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    z-index: 10; pointer-events: none;
+  }
+  .hud-box {
+    background: rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px; padding: 10px 14px; pointer-events: all;
+    backdrop-filter: blur(8px);
+  }
+  .hud-title {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: rgba(255,255,255,0.35); margin-bottom: 8px;
+  }
+  .hud-row {
+    display: grid; grid-template-columns: 110px 120px 38px;
+    align-items: center; gap: 6px; margin: 4px 0;
+  }
+  .hud-row label { font-size: 10px; color: rgba(255,255,255,0.5); }
+  .hud-row input[type=range] {
+    -webkit-appearance: none; width: 100%; height: 3px;
+    background: rgba(255,255,255,0.15); border-radius: 2px; outline: none;
+  }
+  .hud-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%;
+    background: #4a9eff; border: 2px solid rgba(255,255,255,0.5); cursor: pointer;
+  }
+  .hud-row .v { font-size: 10px; color: #fff; text-align: right; }
+
+  /* ── Tabs ─────────────────────────────────────────────────────────────── */
+  #tabs {
+    position: fixed; top: 14px; right: 14px;
+    display: flex; flex-direction: column; gap: 6px; z-index: 10;
+  }
+  .tab-btn {
+    background: rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 5px; color: rgba(255,255,255,0.45);
+    font: 600 10px/1 monospace; letter-spacing: .1em; padding: 8px 14px;
+    cursor: pointer; text-align: left; transition: all .15s;
+  }
+  .tab-btn:hover   { color: #fff; border-color: rgba(255,255,255,0.25); }
+  .tab-btn.active  { color: #4a9eff; border-color: #4a9eff; background: rgba(74,158,255,.1); }
+
+  /* ── Stats ────────────────────────────────────────────────────────────── */
+  #stats {
+    position: fixed; bottom: 14px; left: 14px;
+    font-size: 10px; color: rgba(255,255,255,0.25);
+    letter-spacing: .06em; z-index: 10; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <!-- box populated by active demo -->
+</div>
+
+<div id="tabs">
+  <div style="font-size:9px;letter-spacing:.12em;color:rgba(255,255,255,.25);margin-bottom:2px;">DEMOS</div>
+  <button class="tab-btn active" data-demo="fountain">① Fountain</button>
+  <button class="tab-btn"        data-demo="orbit">② Vortex Orbit</button>
+  <button class="tab-btn"        data-demo="surface">③ Mesh Surface</button>
+  <button class="tab-btn"        data-demo="wind">④ Wind + Turbulence</button>
+</div>
+
+<div id="stats"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":      "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core":  "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  ParticleSystem,
+  PointEmitter, MeshEmitter,
+  GravityForce, WindForce, VortexForce, TurbulenceForce, DragForce, HarmonicForce,
+  BillboardRenderer, LineRenderer,
+} from '@st-particle-core';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDERER / SCENE
+// ─────────────────────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x06080f);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(0, 8, 22);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 3, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+
+// Subtle grid for spatial reference
+const grid = new THREE.GridHelper(40, 40, 0x111122, 0x111122);
+scene.add(grid);
+
+// Ambient fill
+scene.add(new THREE.AmbientLight(0x223366, 2));
+const sun = new THREE.DirectionalLight(0xffeedd, 3);
+sun.position.set(5, 10, 5);
+scene.add(sun);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPRITE TEXTURE  — soft white circle, generated on canvas (no file needed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeSprite(size = 64) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const r = size / 2;
+  const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+  grad.addColorStop(0,   'rgba(255,255,255,1)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.8)');
+  grad.addColorStop(1,   'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+const sprite = makeSprite(64);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEMO DEFINITIONS
+// Each demo creates a ParticleSystem, adds it to the scene, returns cleanup fn.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── ① Fountain ───────────────────────────────────────────────────────────────
+// PointEmitter shooting upward · GravityForce · DragForce · BillboardRenderer
+function makeFountain() {
+  const sys = new ParticleSystem({
+    count: 800, start: 0, end: 999,
+    lifetime: 2.2, lifetimeRandom: 0.3,
+    size: 0.25, sizeRandom: 0.4,
+    gravity: 0,   // we add our own GravityForce
+    drag: 0,
+    physics: 'newtonian', seed: 42,
+  });
+
+  const emitter = new PointEmitter({
+    position: { x: 0, y: 0, z: 0 },
+    normalVelocity: 6,
+    randomVelocity: 2.5,
+  });
+
+  const gravity   = new GravityForce(9.81);
+  const drag      = new DragForce({ linear: 0.4 });
+
+  const billboardRender = new BillboardRenderer({
+    maxCount: 800, map: sprite,
+    color: 0x88ccff, opacity: 0.85,
+    additive: true, fadeOut: true, sizeAttenuation: true,
+  });
+
+  sys.addEmitter(emitter).addForce(gravity).addForce(drag).setRenderer(billboardRender);
+  scene.add(billboardRender.object3D);
+
+  // emitter origin indicator
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.18, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0x4488ff, emissive: 0x2244aa }),
+  );
+  scene.add(marker);
+
+  return {
+    system: sys,
+    label: 'Fountain',
+    cleanup: () => {
+      scene.remove(billboardRender.object3D);
+      scene.remove(marker);
+      billboardRender.dispose();
+    },
+    buildUI: () => `
+      <div class="hud-title">① Fountain — PointEmitter + GravityForce + DragForce</div>
+      <div class="hud-row"><label>Count</label>        <input type="range" id="u-count" min="100" max="2000" step="50"  value="800">  <span class="v" id="uv-count">800</span></div>
+      <div class="hud-row"><label>Lifetime</label>     <input type="range" id="u-life"  min="0.5" max="6"    step="0.1"  value="2.2">  <span class="v" id="uv-life">2.2</span></div>
+      <div class="hud-row"><label>Shoot Speed</label>  <input type="range" id="u-vel"   min="0"   max="15"   step="0.5"  value="6">    <span class="v" id="uv-vel">6</span></div>
+      <div class="hud-row"><label>Random Vel</label>   <input type="range" id="u-rvel"  min="0"   max="8"    step="0.25" value="2.5">  <span class="v" id="uv-rvel">2.5</span></div>
+      <div class="hud-row"><label>Gravity</label>      <input type="range" id="u-grav"  min="0"   max="20"   step="0.5"  value="9.81"> <span class="v" id="uv-grav">9.81</span></div>
+      <div class="hud-row"><label>Air Drag</label>     <input type="range" id="u-drag"  min="0"   max="2"    step="0.05" value="0.4">  <span class="v" id="uv-drag">0.4</span></div>
+      <div class="hud-row"><label>Size</label>         <input type="range" id="u-size"  min="0.05" max="1"   step="0.05" value="0.25"> <span class="v" id="uv-size">0.25</span></div>
+    `,
+    bindUI: () => {
+      const sl = (id, valId, onChange) => {
+        const el = document.getElementById(id);
+        const vl = document.getElementById(valId);
+        el.addEventListener('input', () => { const v = parseFloat(el.value); vl.textContent = String(v); onChange(v); });
+      };
+      sl('u-count', 'uv-count', v => { sys.parameters.count = v; sys.reset(); });
+      sl('u-life',  'uv-life',  v => { sys.parameters.lifetime = v; });
+      sl('u-vel',   'uv-vel',   v => { emitter.parameters.normalVelocity = v; });
+      sl('u-rvel',  'uv-rvel',  v => { emitter.parameters.randomVelocity = v; });
+      sl('u-grav',  'uv-grav',  v => { gravity.parameters.strength = v; });
+      sl('u-drag',  'uv-drag',  v => { drag.parameters.linear = v; });
+      sl('u-size',  'uv-size',  v => { sys.parameters.size = v; });
+    },
+  };
+}
+
+// ── ② Vortex Orbit ───────────────────────────────────────────────────────────
+// PointEmitter · VortexForce · HarmonicForce · LineRenderer
+function makeOrbit() {
+  const sys = new ParticleSystem({
+    count: 600, start: 0, end: 999,
+    lifetime: 3, lifetimeRandom: 0.5,
+    size: 0.12, physics: 'newtonian',
+    gravity: 0, drag: 0, seed: 7,
+  });
+
+  const emitter = new PointEmitter({
+    position: { x: 0, y: 4, z: 0 },
+    randomVelocity: 3,
+  });
+
+  const vortex   = new VortexForce({ strength: 4, axisX: 0, axisY: 1, axisZ: 0 });
+  const harmonic = new HarmonicForce({ strength: 1.5, damping: 0.2, x: 0, y: 4, z: 0 });
+  const drag     = new DragForce({ linear: 0.15 });
+
+  const lineRender = new LineRenderer({
+    maxCount: 600, color: 0xaa66ff, lengthScale: 0.2,
+  });
+
+  sys.addEmitter(emitter).addForce(vortex).addForce(harmonic).addForce(drag).setRenderer(lineRender);
+  scene.add(lineRender.object3D);
+
+  // Axis marker
+  const axisLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 8, 0)]),
+    new THREE.LineBasicMaterial({ color: 0x444466 }),
+  );
+  scene.add(axisLine);
+
+  return {
+    system: sys,
+    label: 'Vortex Orbit',
+    cleanup: () => {
+      scene.remove(lineRender.object3D);
+      scene.remove(axisLine);
+      lineRender.dispose();
+    },
+    buildUI: () => `
+      <div class="hud-title">② Vortex Orbit — VortexForce + HarmonicForce + LineRenderer</div>
+      <div class="hud-row"><label>Count</label>         <input type="range" id="u-count" min="100" max="1500" step="50" value="600">  <span class="v" id="uv-count">600</span></div>
+      <div class="hud-row"><label>Lifetime</label>      <input type="range" id="u-life"  min="0.5" max="8"   step="0.1" value="3">    <span class="v" id="uv-life">3</span></div>
+      <div class="hud-row"><label>Vortex Strength</label><input type="range" id="u-vor"  min="0"   max="12"  step="0.5" value="4">    <span class="v" id="uv-vor">4</span></div>
+      <div class="hud-row"><label>Pull Strength</label> <input type="range" id="u-harm"  min="0"   max="6"   step="0.1" value="1.5">  <span class="v" id="uv-harm">1.5</span></div>
+      <div class="hud-row"><label>Drag</label>          <input type="range" id="u-drag"  min="0"   max="1"   step="0.05" value="0.15"><span class="v" id="uv-drag">0.15</span></div>
+      <div class="hud-row"><label>Trail Length</label>  <input type="range" id="u-trail" min="0.01" max="1"  step="0.01" value="0.2"> <span class="v" id="uv-trail">0.2</span></div>
+    `,
+    bindUI: () => {
+      const sl = (id, valId, onChange) => {
+        const el = document.getElementById(id);
+        const vl = document.getElementById(valId);
+        el.addEventListener('input', () => { const v = parseFloat(el.value); vl.textContent = String(v); onChange(v); });
+      };
+      sl('u-count', 'uv-count', v => { sys.parameters.count = v; sys.reset(); });
+      sl('u-life',  'uv-life',  v => { sys.parameters.lifetime = v; });
+      sl('u-vor',   'uv-vor',   v => { vortex.parameters.strength = v; });
+      sl('u-harm',  'uv-harm',  v => { harmonic.parameters.strength = v; });
+      sl('u-drag',  'uv-drag',  v => { drag.parameters.linear = v; });
+      sl('u-trail', 'uv-trail', v => { lineRender._lengthScale = v; });
+    },
+  };
+}
+
+// ── ③ Mesh Surface ───────────────────────────────────────────────────────────
+// MeshEmitter on a sphere · GravityForce · DragForce · BillboardRenderer
+function makeSurface() {
+  const sphereGeo = new THREE.SphereGeometry(3, 32, 16);
+  const sphereMesh = new THREE.Mesh(
+    sphereGeo,
+    new THREE.MeshStandardMaterial({ color: 0x223355, wireframe: false, transparent: true, opacity: 0.3 }),
+  );
+  sphereMesh.position.y = 4;
+  scene.add(sphereMesh);
+
+  const worldGeo = sphereGeo.clone();
+  // Offset positions to match mesh world position
+  const pos = worldGeo.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    pos.setY(i, pos.getY(i) + 4);
+  }
+  pos.needsUpdate = true;
+  worldGeo.computeVertexNormals();
+
+  const sys = new ParticleSystem({
+    count: 1200, start: 0, end: 999,
+    lifetime: 1.8, lifetimeRandom: 0.5,
+    size: 0.18, sizeRandom: 0.5,
+    gravity: 0, drag: 0,
+    physics: 'newtonian', seed: 13,
+    geometry: worldGeo,
+  });
+
+  const emitter = new MeshEmitter({
+    emitFrom: 'faces',
+    normalVelocity: 2.5,
+    randomVelocity: 0.5,
+    evenDistribution: true,
+  });
+
+  const gravity = new GravityForce(4);
+  const drag    = new DragForce({ linear: 0.3 });
+
+  const billRender = new BillboardRenderer({
+    maxCount: 1200, map: sprite,
+    color: 0xffaa44, opacity: 0.9,
+    additive: true, fadeOut: true,
+  });
+
+  sys.setGeometry(worldGeo).addEmitter(emitter).addForce(gravity).addForce(drag).setRenderer(billRender);
+  scene.add(billRender.object3D);
+
+  return {
+    system: sys,
+    label: 'Mesh Surface',
+    cleanup: () => {
+      scene.remove(sphereMesh);
+      scene.remove(billRender.object3D);
+      billRender.dispose();
+    },
+    buildUI: () => `
+      <div class="hud-title">③ Mesh Surface — MeshEmitter (faces) + GravityForce</div>
+      <div class="hud-row"><label>Count</label>       <input type="range" id="u-count" min="100" max="3000" step="100" value="1200"> <span class="v" id="uv-count">1200</span></div>
+      <div class="hud-row"><label>Lifetime</label>    <input type="range" id="u-life"  min="0.3" max="5"   step="0.1"  value="1.8">  <span class="v" id="uv-life">1.8</span></div>
+      <div class="hud-row"><label>Normal Vel</label>  <input type="range" id="u-nvel"  min="0"   max="8"   step="0.25" value="2.5">  <span class="v" id="uv-nvel">2.5</span></div>
+      <div class="hud-row"><label>Random Vel</label>  <input type="range" id="u-rvel"  min="0"   max="4"   step="0.1"  value="0.5">  <span class="v" id="uv-rvel">0.5</span></div>
+      <div class="hud-row"><label>Gravity</label>     <input type="range" id="u-grav"  min="0"   max="15"  step="0.5"  value="4">    <span class="v" id="uv-grav">4</span></div>
+      <div class="hud-row"><label>Air Drag</label>    <input type="range" id="u-drag"  min="0"   max="2"   step="0.05" value="0.3">  <span class="v" id="uv-drag">0.3</span></div>
+    `,
+    bindUI: () => {
+      const sl = (id, valId, onChange) => {
+        const el = document.getElementById(id);
+        const vl = document.getElementById(valId);
+        el.addEventListener('input', () => { const v = parseFloat(el.value); vl.textContent = String(v); onChange(v); });
+      };
+      sl('u-count', 'uv-count', v => { sys.parameters.count = v; sys.reset(); });
+      sl('u-life',  'uv-life',  v => { sys.parameters.lifetime = v; });
+      sl('u-nvel',  'uv-nvel',  v => { emitter.parameters.normalVelocity = v; });
+      sl('u-rvel',  'uv-rvel',  v => { emitter.parameters.randomVelocity = v; });
+      sl('u-grav',  'uv-grav',  v => { gravity.parameters.strength = v; });
+      sl('u-drag',  'uv-drag',  v => { drag.parameters.linear = v; });
+    },
+  };
+}
+
+// ── ④ Wind + Turbulence ───────────────────────────────────────────────────────
+// PointEmitter · WindForce · TurbulenceForce · DragForce · BillboardRenderer
+function makeWind() {
+  const sys = new ParticleSystem({
+    count: 1000, start: 0, end: 999,
+    lifetime: 3.5, lifetimeRandom: 0.6,
+    size: 0.2, sizeRandom: 0.6,
+    gravity: 0, drag: 0,
+    physics: 'newtonian', seed: 99,
+  });
+
+  const emitter = new PointEmitter({
+    position: { x: -10, y: 3, z: 0 },
+    normalVelocity: 0, randomVelocity: 0.8,
+    objectVelocityZ: 3,
+  });
+
+  const wind  = new WindForce({ x: 1, y: 0, z: 0, strength: 3 });
+  const turb  = new TurbulenceForce({ strength: 1.5, scale: 0.4, speed: 0.8 });
+  const drag  = new DragForce({ linear: 0.2 });
+
+  const billRender = new BillboardRenderer({
+    maxCount: 1000, map: sprite,
+    color: 0xaaddff, opacity: 0.6,
+    additive: false, fadeOut: true,
+  });
+
+  sys.addEmitter(emitter).addForce(wind).addForce(turb).addForce(drag).setRenderer(billRender);
+  scene.add(billRender.object3D);
+
+  // Wind direction arrow
+  const arrow = new THREE.ArrowHelper(
+    new THREE.Vector3(1, 0, 0), new THREE.Vector3(-10, 3, 0), 2, 0x4488ff, 0.5, 0.3,
+  );
+  scene.add(arrow);
+
+  return {
+    system: sys,
+    label: 'Wind + Turbulence',
+    cleanup: () => {
+      scene.remove(billRender.object3D);
+      scene.remove(arrow);
+      billRender.dispose();
+    },
+    buildUI: () => `
+      <div class="hud-title">④ Wind + Turbulence — WindForce + TurbulenceForce</div>
+      <div class="hud-row"><label>Count</label>          <input type="range" id="u-count" min="100" max="3000" step="100" value="1000"> <span class="v" id="uv-count">1000</span></div>
+      <div class="hud-row"><label>Lifetime</label>       <input type="range" id="u-life"  min="0.5" max="8"   step="0.1"  value="3.5">  <span class="v" id="uv-life">3.5</span></div>
+      <div class="hud-row"><label>Wind Strength</label>  <input type="range" id="u-wind"  min="0"   max="12"  step="0.25" value="3">    <span class="v" id="uv-wind">3</span></div>
+      <div class="hud-row"><label>Turbulence</label>     <input type="range" id="u-turb"  min="0"   max="6"   step="0.25" value="1.5">  <span class="v" id="uv-turb">1.5</span></div>
+      <div class="hud-row"><label>Turb Scale</label>     <input type="range" id="u-tscl"  min="0.1" max="2"   step="0.1"  value="0.4">  <span class="v" id="uv-tscl">0.4</span></div>
+      <div class="hud-row"><label>Air Drag</label>       <input type="range" id="u-drag"  min="0"   max="1"   step="0.05" value="0.2">  <span class="v" id="uv-drag">0.2</span></div>
+      <div class="hud-row"><label>Opacity</label>        <input type="range" id="u-opac"  min="0.1" max="1"   step="0.05" value="0.6">  <span class="v" id="uv-opac">0.6</span></div>
+    `,
+    bindUI: () => {
+      const sl = (id, valId, onChange) => {
+        const el = document.getElementById(id);
+        const vl = document.getElementById(valId);
+        el.addEventListener('input', () => { const v = parseFloat(el.value); vl.textContent = String(v); onChange(v); });
+      };
+      sl('u-count', 'uv-count', v => { sys.parameters.count = v; sys.reset(); });
+      sl('u-life',  'uv-life',  v => { sys.parameters.lifetime = v; });
+      sl('u-wind',  'uv-wind',  v => { wind.parameters.strength = v; });
+      sl('u-turb',  'uv-turb',  v => { turb.parameters.strength = v; });
+      sl('u-tscl',  'uv-tscl',  v => { turb.parameters.scale    = v; });
+      sl('u-drag',  'uv-drag',  v => { drag.parameters.linear   = v; });
+      sl('u-opac',  'uv-opac',  v => { billRender.object3D.material.opacity = v; });
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEMO SWITCHER
+// ─────────────────────────────────────────────────────────────────────────────
+
+const demoBuilders = {
+  fountain: makeFountain,
+  orbit:    makeOrbit,
+  surface:  makeSurface,
+  wind:     makeWind,
+};
+
+let activeDemo = null;
+
+function switchDemo(name) {
+  if (activeDemo) {
+    activeDemo.cleanup();
+    activeDemo.system.dispose();
+    activeDemo = null;
+  }
+
+  activeDemo = demoBuilders[name]();
+  activeDemo.system.reset();
+
+  const hud = document.getElementById('hud');
+  hud.innerHTML = `<div class="hud-box">${activeDemo.buildUI()}</div>`;
+  activeDemo.bindUI();
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.demo === name);
+  });
+
+  camera.position.set(0, 8, 22);
+  controls.target.set(0, 3, 0);
+  controls.update();
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchDemo(btn.dataset.demo));
+});
+
+// Start with fountain
+switchDemo('fountain');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESIZE
+// ─────────────────────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+
+const clock   = new THREE.Clock();
+const statsEl = document.getElementById('stats');
+let frames = 0, fpsTime = 0;
+
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (activeDemo) activeDemo.system.update(dt);
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  frames++; fpsTime += dt;
+  if (fpsTime >= 1) {
+    const alive = activeDemo
+      ? activeDemo.system._pool.filter(p => p.alive).length
+      : 0;
+    statsEl.textContent = `${Math.round(frames / fpsTime)} fps  ·  ${alive} particles alive`;
+    frames = 0; fpsTime = 0;
+  }
+})();
+</script>
+</body>
+</html>

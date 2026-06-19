@@ -1,0 +1,127 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Loop Subdivision — Blender-matched smoothing</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.75); padding: 16px; border-radius: 8px;
+      font-size: 13px; line-height: 2.2; min-width: 260px;
+    }
+    #ui h3 { color: #adf; margin-bottom: 4px; font-size: 13px; }
+    label { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    input[type=range] { width: 120px; }
+    span.val { color: #ffa; min-width: 20px; text-align: right; }
+    .note { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.6; }
+    #info { position: fixed; bottom: 16px; left: 16px; font-size: 11px; color: #666; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h3>Loop Subdivision (Blender-matched)</h3>
+  <label>levels
+    <input type="range" id="levels" min="0" max="4" step="1" value="2">
+    <span class="val" id="levels-val">2</span>
+  </label>
+  <label>wireframe
+    <input type="checkbox" id="wire">
+  </label>
+  <div class="note">
+    Loop subdivision repositions vertices<br>
+    using weighted neighbor averages —<br>
+    producing smooth surfaces from low-poly.<br><br>
+    Tris: <span id="tris">—</span>
+  </div>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ModifierStack, SubdivisionModifier, NormalRecalculateModifier } from '@st-modifier-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 4)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(3, 5, 3)
+scene.add(sun)
+
+// Low-poly icosahedron base — clearly shows smoothing effect
+const baseGeo = new THREE.IcosahedronGeometry(1, 0)  // 0 = no built-in subdivision
+const mat     = new THREE.MeshPhongMaterial({ color: 0x4488cc, shininess: 80 })
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, opacity: 0.3, transparent: true })
+
+const mesh     = new THREE.Mesh(new THREE.BufferGeometry(), mat)
+const wireMesh = new THREE.Mesh(new THREE.BufferGeometry(), wireMat)
+wireMesh.visible = false
+scene.add(mesh)
+scene.add(wireMesh)
+
+const subdivMod = new SubdivisionModifier({ levels: 2 })
+const normMod   = new NormalRecalculateModifier()
+
+function rebuild() {
+  const stack  = new ModifierStack(baseGeo)
+  stack.add(subdivMod)
+  stack.add(normMod)
+  const geo = stack.apply()
+
+  const old = mesh.geometry
+  mesh.geometry     = geo
+  wireMesh.geometry = geo
+  if (old.uuid !== baseGeo.uuid) old.dispose()
+
+  const tris = geo.getIndex() ? geo.getIndex().count / 3 : geo.getAttribute('position').count / 3
+  document.getElementById('tris').textContent = tris.toLocaleString()
+}
+
+rebuild()
+
+document.getElementById('levels').addEventListener('input', e => {
+  const v = parseInt(e.target.value)
+  document.getElementById('levels-val').textContent = v
+  subdivMod.parameters.levels = v
+  rebuild()
+})
+
+document.getElementById('wire').addEventListener('change', e => {
+  wireMesh.visible = e.target.checked
+})
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  mesh.rotation.y += 0.003
+  wireMesh.rotation.y = mesh.rotation.y
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

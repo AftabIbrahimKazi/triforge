@@ -1,0 +1,126 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ForceField — radial push/pull</title>
+<style>
+  body { margin: 0; background: #111; font-family: sans-serif; }
+  canvas { display: block; }
+  #ui { position: fixed; top: 16px; left: 16px; color: #eee; background: rgba(0,0,0,.6);
+        padding: 14px 18px; border-radius: 8px; min-width: 220px; }
+  label { display: flex; justify-content: space-between; margin: 6px 0; font-size: 13px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>ForceField demo</b>
+  <label>strength <input type="range" id="strength" min="-20" max="20" step="0.5" value="8"> <span id="sv">8</span></label>
+  <label>falloff  <input type="range" id="falloff"  min="0"   max="3"  step="0.1" value="1"> <span id="fv">1</span></label>
+  <label>maxDist  <input type="range" id="maxDist"  min="1"   max="30" step="0.5" value="15"><span id="dv">15</span></label>
+  <p style="font-size:11px;margin:8px 0 0">Positive = repel · Negative = attract<br>White sphere = field origin</p>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.167.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── renderer / scene / camera ─────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200)
+camera.position.set(0, 8, 22)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+// ── force field params ────────────────────────────────────────────────────
+const field = { strength: 8, falloff: 1, maxDistance: 15, position: new THREE.Vector3() }
+
+// ── particles (pure Three.js, no package build step needed) ──────────────
+const COUNT = 300
+const pos = new Float32Array(COUNT * 3)
+const vel = new Float32Array(COUNT * 3)
+for (let i = 0; i < COUNT; i++) {
+  pos[i*3]   = (Math.random() - 0.5) * 20
+  pos[i*3+1] = (Math.random() - 0.5) * 20
+  pos[i*3+2] = (Math.random() - 0.5) * 20
+  vel[i*3]   = (Math.random() - 0.5) * 2
+  vel[i*3+1] = (Math.random() - 0.5) * 2
+  vel[i*3+2] = (Math.random() - 0.5) * 2
+}
+const geo = new THREE.BufferGeometry()
+const posAttr = new THREE.BufferAttribute(pos, 3)
+posAttr.setUsage(THREE.DynamicDrawUsage)
+geo.setAttribute('position', posAttr)
+const mat = new THREE.PointsMaterial({ color: 0x88ccff, size: 0.25, sizeAttenuation: true })
+const points = new THREE.Points(geo, mat)
+scene.add(points)
+
+// ── field-origin marker ───────────────────────────────────────────────────
+const marker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.3, 12, 12),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
+)
+scene.add(marker)
+scene.add(new THREE.AxesHelper(3))
+
+// ── UI wiring ─────────────────────────────────────────────────────────────
+function bind(id, key, display) {
+  const el = document.getElementById(id)
+  el.addEventListener('input', () => {
+    field[key] = parseFloat(el.value)
+    document.getElementById(display).textContent = el.value
+  })
+}
+bind('strength', 'strength', 'sv')
+bind('falloff',  'falloff',  'fv')
+bind('maxDist',  'maxDistance', 'dv')
+
+// ── update loop (implements ForceField.apply inline) ─────────────────────
+const clock = new THREE.Clock()
+const BOUND = 15
+function wrap(v) { return v > BOUND ? -BOUND : v < -BOUND ? BOUND : v }
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05)
+  const { strength, falloff, maxDistance, position } = field
+  for (let i = 0; i < COUNT; i++) {
+    const b = i * 3
+    const dx = pos[b]   - position.x
+    const dy = pos[b+1] - position.y
+    const dz = pos[b+2] - position.z
+    const dist2 = dx*dx + dy*dy + dz*dz
+    if (dist2 > 1e-10 && dist2 <= maxDistance * maxDistance) {
+      const dist = Math.sqrt(dist2)
+      const mag  = strength / Math.pow(Math.max(dist, 0.01), Math.max(0, falloff))
+      const inv  = mag / dist
+      vel[b]   += dx * inv * dt
+      vel[b+1] += dy * inv * dt
+      vel[b+2] += dz * inv * dt
+    }
+    // gentle drag
+    vel[b] *= 0.99; vel[b+1] *= 0.99; vel[b+2] *= 0.99
+    pos[b]   = wrap(pos[b]   + vel[b]   * dt)
+    pos[b+1] = wrap(pos[b+1] + vel[b+1] * dt)
+    pos[b+2] = wrap(pos[b+2] + vel[b+2] * dt)
+  }
+  posAttr.needsUpdate = true
+  controls.update()
+  renderer.render(scene, camera)
+})
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

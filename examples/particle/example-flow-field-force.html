@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FlowFieldForce — @st-particle-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #05080f; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 8px 12px; border-radius: 4px;
+  }
+  #sliders {
+    position: absolute; top: 12px; right: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 6px; min-width: 200px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 110px; }
+</style>
+</head>
+<body>
+<div id="info">FlowFieldForce — @st-particle-core<br>Curl-noise velocity field steers particles</div>
+<div id="sliders"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem, PointEmitter, BillboardRenderer,
+  FlowFieldForce, DragForce, NoneRenderer
+} from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x05080f)
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200)
+camera.position.set(0, 4, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 1, 0)
+
+// ── Particle system ──────────────────────────────────────────────────────────
+const sys = new ParticleSystem({
+  count: 3000, start: 0, end: 9999,
+  lifetime: 5, lifetimeRandom: 1.5,
+  size: 0.12, sizeRandom: 0.06,
+  physics: 'newtonian', gravity: 0, drag: 0,
+})
+
+const emitter = new PointEmitter({
+  position: { x: 0, y: 0, z: 0 },
+  normalVelocity: 0.2,
+  randomVelocity: 2.0,
+})
+sys.addEmitter(emitter)
+sys.addForce(new DragForce({ linear: 0.6 }))
+
+const flow = new FlowFieldForce({ strength: 3, scale: 0.5, speed: 0.4, influence: 0.9 })
+sys.addForce(flow)
+
+const bill = new BillboardRenderer({
+  maxCount: 3000, additive: true, fadeOut: true, opacity: 0.85,
+  colourMode: 2,                              // colour by age
+  colourLow:  [0.1, 0.4, 1.0],               // young = blue
+  colourHigh: [1.0, 0.3, 0.1],               // old   = orange
+})
+sys.setRenderer(bill)
+scene.add(bill.object3D)
+
+// ── Controls UI ──────────────────────────────────────────────────────────────
+const slidersEl = document.getElementById('sliders')
+const knobs = [
+  { label: 'strength',  obj: flow.parameters, key: 'strength',  min: 0, max: 6,   step: 0.1, def: 3   },
+  { label: 'scale',     obj: flow.parameters, key: 'scale',     min: 0.1, max: 3, step: 0.05, def: 0.5 },
+  { label: 'speed',     obj: flow.parameters, key: 'speed',     min: 0, max: 2,   step: 0.05, def: 0.4 },
+  { label: 'influence', obj: flow.parameters, key: 'influence', min: 0, max: 1,   step: 0.05, def: 0.9 },
+]
+
+for (const k of knobs) {
+  const row = document.createElement('label')
+  const val = document.createElement('span')
+  val.textContent = k.def.toFixed(2)
+  const input = document.createElement('input')
+  input.type = 'range'; input.min = k.min; input.max = k.max
+  input.step = k.step; input.value = k.def
+  input.addEventListener('input', () => {
+    k.obj[k.key] = +input.value
+    val.textContent = (+input.value).toFixed(2)
+  })
+  row.innerHTML = `<span>${k.label}</span>`
+  row.appendChild(input)
+  row.appendChild(val)
+  slidersEl.appendChild(row)
+}
+
+// ── Render loop ──────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05)
+  sys.update(dt)
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

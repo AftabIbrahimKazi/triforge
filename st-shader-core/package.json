@@ -1,0 +1,38 @@
+{
+  "name": "@st-shader-core",
+  "version": "0.1.0",
+  "description": "GLSL shader library for Three.js with Blender workflow",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && esbuild src/index.ts --bundle --format=esm --external:three --outfile=dist/bundle.js",
+    "dev": "tsc --watch",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "shader",
+    "glsl",
+    "three.js",
+    "materials",
+    "blender"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "three": ">=0.128.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.156.0",
+    "esbuild": "^0.28.0",
+    "three": "^0.156.0",
+    "typescript": "^5.3.0"
+  }
+}

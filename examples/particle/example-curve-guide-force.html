@@ -1,0 +1,301 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CurveGuideForce — st-particle-core</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#060612; overflow:hidden; font-family:monospace; color:#eee; }
+
+#ui {
+  position:fixed; top:16px; left:16px; width:240px;
+  background:rgba(0,0,0,.7); border-radius:10px; padding:14px 16px;
+  font-size:12px; line-height:2;
+}
+#ui b { font-size:13px; }
+label { display:flex; justify-content:space-between; align-items:center; gap:6px; }
+input[type=range] { width:110px; }
+.val { width:28px; text-align:right; }
+hr { border:none; border-top:1px solid #333; margin:6px 0; }
+
+#desc {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+  background:rgba(0,0,0,.65); border-radius:8px; padding:10px 20px;
+  font-size:12px; text-align:center; color:#aaa; max-width:560px; line-height:1.7;
+}
+button {
+  margin-top:8px; padding:4px 12px; background:#223; border:1px solid #445;
+  color:#eee; border-radius:4px; cursor:pointer; font-family:monospace; font-size:12px;
+}
+button:hover { background:#334; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <b>CurveGuideForce — E3</b>
+  <hr>
+  <label>Strength
+    <input type="range" id="rStr" min="0" max="15" step="0.1" value="5">
+    <span class="val" id="lStr">5</span>
+  </label>
+  <label title="0 = attract only · 1 = align velocity with curve tangent">Clump
+    <input type="range" id="rClump" min="0" max="1" step="0.01" value="0">
+    <span class="val" id="lClump">0</span>
+  </label>
+  <label title="Weakens force near the end of the curve">Free End
+    <input type="range" id="rFree" min="0" max="1" step="0.01" value="0">
+    <span class="val" id="lFree">0</span>
+  </label>
+  <label>Drag
+    <input type="range" id="rDrag" min="0" max="4" step="0.05" value="1.5">
+    <span class="val" id="lDrag">1.5</span>
+  </label>
+  <hr>
+  <button id="btnReset">↺ Scatter particles</button>
+</div>
+
+<div id="desc">
+  <b>CurveGuideForce</b> attracts scattered particles toward a curve and channels them along it.<br>
+  The <b>white tube</b> is the guide curve. Particles start <b>scattered randomly</b> then get pulled in.<br>
+  Try: raise <b>Strength</b> to pull fast · raise <b>Clump</b> to flow along the curve direction.
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":          "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+    "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Renderer / scene ───────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x060612)
+scene.fog        = new THREE.FogExp2(0x060612, 0.018)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 400)
+camera.position.set(0, 10, 35)
+camera.lookAt(0, 0, 0)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+controls.target.set(0, 0, 0)
+
+// ── Guide curve — gentle S-bend so the shape is clear ─────────────────────
+const curvePoints = [
+  new THREE.Vector3(-14,  0,  0),
+  new THREE.Vector3( -7,  4,  4),
+  new THREE.Vector3(  0,  0,  0),
+  new THREE.Vector3(  7, -4, -4),
+  new THREE.Vector3( 14,  0,  0),
+]
+const curve = new THREE.CatmullRomCurve3(curvePoints)
+
+// Draw the guide curve as a glowing tube
+const tubeGeo = new THREE.TubeGeometry(curve, 80, 0.08, 8, false)
+const tubeMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 })
+scene.add(new THREE.Mesh(tubeGeo, tubeMat))
+
+// Bright dots at the control points so the curve shape is obvious
+for (const pt of curvePoints) {
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.18, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  )
+  dot.position.copy(pt)
+  scene.add(dot)
+}
+
+// Arrow at the end showing flow direction
+{
+  const dir = new THREE.Vector3()
+  curve.getTangent(1, dir)
+  const arrow = new THREE.ArrowHelper(dir, curvePoints[4], 2, 0xffff55, 0.6, 0.35)
+  scene.add(arrow)
+}
+
+// ── Pre-sample curve for nearest-point search ──────────────────────────────
+const SAMPLES = 120
+const sampledPts  = Array.from({ length: SAMPLES }, () => new THREE.Vector3())
+const sampledTans = Array.from({ length: SAMPLES }, () => new THREE.Vector3())
+
+function buildSamples() {
+  for (let i = 0; i < SAMPLES; i++) {
+    const t = i / (SAMPLES - 1)
+    curve.getPoint(t, sampledPts[i])
+    curve.getTangent(t, sampledTans[i])
+  }
+}
+buildSamples()
+
+// Returns [nearestIdx, t along curve 0..1]
+function nearestOnCurve(px, py, pz) {
+  let bestIdx = 0, bestD2 = Infinity
+  for (let i = 0; i < SAMPLES; i++) {
+    const dx = px - sampledPts[i].x
+    const dy = py - sampledPts[i].y
+    const dz = pz - sampledPts[i].z
+    const d2 = dx * dx + dy * dy + dz * dz
+    if (d2 < bestD2) { bestD2 = d2; bestIdx = i }
+  }
+  return bestIdx
+}
+
+// ── Particles ──────────────────────────────────────────────────────────────
+const COUNT = 300
+
+// Each particle: position (3), velocity (3), hue (1)
+const pPos = new Float32Array(COUNT * 3)  // x,y,z
+const pVel = new Float32Array(COUNT * 3)  // vx,vy,vz
+const pHue = new Float32Array(COUNT)
+
+function scatterParticles() {
+  for (let i = 0; i < COUNT; i++) {
+    // Start in a wide cloud around the curve's bounding box
+    pPos[i * 3]     = (Math.random() - 0.5) * 30
+    pPos[i * 3 + 1] = (Math.random() - 0.5) * 12
+    pPos[i * 3 + 2] = (Math.random() - 0.5) * 12
+    // Small random velocity
+    pVel[i * 3]     = (Math.random() - 0.5) * 0.5
+    pVel[i * 3 + 1] = (Math.random() - 0.5) * 0.5
+    pVel[i * 3 + 2] = (Math.random() - 0.5) * 0.5
+    // Hue tied to curve position so particles colour by where they end up
+    pHue[i] = Math.random()
+  }
+}
+scatterParticles()
+
+// ── GPU buffers ────────────────────────────────────────────────────────────
+const posArr = new Float32Array(COUNT * 3)
+const colArr = new Float32Array(COUNT * 3)
+const geo    = new THREE.BufferGeometry()
+geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3).setUsage(THREE.DynamicDrawUsage))
+geo.setAttribute('color',    new THREE.BufferAttribute(colArr, 3).setUsage(THREE.DynamicDrawUsage))
+
+// Circular sprite so points look like glowing orbs
+const cv = document.createElement('canvas')
+cv.width = cv.height = 64
+const cx2 = cv.getContext('2d')
+const g   = cx2.createRadialGradient(32, 32, 0, 32, 32, 30)
+g.addColorStop(0,   'rgba(255,255,255,1)')
+g.addColorStop(0.5, 'rgba(255,255,255,0.5)')
+g.addColorStop(1,   'rgba(255,255,255,0)')
+cx2.fillStyle = g; cx2.fillRect(0, 0, 64, 64)
+
+const ptMat = new THREE.PointsMaterial({
+  vertexColors: true, size: 0.45, sizeAttenuation: true,
+  map: new THREE.CanvasTexture(cv),
+  transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending,
+})
+scene.add(new THREE.Points(geo, ptMat))
+
+// ── Parameters ─────────────────────────────────────────────────────────────
+const params = { strength: 5, clumpFactor: 0, freeEnd: 0, drag: 1.5 }
+
+function bind(id, lblId, key) {
+  document.getElementById(id).addEventListener('input', e => {
+    params[key] = +e.target.value
+    document.getElementById(lblId).textContent = e.target.value
+  })
+}
+bind('rStr',   'lStr',   'strength')
+bind('rClump', 'lClump', 'clumpFactor')
+bind('rFree',  'lFree',  'freeEnd')
+bind('rDrag',  'lDrag',  'drag')
+document.getElementById('btnReset').addEventListener('click', scatterParticles)
+
+// ── Update ─────────────────────────────────────────────────────────────────
+let lastNow = performance.now()
+const _col  = new THREE.Color()
+
+;(function animate() {
+  requestAnimationFrame(animate)
+
+  const now = performance.now()
+  const dt  = Math.min((now - lastNow) / 1000, 0.033)
+  lastNow   = now
+
+  const { strength, clumpFactor, freeEnd, drag } = params
+
+  for (let i = 0; i < COUNT; i++) {
+    const pi = i * 3
+    const px = pPos[pi], py = pPos[pi + 1], pz = pPos[pi + 2]
+    let   vx = pVel[pi], vy = pVel[pi + 1], vz = pVel[pi + 2]
+
+    // ── CurveGuideForce ───────────────────────────────────────────────────
+    const ni     = nearestOnCurve(px, py, pz)
+    const target = sampledPts[ni]
+    const tan    = sampledTans[ni]
+    const tNorm  = ni / (SAMPLES - 1)            // 0 at start, 1 at end of curve
+    const freeAtt= freeEnd > 0 ? 1 - tNorm * freeEnd : 1
+    const effStr = strength * freeAtt * dt
+
+    // Attraction toward nearest point on curve
+    const dx = target.x - px, dy = target.y - py, dz = target.z - pz
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6
+
+    if (clumpFactor < 1) {
+      const att = effStr * (1 - clumpFactor)
+      vx += (dx / dist) * att
+      vy += (dy / dist) * att
+      vz += (dz / dist) * att
+    }
+
+    // Tangent alignment (clump): steer velocity toward curve direction
+    if (clumpFactor > 0) {
+      const tl = Math.sqrt(tan.x ** 2 + tan.y ** 2 + tan.z ** 2) || 1e-6
+      const tnx = tan.x / tl, tny = tan.y / tl, tnz = tan.z / tl
+      const dot = vx * tnx + vy * tny + vz * tnz
+      vx += (dot * tnx - vx) * clumpFactor * effStr
+      vy += (dot * tny - vy) * clumpFactor * effStr
+      vz += (dot * tnz - vz) * clumpFactor * effStr
+    }
+
+    // Drag — stops particles oscillating past the curve
+    const dragK = 1 - Math.min(drag * dt, 0.99)
+    vx *= dragK; vy *= dragK; vz *= dragK
+
+    // Integrate
+    pPos[pi]     = px + vx * dt
+    pPos[pi + 1] = py + vy * dt
+    pPos[pi + 2] = pz + vz * dt
+    pVel[pi]     = vx; pVel[pi + 1] = vy; pVel[pi + 2] = vz
+
+    // Colour: hue by curve position (0=start, 1=end), brightness by distance to curve
+    const closeness = Math.max(0, 1 - dist * 0.15)   // 1 = on curve, 0 = far away
+    _col.setHSL(tNorm * 0.7, 1.0, 0.3 + 0.5 * closeness)
+    colArr[pi]     = _col.r
+    colArr[pi + 1] = _col.g
+    colArr[pi + 2] = _col.b
+
+    posArr[pi]     = pPos[pi]
+    posArr[pi + 1] = pPos[pi + 1]
+    posArr[pi + 2] = pPos[pi + 2]
+  }
+
+  geo.attributes.position.needsUpdate = true
+  geo.attributes.color.needsUpdate    = true
+
+  controls.update()
+  renderer.render(scene, camera)
+})()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

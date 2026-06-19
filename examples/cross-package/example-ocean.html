@@ -1,0 +1,242 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ocean — @st-modifier-core + @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0e14; overflow: hidden; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    color: #aaa; font: 11px/1.7 monospace;
+    background: rgba(0,0,0,0.55); padding: 8px 12px; border-radius: 4px;
+  }
+  #controls {
+    position: absolute; top: 12px; right: 12px;
+    color: #ccc; font: 11px/2.2 monospace;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    min-width: 230px;
+  }
+  #controls label { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  #controls input[type=range] { width: 100px; }
+  #controls span { min-width: 38px; text-align: right; color: #fff; }
+  #controls hr { border: none; border-top: 1px solid #333; margin: 4px 0; }
+</style>
+</head>
+<body>
+<div id="info">
+  Ocean · <b>@st-modifier-core</b> + <b>@st-shader-core</b><br>
+  OceanModifier → OceanAttribute → ColorRamp → Emission<br>
+  PrincipledBSDF → AddShader → MaterialOutput<br>
+  <br>Drag to orbit · Scroll to zoom
+</div>
+<div id="controls">
+  <b style="color:#6af">OceanModifier</b>
+  <hr>
+  <label>Choppiness <input type="range" id="chop"  min="0"   max="2"   step="0.01" value="1.2"> <span id="chopVal">1.20</span></label>
+  <label>Wind Speed  <input type="range" id="wind"  min="5"   max="50"  step="0.5"  value="30">  <span id="windVal">30.0</span></label>
+  <label>Scale       <input type="range" id="scale" min="0.5" max="8"   step="0.1"  value="3.0"> <span id="scaleVal">3.0</span></label>
+  <label>Foam Cover  <input type="range" id="foam"  min="0"   max="1"   step="0.01" value="0.2"> <span id="foamVal">0.20</span></label>
+  <label>Turbulence  <input type="range" id="turb"  min="0"   max="1"   step="0.01" value="0.15"><span id="turbVal">0.15</span></label>
+  <label>Resolution  <input type="range" id="res"   min="16"  max="128" step="8"    value="64">  <span id="resVal">64</span></label>
+  <hr>
+  <label>Time Speed  <input type="range" id="speed" min="0"   max="3"   step="0.05" value="1.0"> <span id="speedVal">1.00</span></label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js",
+    "@st-shader-core":   "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ModifierStack, OceanModifier } from '@st-modifier-core';
+import {
+  OceanAttribute, ColorRamp, Emission,
+  PrincipledBSDF, AddShader, MaterialOutput,
+  RGB, Value,
+} from '@st-shader-core';
+
+// ─── Renderer ────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+// ─── Scene / Camera ──────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e14);
+scene.fog = new THREE.FogExp2(0x0a0e14, 0.008);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 2000);
+camera.position.set(0, 22, 55);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.maxPolarAngle = Math.PI * 0.52;
+
+scene.add(new THREE.AmbientLight(0x112244, 1.5));
+const sun = new THREE.DirectionalLight(0xffeedd, 3.0);
+sun.position.set(40, 80, 30);
+scene.add(sun);
+
+// ─── Parameters ──────────────────────────────────────────────────────────────
+const params = {
+  choppiness: 1.2,
+  windSpeed:  30.0,
+  scale:      3.0,
+  foamCover:  0.2,
+  turbulence: 0.15,
+  resolution: 64,
+  timeSpeed:  1.0,
+};
+
+// ─── OceanModifier ────────────────────────────────────────────────────────────
+// Matches Blender: Generate mode, Choppiness 1, Wind 30 m/s, Foam 0.2, Depth 200
+const oceanMod = new OceanModifier({
+  choppiness:   params.choppiness,
+  windSpeed:    params.windSpeed,
+  scale:        params.scale,
+  foamCoverage: params.foamCover,
+  turbulence:   params.turbulence,
+  resolution:   params.resolution,
+  depth:        200,
+  size:         50,
+  waveCount:    24,
+  seed:         55,
+});
+
+// OceanModifier ignores its input geometry — it generates its own grid.
+// We still need to pass something for the ModifierStack API.
+const dummyGeo = new THREE.BufferGeometry();
+const stack = new ModifierStack(dummyGeo);
+stack.add(oceanMod);
+let oceanGeo = stack.apply();
+
+// ─── Shader node graph (matches Blender screenshot) ───────────────────────────
+//
+//  OceanAttribute ─── Fac ──→ ColorRamp ─── Color ──→ Emission ─────────────────┐
+//                                                                                 ↓
+//  PrincipledBSDF ─── BSDF ─────────────────────────────────────────→ AddShader → MaterialOutput
+//
+
+const oceanAttr = new OceanAttribute();
+
+// ColorRamp: black at 0 → white at 0.8 (matches Blender screenshot)
+const colorRamp = new ColorRamp({
+  fac:   oceanAttr.output('Fac'),
+  stops: ['#000000', '#e0ecff'],  // black → near-white with slight blue tint
+});
+
+// Emission: white foam glow (Strength 1.0, matching Blender)
+const emission = new Emission({
+  color:    colorRamp.output('Color'),
+  strength: new Value(1.4),
+});
+
+// PrincipledBSDF: deep navy blue ocean — matches Blender screenshot (Roughness 0.5, IOR 1.5)
+const bsdf = new PrincipledBSDF({
+  baseColor: new RGB('#031222'),
+  roughness: new Value(0.5),
+  metallic:  new Value(0.0),
+});
+
+// AddShader: BSDF + Emission → final surface
+const addShader = new AddShader({
+  shader1: bsdf.output('BSDF'),
+  shader2: emission.output('BSDF'),
+});
+
+// MaterialOutput: Surface slot (matches Blender Material Output)
+const matOutput = new MaterialOutput({
+  surface: addShader.output('BSDF'),
+});
+matOutput.compile();
+
+const material = matOutput.material;
+
+// Inject scene lighting into PrincipledBSDF — must match the DirectionalLight below.
+// ShaderMaterial doesn't receive Three.js lights automatically.
+material.uniforms.uSunDirection = { value: new THREE.Vector3(40, 80, 30).normalize() };
+material.uniforms.uSunColor     = { value: new THREE.Vector3(1.0, 0.97, 0.90) };   // warm white sun
+material.uniforms.uAmbientColor = { value: new THREE.Vector3(0.06, 0.10, 0.22) };  // deep blue sky ambient
+
+// ─── Mesh ─────────────────────────────────────────────────────────────────────
+const mesh = new THREE.Mesh(oceanGeo, material);
+scene.add(mesh);
+
+// ─── Rebuild geometry when OceanModifier params change ───────────────────────
+function rebuildOcean() {
+  oceanMod.parameters.choppiness   = params.choppiness;
+  oceanMod.parameters.windSpeed    = params.windSpeed;
+  oceanMod.parameters.scale        = params.scale;
+  oceanMod.parameters.foamCoverage = params.foamCover;
+  oceanMod.parameters.turbulence   = params.turbulence;
+  oceanMod.parameters.resolution   = params.resolution;
+  // time is updated each frame — no full rebuild needed for time
+  oceanGeo.dispose();
+  oceanGeo = stack.apply();
+  mesh.geometry = oceanGeo;
+}
+
+// ─── UI wiring ────────────────────────────────────────────────────────────────
+function bind(id, valId, key, dec, rebuild) {
+  const el  = document.getElementById(id);
+  const vEl = document.getElementById(valId);
+  el.addEventListener('input', () => {
+    params[key] = parseFloat(el.value);
+    vEl.textContent = params[key].toFixed(dec);
+    if (rebuild) rebuildOcean();
+  });
+}
+bind('chop',  'chopVal',  'choppiness', 2, true);
+bind('wind',  'windVal',  'windSpeed',  1, true);
+bind('scale', 'scaleVal', 'scale',      1, true);
+bind('foam',  'foamVal',  'foamCover',  2, true);
+bind('turb',  'turbVal',  'turbulence', 2, true);
+bind('res',   'resVal',   'resolution', 0, true);
+bind('speed', 'speedVal', 'timeSpeed',  2, false);
+
+// ─── Resize ───────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ─── Animation loop ───────────────────────────────────────────────────────────
+// OceanModifier runs on CPU — rebuild geometry each frame for animation.
+// For performance, resolution defaults to 64 (not 128) for real-time.
+const clock = new THREE.Clock();
+let elapsed = 0;
+
+(function loop() {
+  requestAnimationFrame(loop);
+
+  const dt = clock.getDelta();
+  elapsed += dt * params.timeSpeed;
+
+  // Advance OceanModifier time and rebuild geometry
+  oceanMod.parameters.time = elapsed;
+  oceanGeo.dispose();
+  oceanGeo = stack.apply();
+  mesh.geometry = oceanGeo;
+
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

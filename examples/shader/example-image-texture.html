@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ImageTexture — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.65); padding: 8px 12px; border-radius: 4px; max-width: 340px; }
+  #dropzone {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    border: 2px dashed #444; border-radius: 8px; padding: 24px 36px;
+    color: #888; font: 13px monospace; text-align: center; cursor: pointer;
+  }
+  #dropzone.hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="info">
+  ImageTexture — @st-shader-core<br>
+  Drop an image file onto the canvas to load it as a texture.<br>
+  Until then a procedural placeholder is shown.
+</div>
+<div id="dropzone">Drop an image here<br><span style="font-size:10px;color:#555">or the placeholder texture will be used</span></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { MaterialOutput, PrincipledBSDF, ImageTexture, NormalMap, Value } from '@st-shader-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1, 4)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 2.5)
+sun.position.set(5, 8, 5)
+sun.castShadow = true
+scene.add(sun)
+
+// Build material with ImageTexture node
+const albedoNode = new ImageTexture({ uniformName: 'uAlbedo' })
+const bsdf       = new PrincipledBSDF({ baseColor: albedoNode.output('Color'), roughness: 0.6 })
+const matOut     = new MaterialOutput({ surface: bsdf.output('BSDF') })
+matOut.compile()
+
+// Create a checkerboard placeholder texture
+function makeChecker(size = 256) {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const half = size / 8
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#cc44cc' : '#221122'
+      ctx.fillRect(x * half, y * half, half, half)
+    }
+  }
+  return new THREE.CanvasTexture(canvas)
+}
+
+matOut.material.uniforms.uAlbedo = { value: makeChecker() }
+
+const mesh = new THREE.Mesh(new THREE.SphereGeometry(1.2, 64, 32), matOut.material)
+mesh.castShadow = true
+scene.add(mesh)
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(10, 10),
+  new THREE.MeshStandardMaterial({ color: 0x1a1a1a })
+)
+ground.rotation.x = -Math.PI / 2
+ground.position.y = -1.35
+ground.receiveShadow = true
+scene.add(ground)
+
+// Drag-and-drop image loading
+const dropzone = document.getElementById('dropzone')
+document.body.addEventListener('dragover', e => e.preventDefault())
+document.body.addEventListener('drop', e => {
+  e.preventDefault()
+  const file = e.dataTransfer.files[0]
+  if (!file || !file.type.startsWith('image/')) return
+  const url = URL.createObjectURL(file)
+  new THREE.TextureLoader().load(url, tex => {
+    matOut.material.uniforms.uAlbedo.value = tex
+    dropzone.classList.add('hidden')
+  })
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

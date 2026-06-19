@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ParticleInfo node — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #06080f; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 320px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .sep  { border-top: 1px solid #333; margin: 5px 0; }
+  .code { color: #7df; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>ParticleInfo — @st-shader-core</h3>
+  <div class="sep"></div>
+  Reads per-instance vertex attributes:<br>
+  <span class="code">particleIndex</span> → hue variation<br>
+  <span class="code">particleAge</span>   → brightness fade<br>
+  <span class="code">particleRandom</span>→ size jitter (via scale)<br>
+  <div class="sep"></div>
+  Each cube is an instance with those<br>
+  attributes written by the demo.
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three":            "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":    "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core":  "../../st-shader-core/dist/bundle.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleInfo, ColorRamp, ShaderMath, MapRange,
+  PrincipledBSDF, MaterialOutput, ShaderConfig
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x06080f)
+scene.add(new THREE.AmbientLight(0xffffff, 0.3))
+const dlight = new THREE.DirectionalLight(0xffffff, 1.2)
+dlight.position.set(3, 5, 3)
+scene.add(dlight)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 4, 10)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+// ── Shader graph using ParticleInfo ─────────────────────────────────────────
+//
+// ParticleInfo.Index  → ColorRamp → baseColor (hue per particle)
+// ParticleInfo.Age    → roughness  (young = smooth, old = rough)
+// ParticleInfo.Random → already used in ColorRamp stop spacing
+
+const pinfo = new ParticleInfo()
+
+// Map index [0,1] to a colour ramp (rainbow)
+const hueRamp = new ColorRamp({
+  fac:   pinfo.output('Index'),
+  stops: ['#ff2200', '#ffaa00', '#aaff00', '#00ffcc', '#0088ff', '#cc00ff', '#ff2200'],
+})
+
+// Map age [0,1] to roughness: young=0.1 shiny, old=0.8 matte
+const ageRoughness = new MapRange({
+  value:   pinfo.output('Age'),
+  fromMin: 0, fromMax: 1,
+  toMin:   0.1, toMax: 0.8,
+})
+
+// Use random to modulate metalness slightly
+const metalness = new MapRange({
+  value:   pinfo.output('Random'),
+  fromMin: 0, fromMax: 1,
+  toMin:   0.2, toMax: 0.9,
+})
+
+const bsdf = new PrincipledBSDF({
+  baseColor: hueRamp.output('Color'),
+  roughness: ageRoughness.output('Result'),
+  metallic:  metalness.output('Result'),
+})
+const mat = new MaterialOutput({ surface: bsdf.output('BSDF') })
+mat.compile()
+
+// ── Instanced mesh: N×N grid of cubes ────────────────────────────────────────
+const N     = 8
+const total = N * N
+const geo   = new THREE.BoxGeometry(0.55, 0.55, 0.55)
+
+// Add per-instance attributes
+const idxAttr    = new THREE.InstancedBufferAttribute(new Float32Array(total), 1)
+const ageAttr    = new THREE.InstancedBufferAttribute(new Float32Array(total), 1)
+const randAttr   = new THREE.InstancedBufferAttribute(new Float32Array(total), 1)
+geo.setAttribute('particleIndex',  idxAttr)
+geo.setAttribute('particleAge',    ageAttr)
+geo.setAttribute('particleRandom', randAttr)
+
+for (let i = 0; i < total; i++) {
+  idxAttr.setX(i,  i / (total - 1))
+  ageAttr.setX(i,  0)
+  randAttr.setX(i, Math.random())
+}
+
+const mesh = new THREE.InstancedMesh(geo, mat.material, total)
+mesh.frustumCulled = false
+scene.add(mesh)
+
+// Position each instance in a grid
+const dummy = new THREE.Object3D()
+const step  = 1.2
+for (let i = 0; i < total; i++) {
+  const row = Math.floor(i / N)
+  const col = i % N
+  dummy.position.set((col - N/2 + 0.5) * step, 0, (row - N/2 + 0.5) * step)
+  dummy.updateMatrix()
+  mesh.setMatrixAt(i, dummy.matrix)
+}
+mesh.instanceMatrix.needsUpdate = true
+
+// ── Animate: age cycles 0→1 over 3 s, offset per particle ───────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime()
+  for (let i = 0; i < total; i++) {
+    // Each particle ages at its own phase
+    const phase = i / total
+    ageAttr.setX(i, (t * 0.3 + phase) % 1.0)
+  }
+  ageAttr.needsUpdate = true
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

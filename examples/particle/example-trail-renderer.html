@@ -1,0 +1,231 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TrailRenderer — st-particle-core</title>
+<style>
+* { margin: 0; padding: 0; }
+body { background: #050510; overflow: hidden; font-family: monospace; color: #eee; }
+#ui {
+  position: fixed; top: 16px; left: 16px;
+  background: rgba(0,0,0,.6); border-radius: 8px; padding: 12px 16px;
+  line-height: 1.9; font-size: 12px;
+}
+label { display: flex; align-items: center; gap: 8px; }
+input[type=range] { width: 130px; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <b>TrailRenderer — E1</b><br>
+  <label>Trail length:
+    <input type="range" id="rLen" min="2" max="60" step="1" value="30">
+    <span id="lblLen">30</span> pts
+  </label>
+  <label>Speed:
+    <input type="range" id="rSpd" min="0.2" max="4" step="0.1" value="1">
+    <span id="lblSpd">1</span>×
+  </label>
+  <label>Count:
+    <input type="range" id="rCnt" min="4" max="80" step="2" value="24">
+    <span id="lblCnt">24</span>
+  </label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Renderer ───────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x050510)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 500)
+camera.position.set(0, 14, 32)
+camera.lookAt(0, 0, 0)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+controls.autoRotate    = true
+controls.autoRotateSpeed = 0.4
+
+// ── Parameters (mutable by sliders) ───────────────────────────────────────
+const params = { trailLen: 30, speed: 1, count: 24 }
+
+document.getElementById('rLen').addEventListener('input', e => {
+  params.trailLen = +e.target.value
+  document.getElementById('lblLen').textContent = e.target.value
+  rebuildBuffers()
+})
+document.getElementById('rSpd').addEventListener('input', e => {
+  params.speed = +e.target.value
+  document.getElementById('lblSpd').textContent = e.target.value
+})
+document.getElementById('rCnt').addEventListener('input', e => {
+  params.count = +e.target.value
+  document.getElementById('lblCnt').textContent = e.target.value
+  rebuildBuffers()
+})
+
+// ── Per-particle state ─────────────────────────────────────────────────────
+// Each particle follows a unique Lissajous / torus-knot path so trails are
+// clearly spread across space and easy to see.
+
+let posArr, colArr, geo, lineMesh
+let hist, headBuf, filledBuf
+let particleCount = 0
+let trailLen      = 0
+
+function rebuildBuffers() {
+  const N   = params.count
+  const SEG = params.trailLen
+
+  if (lineMesh) scene.remove(lineMesh)
+
+  const maxVerts = N * (SEG - 1) * 2
+  posArr   = new Float32Array(maxVerts * 3)
+  colArr   = new Float32Array(maxVerts * 3)
+  hist     = new Float32Array(N * SEG * 3)
+  headBuf  = new Int32Array(N)
+  filledBuf= new Uint8Array(N)
+
+  geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3).setUsage(THREE.DynamicDrawUsage))
+  geo.setAttribute('color',    new THREE.BufferAttribute(colArr, 3).setUsage(THREE.DynamicDrawUsage))
+  geo.setDrawRange(0, 0)
+
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    blending:     THREE.AdditiveBlending,
+    depthWrite:   false,
+  })
+  lineMesh = new THREE.LineSegments(geo, mat)
+  lineMesh.frustumCulled = false
+  scene.add(lineMesh)
+
+  particleCount = N
+  trailLen      = SEG
+}
+
+rebuildBuffers()
+
+// ── Particle path functions ────────────────────────────────────────────────
+// Each particle i follows a torus-knot-like orbit so trails spread evenly.
+function getParticlePos(i, t, out) {
+  const N      = particleCount
+  const offset = (i / N) * Math.PI * 2
+  const p      = 2, q = 3        // torus-knot winding numbers
+  const R      = 8, r = 3        // major / minor radius
+  const speed  = params.speed
+
+  const phi = t * speed * 0.4 + offset
+  const x   = (R + r * Math.cos(q * phi)) * Math.cos(p * phi)
+  const y   =  r * Math.sin(q * phi)
+  const z   = (R + r * Math.cos(q * phi)) * Math.sin(p * phi)
+
+  out.x = x; out.y = y; out.z = z
+}
+
+// ── Update ─────────────────────────────────────────────────────────────────
+let lastT = performance.now()
+const _p  = { x: 0, y: 0, z: 0 }
+const _col = new THREE.Color()
+
+function update() {
+  const now  = performance.now()
+  const t    = now * 0.001
+  const N    = particleCount
+  const SEG  = trailLen
+
+  // 1. Advance all particles — push new position into circular history
+  for (let i = 0; i < N; i++) {
+    getParticlePos(i, t, _p)
+
+    const base = i * SEG * 3
+    const h    = headBuf[i]
+    hist[base + h * 3]     = _p.x
+    hist[base + h * 3 + 1] = _p.y
+    hist[base + h * 3 + 2] = _p.z
+    headBuf[i] = (h + 1) % SEG
+    if (filledBuf[i] === 0 && headBuf[i] === 0) filledBuf[i] = 1
+  }
+
+  // 2. Build LineSegments draw buffers
+  let vi = 0  // vertex write cursor (each vertex = 3 floats in posArr/colArr)
+
+  for (let i = 0; i < N; i++) {
+    const base       = i * SEG * 3
+    const validSlots = filledBuf[i] ? SEG : headBuf[i]
+    if (validSlots < 2) continue
+
+    // Oldest slot to start from
+    const startSlot = filledBuf[i] ? headBuf[i] : 0
+
+    // Colour: each particle gets a unique hue (full saturation, good brightness)
+    _col.setHSL(i / N, 1.0, 0.65)
+
+    for (let s = 0; s < validSlots - 1; s++) {
+      const s0 = (startSlot + s)     % SEG
+      const s1 = (startSlot + s + 1) % SEG
+
+      // tail→head brightness: minimum 0.15 so tail stays visible
+      const fade0 = 0.15 + 0.85 * (s       / (validSlots - 1))
+      const fade1 = 0.15 + 0.85 * ((s + 1) / (validSlots - 1))
+
+      // Vertex A (start of segment)
+      posArr[vi * 3]     = hist[base + s0 * 3]
+      posArr[vi * 3 + 1] = hist[base + s0 * 3 + 1]
+      posArr[vi * 3 + 2] = hist[base + s0 * 3 + 2]
+      colArr[vi * 3]     = _col.r * fade0
+      colArr[vi * 3 + 1] = _col.g * fade0
+      colArr[vi * 3 + 2] = _col.b * fade0
+      vi++
+
+      // Vertex B (end of segment)
+      posArr[vi * 3]     = hist[base + s1 * 3]
+      posArr[vi * 3 + 1] = hist[base + s1 * 3 + 1]
+      posArr[vi * 3 + 2] = hist[base + s1 * 3 + 2]
+      colArr[vi * 3]     = _col.r * fade1
+      colArr[vi * 3 + 1] = _col.g * fade1
+      colArr[vi * 3 + 2] = _col.b * fade1
+      vi++
+    }
+  }
+
+  geo.setDrawRange(0, vi)
+  geo.attributes.position.needsUpdate = true
+  geo.attributes.color.needsUpdate    = true
+
+  lastT = now
+}
+
+// ── Render loop ────────────────────────────────────────────────────────────
+;(function animate() {
+  requestAnimationFrame(animate)
+  update()
+  controls.update()
+  renderer.render(scene, camera)
+})()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BSDF Shaders — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px;
+  }
+  #labels {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .label {
+    position: absolute; transform: translateX(-50%);
+    background: rgba(0,0,0,0.55); padding: 2px 7px; border-radius: 3px;
+    font: 10px monospace; color: #eee; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div id="info">BSDF Shaders — @st-shader-core<br>Orbit to inspect · all spheres share the same scene lighting</div>
+<div id="labels"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  MaterialOutput,
+  PrincipledBSDF, DiffuseBSDF, GlossyBSDF, GlassBSDF,
+  SheenBSDF, SpecularBSDF, TranslucentBSDF, ToonBSDF,
+  RefractionBSDF, SubsurfaceScattering,
+  RGB, Value
+} from '@st-shader-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+// Lighting
+const ambient = new THREE.AmbientLight(0xffffff, 0.4)
+scene.add(ambient)
+const sun = new THREE.DirectionalLight(0xffffff, 2.5)
+sun.position.set(5, 8, 5)
+sun.castShadow = true
+scene.add(sun)
+const fill = new THREE.DirectionalLight(0x88aaff, 0.8)
+fill.position.set(-5, 2, -3)
+scene.add(fill)
+
+// Build one material per BSDF type
+const bsdfDefs = [
+  {
+    name: 'PrincipledBSDF',
+    build: () => {
+      const bsdf = new PrincipledBSDF({ roughness: 0.3, metallic: 0.0 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'DiffuseBSDF',
+    build: () => {
+      const bsdf = new DiffuseBSDF({ roughness: 0.5 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'GlossyBSDF',
+    build: () => {
+      const bsdf = new GlossyBSDF({ roughness: 0.15 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'GlassBSDF',
+    build: () => {
+      const bsdf = new GlassBSDF({ roughness: 0.05, ior: 1.45 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile()
+      mat.material.transparent = true
+      mat.material.side = THREE.DoubleSide
+      return mat.material
+    }
+  },
+  {
+    name: 'SheenBSDF',
+    build: () => {
+      const bsdf = new SheenBSDF({ roughness: 0.5 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'SpecularBSDF',
+    build: () => {
+      const bsdf = new SpecularBSDF({ roughness: 0.2 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'TranslucentBSDF',
+    build: () => {
+      const bsdf = new TranslucentBSDF()
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile()
+      mat.material.transparent = true
+      mat.material.side = THREE.DoubleSide
+      return mat.material
+    }
+  },
+  {
+    name: 'ToonBSDF',
+    build: () => {
+      const bsdf = new ToonBSDF({ size: 0.5, smooth: 0.05 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'RefractionBSDF',
+    build: () => {
+      const bsdf = new RefractionBSDF({ roughness: 0.0, ior: 1.33 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile()
+      mat.material.transparent = true
+      return mat.material
+    }
+  },
+  {
+    name: 'SubsurfaceScattering',
+    build: () => {
+      const bsdf = new SubsurfaceScattering({ scale: 0.3, radius: [1.0, 0.2, 0.1] })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  }
+]
+
+const geo    = new THREE.SphereGeometry(0.9, 48, 32)
+const total  = bsdfDefs.length
+const span   = (total - 1) * 2.4
+const labels = document.getElementById('labels')
+
+const spheres = bsdfDefs.map((def, i) => {
+  const mat  = def.build()
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.position.x = -span / 2 + i * 2.4
+  mesh.castShadow = true
+  scene.add(mesh)
+
+  const lbl = document.createElement('div')
+  lbl.className = 'label'
+  lbl.textContent = def.name
+  labels.appendChild(lbl)
+
+  return { mesh, lbl }
+})
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(40, 10),
+  new THREE.MeshStandardMaterial({ color: 0x1a1a1a })
+)
+ground.rotation.x = -Math.PI / 2
+ground.position.y = -1.1
+ground.receiveShadow = true
+scene.add(ground)
+
+function projectLabel(mesh, lbl) {
+  const v = mesh.position.clone().project(camera)
+  const x = (v.x * 0.5 + 0.5) * innerWidth
+  const y = (-v.y * 0.5 + 0.5) * innerHeight + 78
+  lbl.style.left  = x + 'px'
+  lbl.style.top   = y + 'px'
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  spheres.forEach(({ mesh, lbl }) => projectLabel(mesh, lbl))
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

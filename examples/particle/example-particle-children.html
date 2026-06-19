@@ -1,0 +1,351 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>st-particle-core — Children (Phase A7)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body { background: #0a0a12; color: #ccc; font-family: monospace; overflow: hidden }
+    canvas { display: block }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.6); border: 1px solid #333;
+      border-radius: 8px; padding: 16px; width: 260px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    #ui h2 { color: #9cf; font-size: 13px; margin-bottom: 4px }
+    .row { display: flex; flex-direction: column; gap: 3px }
+    label { font-size: 11px; color: #aaa }
+    input[type=range] { width: 100%; accent-color: #6af }
+    .val { font-size: 11px; color: #eee; text-align: right }
+    .toggle-row { display: flex; gap: 6px }
+    .btn {
+      flex: 1; padding: 6px 4px; font-size: 11px; cursor: pointer;
+      background: #1a1a2a; border: 1px solid #444; color: #bbb;
+      border-radius: 4px; font-family: monospace;
+    }
+    .btn.active { background: #2244aa; border-color: #6af; color: #eee }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h2>Children — Phase A7</h2>
+
+  <div class="row">
+    <label>childCount <span class="val" id="val-cc">5</span></label>
+    <input id="sl-cc" type="range" min="0" max="20" step="1" value="5" />
+  </div>
+
+  <div class="row">
+    <label>childSpread <span class="val" id="val-cs">0.4</span></label>
+    <input id="sl-cs" type="range" min="0" max="2" step="0.01" value="0.4" />
+  </div>
+
+  <div class="row">
+    <label>childType</label>
+    <div class="toggle-row">
+      <button class="btn"        id="btn-none" >none</button>
+      <button class="btn active" id="btn-simple">simple</button>
+      <button class="btn"        id="btn-interp">interpolated</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <label>parent size <span class="val" id="val-sz">0.12</span></label>
+    <input id="sl-sz" type="range" min="0.02" max="0.5" step="0.01" value="0.12" />
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Inline micro-implementations (no build step needed) ────────────────────
+
+class SeededRandom {
+  constructor(seed) { this.s = seed >>> 0 }
+  next()  { this.s = (Math.imul(1664525, this.s) + 1013904223) >>> 0; return this.s / 4294967296 }
+  signed(){ return this.next() * 2 - 1 }
+  reset(seed) { this.s = seed >>> 0 }
+}
+
+class Particle {
+  constructor() {
+    this.position   = new THREE.Vector3()
+    this.velocity   = new THREE.Vector3()
+    this.angularVel = new THREE.Vector3()
+    this.rotation   = new THREE.Vector3()
+    this.size = 0.1; this.normalised = 0; this.alive = false
+    this.lifetime = 2; this.age = 0; this.emitterIndex = 0
+  }
+  reset() {
+    this.position.set(0,0,0); this.velocity.set(0,0,0)
+    this.angularVel.set(0,0,0); this.rotation.set(0,0,0)
+    this.size = 0.1; this.normalised = 0; this.alive = false
+    this.lifetime = 2; this.age = 0
+  }
+}
+
+// ── Scene setup ─────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a12)
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200)
+camera.position.set(0, 3, 8)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+// ── Torus emitter geometry ──────────────────────────────────────────────────
+
+const torusGeo = new THREE.TorusGeometry(2, 0.5, 16, 64)
+const torusMesh = new THREE.Mesh(torusGeo, new THREE.MeshBasicMaterial({ color: 0x334, wireframe: true }))
+scene.add(torusMesh)
+
+// Collect surface positions from torus
+const posAttr = torusGeo.getAttribute('position')
+const surfacePoints = []
+for (let i = 0; i < posAttr.count; i++) {
+  surfacePoints.push(new THREE.Vector3(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)))
+}
+
+// ── Particle pool ───────────────────────────────────────────────────────────
+
+const POOL_SIZE = 300
+const LIFETIME  = 3.0
+const pool      = Array.from({ length: POOL_SIZE }, () => new Particle())
+const simRng    = new SeededRandom(7)
+const childRng  = new SeededRandom(7)
+
+let emitAccum = 0
+const emitRate = POOL_SIZE / LIFETIME  // steady state
+let cursor = 0
+
+function emit() {
+  // Find a dead slot
+  let slot = null
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const idx = (cursor + i) % POOL_SIZE
+    if (!pool[idx].alive) { slot = pool[idx]; cursor = (idx + 1) % POOL_SIZE; break }
+  }
+  if (!slot) { slot = pool[cursor]; cursor = (cursor + 1) % POOL_SIZE }
+
+  slot.reset()
+  slot.alive    = true
+  slot.lifetime = LIFETIME * (0.7 + 0.6 * simRng.next())
+  slot.size     = params.size * (0.8 + 0.4 * simRng.next())
+
+  // Pick a random surface point on the torus
+  const sp = surfacePoints[Math.floor(simRng.next() * surfacePoints.length)]
+  slot.position.copy(sp)
+
+  // Radial outward velocity + upward drift
+  const outward = sp.clone().normalize()
+  slot.velocity.set(
+    outward.x * (0.3 + simRng.next() * 0.5),
+    0.5 + simRng.next() * 1.5,
+    outward.z * (0.3 + simRng.next() * 0.5),
+  )
+}
+
+// ── Billboard draw buffer (inline expandWithChildren) ───────────────────────
+
+const MAX_DRAW = POOL_SIZE * 25  // pool × (1 + maxChildren)
+const drawPos   = new Float32Array(MAX_DRAW * 3)
+const drawSizes = new Float32Array(MAX_DRAW)
+const drawBuf   = Array.from({ length: MAX_DRAW }, () => ({
+  position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 },
+  size: 1, normalised: 0, alive: true, poolIdx: 0,
+}))
+const aliveBuf = new Array(POOL_SIZE)
+
+function expandChildren(childCount, childType, childSpread) {
+  const cc = Math.max(0, Math.round(childCount))
+  const ct = Math.round(childType)
+  let n = 0
+
+  if (cc === 0 || ct === 0) {
+    for (let pi = 0; pi < pool.length; pi++) {
+      const p = pool[pi]; if (!p.alive) continue
+      if (n >= MAX_DRAW) break
+      const d = drawBuf[n]
+      d.position.x = p.position.x; d.position.y = p.position.y; d.position.z = p.position.z
+      d.size = p.size; d.normalised = p.normalised; d.poolIdx = pi; n++
+    }
+    return n
+  }
+
+  // Build alive list
+  let an = 0
+  for (let pi = 0; pi < pool.length; pi++) {
+    if (pool[pi].alive) { aliveBuf[an++] = pool[pi] }
+  }
+
+  if (ct === 1) {
+    // Simple
+    for (let pi = 0; pi < pool.length; pi++) {
+      const p = pool[pi]; if (!p.alive) continue
+      if (n >= MAX_DRAW) break
+      const d = drawBuf[n]; d.position.x = p.position.x; d.position.y = p.position.y; d.position.z = p.position.z; d.size = p.size; d.normalised = p.normalised; d.poolIdx = pi; n++
+      for (let ci = 0; ci < cc; ci++) {
+        if (n >= MAX_DRAW) break
+        const dc = drawBuf[n]
+        const theta = childRng.next() * 6.2831853
+        const phi   = Math.acos(1 - 2 * childRng.next())
+        const r     = childSpread * Math.cbrt(childRng.next())
+        dc.position.x = p.position.x + r * Math.sin(phi) * Math.cos(theta)
+        dc.position.y = p.position.y + r * Math.sin(phi) * Math.sin(theta)
+        dc.position.z = p.position.z + r * Math.cos(phi)
+        dc.size = p.size * 0.6; dc.normalised = p.normalised; dc.poolIdx = pi; n++
+      }
+    }
+  } else {
+    // Interpolated
+    let ai = 0
+    for (let pi = 0; pi < pool.length; pi++) {
+      const p = pool[pi]; if (!p.alive) continue
+      if (n >= MAX_DRAW) break
+      const d = drawBuf[n]; d.position.x = p.position.x; d.position.y = p.position.y; d.position.z = p.position.z; d.size = p.size; d.normalised = p.normalised; d.poolIdx = pi; n++
+      const p1 = aliveBuf[(ai + 1) % an]
+      for (let ci = 0; ci < cc; ci++) {
+        if (n >= MAX_DRAW) break
+        const t  = (ci + 1) / (cc + 1)
+        const dc = drawBuf[n]
+        dc.position.x = p.position.x + (p1.position.x - p.position.x) * t
+        dc.position.y = p.position.y + (p1.position.y - p.position.y) * t
+        dc.position.z = p.position.z + (p1.position.z - p.position.z) * t
+        dc.size = p.size * 0.6; dc.normalised = p.normalised; dc.poolIdx = pi; n++
+      }
+      ai++
+    }
+  }
+  return n
+}
+
+// ── Three.js Points setup ───────────────────────────────────────────────────
+
+const ptGeo = new THREE.BufferGeometry()
+const posAttrDraw  = new THREE.BufferAttribute(drawPos,   3).setUsage(THREE.DynamicDrawUsage)
+const sizeAttrDraw = new THREE.BufferAttribute(drawSizes, 1).setUsage(THREE.DynamicDrawUsage)
+ptGeo.setAttribute('position', posAttrDraw)
+ptGeo.setAttribute('size',     sizeAttrDraw)
+ptGeo.setDrawRange(0, 0)
+
+// Generate a simple circular gradient sprite texture on a canvas
+const spriteCanvas = document.createElement('canvas')
+spriteCanvas.width = spriteCanvas.height = 64
+const ctx = spriteCanvas.getContext('2d')
+const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32)
+grad.addColorStop(0,    'rgba(220,200,255,1)')
+grad.addColorStop(0.35, 'rgba(100,150,255,0.9)')
+grad.addColorStop(1,    'rgba(0,0,80,0)')
+ctx.fillStyle = grad
+ctx.fillRect(0, 0, 64, 64)
+const spriteTex = new THREE.CanvasTexture(spriteCanvas)
+
+const ptMat = new THREE.PointsMaterial({
+  map: spriteTex, transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending, sizeAttenuation: true,
+  size: 0.2, alphaTest: 0.01,
+})
+const points = new THREE.Points(ptGeo, ptMat)
+points.frustumCulled = false
+scene.add(points)
+
+// ── UI state ────────────────────────────────────────────────────────────────
+
+const params = { childCount: 5, childSpread: 0.4, childType: 1, size: 0.12 }
+
+function bindSlider(id, valId, key, fmt = v => v) {
+  const sl = document.getElementById(id)
+  const vl = document.getElementById(valId)
+  sl.addEventListener('input', () => {
+    params[key] = parseFloat(sl.value)
+    vl.textContent = fmt(params[key])
+  })
+}
+bindSlider('sl-cc', 'val-cc', 'childCount', v => Math.round(v))
+bindSlider('sl-cs', 'val-cs', 'childSpread', v => v.toFixed(2))
+bindSlider('sl-sz', 'val-sz', 'size',        v => v.toFixed(2))
+
+function setType(t) {
+  params.childType = t
+  ;['btn-none','btn-simple','btn-interp'].forEach((id, i) =>
+    document.getElementById(id).classList.toggle('active', i === t))
+}
+document.getElementById('btn-none').addEventListener('click',  () => setType(0))
+document.getElementById('btn-simple').addEventListener('click', () => setType(1))
+document.getElementById('btn-interp').addEventListener('click', () => setType(2))
+
+// ── Animation loop ───────────────────────────────────────────────────────────
+
+const clock = new THREE.Clock()
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  // Emit
+  emitAccum += emitRate * dt
+  const toEmit = Math.floor(emitAccum)
+  emitAccum -= toEmit
+  for (let i = 0; i < toEmit; i++) emit()
+
+  // Step alive particles
+  for (const p of pool) {
+    if (!p.alive) continue
+    p.age += dt
+    if (p.age >= p.lifetime) { p.alive = false; continue }
+    p.normalised = p.age / p.lifetime
+    // Simple physics: upward velocity decays, gravity
+    p.velocity.y -= 4 * dt
+    p.position.addScaledVector(p.velocity, dt)
+  }
+
+  // Reset child RNG every frame for stable positions
+  childRng.reset(7)
+
+  // Expand with children
+  const drawCount = expandChildren(params.childCount, params.childType, params.childSpread)
+
+  // Write positions and sizes
+  let avgSize = 0
+  for (let i = 0; i < drawCount; i++) {
+    const d  = drawBuf[i]
+    const i3 = i * 3
+    drawPos[i3]     = d.position.x
+    drawPos[i3 + 1] = d.position.y
+    drawPos[i3 + 2] = d.position.z
+    const s = d.size * (1 - d.normalised) * params.size / 0.12
+    drawSizes[i] = s
+    avgSize += s
+  }
+
+  posAttrDraw.needsUpdate  = true
+  sizeAttrDraw.needsUpdate = true
+  ptGeo.setDrawRange(0, drawCount)
+  if (drawCount > 0) ptMat.size = avgSize / drawCount
+
+  controls.update()
+  renderer.render(scene, camera)
+})
+</script>
+</body>
+</html>

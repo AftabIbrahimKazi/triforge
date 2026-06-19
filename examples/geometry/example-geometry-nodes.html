@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-geometry-nodes — Procedural Geometry</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box }
+  body { background: #0d0d1a; overflow: hidden; font-family: sans-serif }
+  canvas { display: block }
+  #ui {
+    position: fixed; top: 16px; left: 16px; color: #ddd;
+    background: rgba(0,0,0,0.65); padding: 12px 16px; border-radius: 8px;
+    font-size: 13px; line-height: 2; user-select: none; min-width: 220px;
+  }
+  b { color: #88aaff }
+  label { display: flex; align-items: center; gap: 8px }
+  input[type=range] { width: 110px; accent-color: #88aaff }
+  select { background: #222; color: #ddd; border: 1px solid #444; padding: 2px 6px; border-radius: 4px }
+  #info { position: fixed; bottom: 14px; left: 16px; color: #666; font-size: 12px; font-family: monospace }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>st-geometry-nodes</b><br>
+  <label>Scene:
+    <select id="scene">
+      <option value="scatter">Scatter on Sphere</option>
+      <option value="subdivide">Subdivision Surface</option>
+      <option value="terrain">Terrain (SetPosition)</option>
+      <option value="join">Join + Transform</option>
+      <option value="icosphere">IcoSphere</option>
+    </select>
+  </label>
+  <div id="controls"></div>
+</div>
+<div id="info">0 verts</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.156.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.156.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Inline st-geometry-nodes (no build step) ──────────────────────────────────
+
+class OutputRef {
+  constructor(node, socket) { this.node = node; this.socket = socket }
+  evaluate() { return evaluateGraph(this) }
+}
+
+function resolveRef(value, cache) {
+  if (Array.isArray(value)) return value.map(v => resolveRef(v, cache))
+  if (!(value instanceof OutputRef)) return value
+  const { node, socket } = value
+  if (!cache.has(node)) {
+    const resolved = {}
+    for (const [k, v] of Object.entries(node._inputs ?? {})) resolved[k] = resolveRef(v, cache)
+    cache.set(node, node._evaluate(resolved))
+  }
+  const out = cache.get(node)
+  if (!(socket in out)) throw new Error(`Node "${node.nodeType}" has no socket "${socket}"`)
+  return out[socket]
+}
+
+function evaluateGraph(ref) { return resolveRef(ref, new Map()) }
+
+class GNode {
+  constructor() { this._inputs = {} }
+  output(socket) { return new OutputRef(this, socket) }
+}
+
+// ── Grid ──────────────────────────────────────────────────────────────────────
+class Grid extends GNode {
+  constructor({ sizeX=2, sizeY=2, vertsX=3, vertsY=3 } = {}) {
+    super()
+    this.nodeType = 'Grid'
+    this.parameters = { sizeX, sizeY, vertsX, vertsY }
+  }
+  _evaluate() {
+    const { sizeX, sizeY, vertsX, vertsY } = this.parameters
+    const cols = Math.max(2, vertsX), rows = Math.max(2, vertsY)
+    const hx = sizeX/2, hy = sizeY/2
+    const pos = [], nor = [], uvs = [], idx = []
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      pos.push(x/(cols-1)*sizeX-hx, y/(rows-1)*sizeY-hy, 0)
+      nor.push(0,0,1); uvs.push(x/(cols-1), y/(rows-1))
+    }
+    for (let y = 0; y < rows-1; y++) for (let x = 0; x < cols-1; x++) {
+      const a = y*cols+x; idx.push(a,a+1,a+cols,a+1,a+cols+1,a+cols)
+    }
+    return { Geometry: makeGeo(pos, nor, uvs, idx) }
+  }
+}
+
+// ── UVSphere ──────────────────────────────────────────────────────────────────
+class UVSphere extends GNode {
+  constructor({ radius=1, segments=32, rings=16 } = {}) {
+    super(); this.nodeType = 'UVSphere'
+    this.parameters = { radius, segments, rings }
+  }
+  _evaluate() {
+    const { radius, segments, rings } = this.parameters
+    const segs = Math.max(3,segments), rngs = Math.max(2,rings)
+    const pos=[], nor=[], uvs=[], idx=[]
+    for (let r=0; r<=rngs; r++) {
+      const phi = r/rngs*Math.PI, sp=Math.sin(phi), cp=Math.cos(phi)
+      for (let s=0; s<=segs; s++) {
+        const th=s/segs*Math.PI*2, x=Math.cos(th)*sp, y=cp, z=Math.sin(th)*sp
+        pos.push(x*radius,y*radius,z*radius); nor.push(x,y,z); uvs.push(s/segs,1-r/rngs)
+      }
+    }
+    const cols=segs+1
+    for (let r=0;r<rngs;r++) for (let s=0;s<segs;s++) {
+      const a=r*cols+s,b=a+cols; idx.push(a,b,a+1,b,b+1,a+1)
+    }
+    return { Geometry: makeGeo(pos,nor,uvs,idx) }
+  }
+}
+
+// ── IcoSphere ─────────────────────────────────────────────────────────────────
+class IcoSphere extends GNode {
+  constructor({ radius=1, subdivisions=2 } = {}) {
+    super(); this.nodeType = 'IcoSphere'
+    this.parameters = { radius, subdivisions }
+  }
+  _evaluate() {
+    const { radius, subdivisions } = this.parameters
+    const t=(1+Math.sqrt(5))/2
+    const norm=([x,y,z])=>{const l=Math.sqrt(x*x+y*y+z*z);return[x/l,y/l,z/l]}
+    let verts=[[-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],[0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],[t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]].map(norm)
+    let faces=[[0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],[3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]]
+    const cache=new Map(), mid=(a,b)=>{
+      const k=a<b?`${a}_${b}`:`${b}_${a}`
+      if(cache.has(k))return cache.get(k)
+      const va=verts[a],vb=verts[b];verts.push(norm([(va[0]+vb[0])/2,(va[1]+vb[1])/2,(va[2]+vb[2])/2]))
+      cache.set(k,verts.length-1);return verts.length-1
+    }
+    for(let i=0;i<Math.min(7,subdivisions);i++){
+      const next=[];for(const[a,b,c]of faces){const ab=mid(a,b),bc=mid(b,c),ca=mid(c,a);next.push([a,ab,ca],[ab,b,bc],[ca,bc,c],[ab,bc,ca])}
+      faces=next
+    }
+    const pos=[],nor=[],uvs=[]
+    for(const[a,b,c]of faces)for(const vi of[a,b,c]){
+      const[x,y,z]=verts[vi];pos.push(x*radius,y*radius,z*radius);nor.push(x,y,z)
+      uvs.push(Math.atan2(z,x)/(Math.PI*2)+0.5,Math.asin(y)/Math.PI+0.5)
+    }
+    const geo=makeGeo(pos,nor,uvs)
+    geo.computeVertexNormals()
+    return{Geometry:geo}
+  }
+}
+
+// ── Cube ──────────────────────────────────────────────────────────────────────
+class Cube extends GNode {
+  constructor({ size=2, sizeX, sizeY, sizeZ } = {}) {
+    super(); this.nodeType='Cube'
+    this.parameters={ sizeX:sizeX??size, sizeY:sizeY??size, sizeZ:sizeZ??size }
+  }
+  _evaluate() {
+    const{sizeX,sizeY,sizeZ}=this.parameters
+    const[hx,hy,hz]=[sizeX/2,sizeY/2,sizeZ/2]
+    const faceDefs=[
+      {v:[[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz]],n:[0,0,1]},
+      {v:[[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz]],n:[0,0,-1]},
+      {v:[[-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz]],n:[-1,0,0]},
+      {v:[[hx,-hy,hz],[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz]],n:[1,0,0]},
+      {v:[[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz]],n:[0,1,0]},
+      {v:[[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz]],n:[0,-1,0]},
+    ]
+    const pos=[],nor=[],uvs=[],idx=[];let base=0
+    for(const{v,n}of faceDefs){
+      for(const[x,y,z]of v){pos.push(x,y,z);nor.push(...n)}
+      uvs.push(0,0,1,0,1,1,0,1);idx.push(base,base+1,base+2,base,base+2,base+3);base+=4
+    }
+    return{Geometry:makeGeo(pos,nor,uvs,idx)}
+  }
+}
+
+// ── TransformGeometry ─────────────────────────────────────────────────────────
+class TransformGeometry extends GNode {
+  constructor({ geometry=null, translation=[0,0,0], rotation=[0,0,0], scale=[1,1,1] }={}) {
+    super(); this.nodeType='TransformGeometry'
+    this.parameters={
+      tx:translation[0],ty:translation[1],tz:translation[2],
+      rx:rotation[0],ry:rotation[1],rz:rotation[2],
+      sx:scale[0],sy:scale[1],sz:scale[2],
+    }
+    if(geometry!=null)this._inputs.geometry=geometry
+  }
+  _evaluate(inputs) {
+    const src=inputs.geometry; if(!src)return{Geometry:null}
+    const{tx,ty,tz,rx,ry,rz,sx,sy,sz}=this.parameters
+    const mat=new THREE.Matrix4().compose(
+      new THREE.Vector3(tx,ty,tz),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz)),
+      new THREE.Vector3(sx,sy,sz)
+    )
+    const nmat=new THREE.Matrix4().copy(mat).invert().transpose()
+    const geo=src.clone(), pa=geo.getAttribute('position'), na=geo.getAttribute('normal')
+    const v=new THREE.Vector3()
+    for(let i=0;i<pa.count;i++){v.fromBufferAttribute(pa,i).applyMatrix4(mat);pa.setXYZ(i,v.x,v.y,v.z)}
+    if(na)for(let i=0;i<na.count;i++){v.fromBufferAttribute(na,i).applyMatrix4(nmat).normalize();na.setXYZ(i,v.x,v.y,v.z)}
+    return{Geometry:geo}
+  }
+}
+
+// ── JoinGeometry ──────────────────────────────────────────────────────────────
+class JoinGeometry extends GNode {
+  constructor(geos){ super(); this.nodeType='JoinGeometry'; this._inputs.geometries=geos }
+  _evaluate(inputs){ return{Geometry:mergeGeos(inputs.geometries.filter(Boolean))} }
+}
+
+function mergeGeos(geos) {
+  if(!geos.length)return null; if(geos.length===1)return geos[0].clone()
+  const ap=[],an=[],au=[],ai=[];let base=0
+  for(const g of geos){
+    const pa=g.getAttribute('position'),na=g.getAttribute('normal'),ua=g.getAttribute('uv'),ix=g.getIndex()
+    if(ix)for(let i=0;i<ix.count;i++)ai.push(ix.getX(i)+base)
+    else for(let i=0;i<pa.count;i++)ai.push(i+base)
+    for(let i=0;i<pa.count;i++){
+      ap.push(pa.getX(i),pa.getY(i),pa.getZ(i))
+      if(na)an.push(na.getX(i),na.getY(i),na.getZ(i));else an.push(0,1,0)
+      if(ua)au.push(ua.getX(i),ua.getY(i));else au.push(0,0)
+    }
+    base+=pa.count
+  }
+  return makeGeo(ap,an,au,ai)
+}
+
+// ── SetPosition ───────────────────────────────────────────────────────────────
+class SetPosition extends GNode {
+  constructor({ geometry=null, offset=[0,0,0] }={}) {
+    super(); this.nodeType='SetPosition'; this._offset=offset
+    if(geometry!=null)this._inputs.geometry=geometry
+  }
+  _evaluate(inputs) {
+    const src=inputs.geometry; if(!src)return{Geometry:null}
+    const geo=src.clone(), pa=geo.getAttribute('position'), n=pa.count
+    for(let i=0;i<n;i++){
+      const[dx,dy,dz]=typeof this._offset==='function'?this._offset(i,n):this._offset
+      pa.setXYZ(i,pa.getX(i)+dx,pa.getY(i)+dy,pa.getZ(i)+dz)
+    }
+    geo.computeVertexNormals(); return{Geometry:geo}
+  }
+}
+
+// ── SubdivisionSurface ────────────────────────────────────────────────────────
+class SubdivisionSurface extends GNode {
+  constructor({ geometry=null, level=1 }={}) {
+    super(); this.nodeType='SubdivisionSurface'; this.parameters={level}
+    if(geometry!=null)this._inputs.geometry=geometry
+  }
+  _evaluate(inputs) {
+    const src=inputs.geometry; if(!src)return{Geometry:null}
+    let geo=triangulateCopy(src)
+    for(let i=0;i<Math.max(0,Math.min(6,this.parameters.level));i++)geo=subdivide(geo)
+    geo.computeVertexNormals(); return{Geometry:geo}
+  }
+}
+
+function triangulateCopy(src) {
+  const pa=src.getAttribute('position'),ua=src.getAttribute('uv'),ix=src.getIndex()
+  const pos=[],uvs=[]
+  const emit=i=>{pos.push(pa.getX(i),pa.getY(i),pa.getZ(i));if(ua)uvs.push(ua.getX(i),ua.getY(i))}
+  if(ix)for(let f=0;f<ix.count;f+=3){emit(ix.getX(f));emit(ix.getX(f+1));emit(ix.getX(f+2))}
+  else for(let i=0;i<pa.count;i++)emit(i)
+  const g=new THREE.BufferGeometry()
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pos),3))
+  if(ua)g.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(uvs),2))
+  return g
+}
+
+function subdivide(src) {
+  const pa=src.getAttribute('position'),ua=src.getAttribute('uv'),n=pa.count
+  const np=[],nu=[]
+  const mid=(ax,ay,az,bx,by,bz)=>[(ax+bx)/2,(ay+by)/2,(az+bz)/2]
+  for(let f=0;f<n;f+=3){
+    const ax=pa.getX(f),ay=pa.getY(f),az=pa.getZ(f)
+    const bx=pa.getX(f+1),by=pa.getY(f+1),bz=pa.getZ(f+1)
+    const cx=pa.getX(f+2),cy=pa.getY(f+2),cz=pa.getZ(f+2)
+    const[abx,aby,abz]=mid(ax,ay,az,bx,by,bz)
+    const[bcx,bcy,bcz]=mid(bx,by,bz,cx,cy,cz)
+    const[cax,cay,caz]=mid(cx,cy,cz,ax,ay,az)
+    np.push(ax,ay,az,abx,aby,abz,cax,cay,caz,abx,aby,abz,bx,by,bz,bcx,bcy,bcz,cax,cay,caz,bcx,bcy,bcz,cx,cy,cz,abx,aby,abz,bcx,bcy,bcz,cax,cay,caz)
+    if(ua){
+      const au=ua.getX(f),av=ua.getY(f),bu=ua.getX(f+1),bv=ua.getY(f+1),cu=ua.getX(f+2),cv=ua.getY(f+2)
+      const abu=(au+bu)/2,abv=(av+bv)/2,bcu=(bu+cu)/2,bcv=(bv+cv)/2,cau=(cu+au)/2,cav=(cv+av)/2
+      nu.push(au,av,abu,abv,cau,cav,abu,abv,bu,bv,bcu,bcv,cau,cav,bcu,bcv,cu,cv,abu,abv,bcu,bcv,cau,cav)
+    }
+  }
+  const g=new THREE.BufferGeometry()
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(np),3))
+  if(ua)g.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(nu),2))
+  return g
+}
+
+// ── DistributePointsOnFaces ───────────────────────────────────────────────────
+class DistributePointsOnFaces extends GNode {
+  constructor({ mesh=null, count=100, seed=0 }={}) {
+    super(); this.nodeType='DistributePointsOnFaces'; this.parameters={count,seed}
+    if(mesh!=null)this._inputs.mesh=mesh
+  }
+  _evaluate(inputs) {
+    const src=inputs.mesh; if(!src)return{Points:null}
+    const pa=src.getAttribute('position'),na=src.getAttribute('normal'),ix=src.getIndex()
+    const tris=[]; const va=new THREE.Vector3(),vb=new THREE.Vector3(),vc=new THREE.Vector3()
+    const addTri=(ia,ib,ic)=>{
+      va.fromBufferAttribute(pa,ia);vb.fromBufferAttribute(pa,ib);vc.fromBufferAttribute(pa,ic)
+      const n=new THREE.Vector3().crossVectors(vb.clone().sub(va),vc.clone().sub(va)).normalize()
+      tris.push([va.clone(),vb.clone(),vc.clone(),n])
+    }
+    if(ix)for(let i=0;i<ix.count;i+=3)addTri(ix.getX(i),ix.getX(i+1),ix.getX(i+2))
+    else for(let i=0;i<pa.count;i+=3)addTri(i,i+1,i+2)
+    const areas=tris.map(([a,b,c])=>new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a)).length()*0.5)
+    const total=areas.reduce((s,a)=>s+a,0)
+    const cum=areas.map((s=>a=>s+=a)(0))
+    let lcg=(this.parameters.seed|0)^0xdeadbeef
+    const rand=()=>{lcg=(Math.imul(lcg,1664525)+1013904223)>>>0;return lcg/0x100000000}
+    const op=[],on=[]
+    for(let p=0;p<this.parameters.count;p++){
+      const r=rand()*total; let ti=cum.findIndex(c=>c>=r); if(ti<0)ti=tris.length-1
+      const[a,b,c,n]=tris[ti]; let u=rand(),v=rand(); if(u+v>1){u=1-u;v=1-v}; const w=1-u-v
+      op.push(a.x*w+b.x*u+c.x*v,a.y*w+b.y*u+c.y*v,a.z*w+b.z*u+c.z*v)
+      on.push(n.x,n.y,n.z)
+    }
+    const g=new THREE.BufferGeometry()
+    g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(op),3))
+    g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(on),3))
+    return{Points:g}
+  }
+}
+
+// ── InstanceOnPoints ──────────────────────────────────────────────────────────
+class InstanceOnPoints extends GNode {
+  constructor({ points=null, instance=null, scale=[1,1,1], alignToNormal=false }={}) {
+    super(); this.nodeType='InstanceOnPoints'
+    this._scale=scale; this._align=alignToNormal
+    if(points!=null)this._inputs.points=points
+    if(instance!=null)this._inputs.instance=instance
+  }
+  _evaluate(inputs) {
+    const pts=inputs.points,inst=inputs.instance; if(!pts||!inst)return{Geometry:null}
+    const pp=pts.getAttribute('position'),pn=pts.getAttribute('normal'),n=pp.count
+    const geos=[],up=new THREE.Vector3(0,0,1)
+    for(let i=0;i<n;i++){
+      const px=pp.getX(i),py=pp.getY(i),pz=pp.getZ(i)
+      let sx,sy,sz
+      if(typeof this._scale==='function'){const r=this._scale(i,n);typeof r==='number'?sx=sy=sz=r:[sx,sy,sz]=r}
+      else[sx,sy,sz]=this._scale
+      let q=new THREE.Quaternion()
+      if(this._align&&pn){
+        const nv=new THREE.Vector3(pn.getX(i),pn.getY(i),pn.getZ(i)).normalize()
+        q.setFromUnitVectors(up,nv)
+      }
+      const mat=new THREE.Matrix4().compose(new THREE.Vector3(px,py,pz),q,new THREE.Vector3(sx,sy,sz))
+      const nm=new THREE.Matrix4().copy(mat).invert().transpose()
+      const geo=inst.clone()
+      const pa=geo.getAttribute('position'),na=geo.getAttribute('normal'),v=new THREE.Vector3()
+      for(let j=0;j<pa.count;j++){v.fromBufferAttribute(pa,j).applyMatrix4(mat);pa.setXYZ(j,v.x,v.y,v.z)}
+      if(na)for(let j=0;j<na.count;j++){v.fromBufferAttribute(na,j).applyMatrix4(nm).normalize();na.setXYZ(j,v.x,v.y,v.z)}
+      geos.push(geo)
+    }
+    return{Geometry:mergeGeos(geos)}
+  }
+}
+
+// ── Helper ────────────────────────────────────────────────────────────────────
+function makeGeo(pos, nor, uvs, idx) {
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3))
+  if (nor?.length) g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3))
+  if (uvs?.length) g.setAttribute('uv',     new THREE.BufferAttribute(new Float32Array(uvs), 2))
+  if (idx?.length) g.setIndex(idx)
+  return g
+}
+
+// ── Three.js scene ────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d1a)
+scene.fog = new THREE.Fog(0x0d0d1a, 15, 40)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 100)
+camera.position.set(0, 3, 8)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+controls.update()
+
+scene.add(new THREE.AmbientLight(0x334466, 2))
+const dirLight = new THREE.DirectionalLight(0xffffff, 3)
+dirLight.position.set(4, 8, 3)
+dirLight.castShadow = true
+scene.add(dirLight)
+const fillLight = new THREE.DirectionalLight(0x4466ff, 1)
+fillLight.position.set(-4, 2, -3)
+scene.add(fillLight)
+
+let meshes = []
+
+function clearScene() {
+  for (const m of meshes) { scene.remove(m); m.geometry.dispose() }
+  meshes = []
+}
+
+function addMesh(geo, color = 0x88aaff, wireframe = false) {
+  if (!geo) return
+  const mat = new THREE.MeshStandardMaterial({
+    color, roughness: 0.5, metalness: 0.1,
+    side: THREE.DoubleSide, wireframe,
+  })
+  const m = new THREE.Mesh(geo, mat)
+  m.castShadow = m.receiveShadow = true
+  scene.add(m)
+  meshes.push(m)
+  return m
+}
+
+// ── Scenes ────────────────────────────────────────────────────────────────────
+
+function sceneScatter({ count = 80, subLevel = 0 } = {}) {
+  clearScene()
+  const sphere = new UVSphere({ radius: 1.5, segments: 24, rings: 12 })
+  const pts    = new DistributePointsOnFaces({ mesh: sphere.output('Geometry'), count, seed: 42 })
+  const cube   = new Cube({ size: 0.15 })
+  const iop    = new InstanceOnPoints({
+    points:   pts.output('Points'),
+    instance: cube.output('Geometry'),
+    scale:    (i, n) => 0.5 + 0.5 * Math.sin(i / n * Math.PI * 4),
+    alignToNormal: true,
+  })
+  const sphereGeo = sphere.output('Geometry').evaluate()
+  const instGeo   = iop.output('Geometry').evaluate()
+  addMesh(sphereGeo, 0x223355)
+  addMesh(instGeo,   0x88aaff)
+  updateInfo(sphereGeo, instGeo)
+}
+
+function sceneSubdivide({ level = 2 } = {}) {
+  clearScene()
+  const ico = new IcoSphere({ radius: 2, subdivisions: 0 })
+  const sub = new SubdivisionSurface({ geometry: ico.output('Geometry'), level })
+  const geo = sub.output('Geometry').evaluate()
+  addMesh(geo, 0x44aaff)
+  // wireframe overlay
+  addMesh(geo.clone(), 0xffffff, true)
+  updateInfo(geo)
+}
+
+function sceneTerrain({ vertsX = 30, vertsY = 30, amplitude = 0.8 } = {}) {
+  clearScene()
+  const grid = new Grid({ sizeX: 6, sizeY: 6, vertsX, vertsY })
+  const disp = new SetPosition({
+    geometry: grid.output('Geometry'),
+    offset: (i, n) => {
+      const pa = grid.output('Geometry').evaluate().getAttribute('position')
+      const x  = pa.getX(i), y = pa.getY(i)
+      const h  = (Math.sin(x * 1.5) * Math.cos(y * 1.5) + Math.sin(x * 3 + 0.5) * 0.4) * amplitude
+      return [0, 0, h]
+    },
+  })
+  const geo = disp.output('Geometry').evaluate()
+  // Rotate to face up
+  const mat = new THREE.Matrix4().makeRotationX(-Math.PI / 2)
+  const pa  = geo.getAttribute('position')
+  const v   = new THREE.Vector3()
+  for (let i = 0; i < pa.count; i++) { v.fromBufferAttribute(pa, i).applyMatrix4(mat); pa.setXYZ(i, v.x, v.y, v.z) }
+  geo.computeVertexNormals()
+  addMesh(geo, 0x336633)
+  updateInfo(geo)
+}
+
+function sceneJoin({ cols = 5, rows = 3 } = {}) {
+  clearScene()
+  const pieces = []
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const base = (r * cols + c) % 3 === 0 ? new UVSphere({ radius: 0.4, segments: 12, rings: 6 })
+               : (r * cols + c) % 3 === 1 ? new Cube({ size: 0.6 })
+               :                            new IcoSphere({ radius: 0.4, subdivisions: 1 })
+    const t = new TransformGeometry({
+      geometry: base.output('Geometry'),
+      translation: [(c - cols/2) * 1.4, (r - rows/2) * 1.4, 0],
+      rotation: [r * 0.3, c * 0.4, 0],
+    })
+    pieces.push(t.output('Geometry'))
+  }
+  const joined = new JoinGeometry(pieces)
+  const geo    = joined.output('Geometry').evaluate()
+  addMesh(geo, 0xffaa44)
+  updateInfo(geo)
+}
+
+function sceneIco({ subdivisions = 3 } = {}) {
+  clearScene()
+  const ico = new IcoSphere({ radius: 2, subdivisions })
+  const geo = ico.output('Geometry').evaluate()
+  addMesh(geo, 0x44ffaa)
+  addMesh(geo.clone(), 0xffffff, true)
+  updateInfo(geo)
+}
+
+function updateInfo(...geos) {
+  let total = 0
+  for (const g of geos) if (g) total += g.getAttribute('position').count
+  document.getElementById('info').textContent =
+    `${total.toLocaleString()} verts total  |  orbit to inspect`
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+const sceneBuilders = {
+  scatter:   (p) => sceneScatter(p),
+  subdivide: (p) => sceneSubdivide(p),
+  terrain:   (p) => sceneTerrain(p),
+  join:      (p) => sceneJoin(p),
+  icosphere: (p) => sceneIco(p),
+}
+
+const sceneParams = {
+  scatter:   { count: 80 },
+  subdivide: { level: 2 },
+  terrain:   { vertsX: 30, vertsY: 30, amplitude: 0.8 },
+  join:      { cols: 5, rows: 3 },
+  icosphere: { subdivisions: 3 },
+}
+
+const controlDefs = {
+  scatter:   [{ id:'count',  label:'Count',    min:10,  max:300, step:10, key:'count'  }],
+  subdivide: [{ id:'level',  label:'Level',    min:0,   max:5,   step:1,  key:'level'  }],
+  terrain:   [
+    { id:'vertsX',     label:'Verts X',    min:5,  max:60, step:5,   key:'vertsX'    },
+    { id:'amplitude',  label:'Height',     min:0,  max:2,  step:0.1, key:'amplitude' },
+  ],
+  join:      [
+    { id:'cols', label:'Cols', min:1, max:8, step:1, key:'cols' },
+    { id:'rows', label:'Rows', min:1, max:6, step:1, key:'rows' },
+  ],
+  icosphere: [{ id:'subdivisions', label:'Subdivisions', min:0, max:6, step:1, key:'subdivisions' }],
+}
+
+let currentScene = 'scatter'
+
+function buildControls(name) {
+  const ctrl = document.getElementById('controls')
+  ctrl.innerHTML = ''
+  for (const def of controlDefs[name] ?? []) {
+    const val = sceneParams[name][def.key]
+    ctrl.innerHTML += `
+      <label>${def.label}:
+        <input type="range" id="${def.id}" min="${def.min}" max="${def.max}" step="${def.step}" value="${val}">
+        <span id="${def.id}Val">${val}</span>
+      </label>`
+  }
+  for (const def of controlDefs[name] ?? []) {
+    document.getElementById(def.id)?.addEventListener('input', e => {
+      const v = parseFloat(e.target.value)
+      document.getElementById(def.id + 'Val').textContent = v
+      sceneParams[currentScene][def.key] = v
+      sceneBuilders[currentScene](sceneParams[currentScene])
+    })
+  }
+}
+
+document.getElementById('scene').addEventListener('change', e => {
+  currentScene = e.target.value
+  buildControls(currentScene)
+  sceneBuilders[currentScene](sceneParams[currentScene])
+})
+
+buildControls('scatter')
+sceneScatter(sceneParams.scatter)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

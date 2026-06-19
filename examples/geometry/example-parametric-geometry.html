@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>radius-parametric-geometry — example</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:monospace; }
+  #info { position:absolute; top:10px; left:10px; color:#aaa; font-size:12px; line-height:1.8; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="info">
+  radius-parametric-geometry<br>
+  Left: Vase (sine radius) | Centre: Star (cos*n radius) | Right: Donut bump
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { RadiusParametricGeometry } from '../../radius-parametric-geometry/dist/index.js'
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 2, 10)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.4)
+sun.position.set(5, 10, 5)
+scene.add(sun)
+
+const mat = new THREE.MeshStandardMaterial({ color: 0x66aaff, metalness: 0.3, roughness: 0.5, side: THREE.DoubleSide })
+
+// ── 1. Vase: radius varies with v (height), with a sine wobble ───────────────
+const vase = new RadiusParametricGeometry(
+  (u, v) => 0.5 + 0.4 * Math.sin(v * Math.PI) + 0.08 * Math.sin(u * Math.PI * 8),
+  (u, v) => v * 3 - 1.5,
+  { radiusSegments: 64, heightSegments: 32 },
+)
+const vaseMesh = new THREE.Mesh(vase, mat.clone())
+vaseMesh.position.set(-4, 0, 0)
+scene.add(vaseMesh)
+
+// ── 2. Star: 5-pointed radial cross-section using cos(5θ) ───────────────────
+const star = new RadiusParametricGeometry(
+  (u, _v) => 0.6 + 0.35 * Math.cos(u * Math.PI * 2 * 5),
+  (_u, v) => (v - 0.5) * 2.5,
+  { radiusSegments: 80, heightSegments: 24 },
+)
+const starMesh = new THREE.Mesh(star, new THREE.MeshStandardMaterial({ color: 0xffaa44, metalness: 0.2, roughness: 0.6, side: THREE.DoubleSide }))
+starMesh.position.set(0, 0, 0)
+scene.add(starMesh)
+
+// ── 3. Bumpy torus-like shape ─────────────────────────────────────────────────
+const R = 1.2  // major radius
+const r = 0.35 // minor radius
+const bumpy = new RadiusParametricGeometry(
+  (u, v) => R + (r + 0.1 * Math.sin(v * Math.PI * 8)) * Math.cos(v * Math.PI * 2),
+  (_u, v) => (r + 0.1 * Math.sin(v * Math.PI * 8)) * Math.sin(v * Math.PI * 2),
+  { radiusSegments: 80, heightSegments: 60 },
+)
+const bumpMesh = new THREE.Mesh(bumpy, new THREE.MeshStandardMaterial({ color: 0x88ff66, metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide }))
+bumpMesh.position.set(4, 0, 0)
+scene.add(bumpMesh)
+
+// ── Loop ──────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

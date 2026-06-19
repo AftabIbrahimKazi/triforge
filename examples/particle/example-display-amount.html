@@ -1,0 +1,185 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Display Amount — st-particle-core</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box }
+    body { background: #111; overflow: hidden; font-family: monospace }
+    canvas { display: block }
+    #ui {
+      position: fixed; top: 16px; left: 16px; color: #eee;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 13px }
+    input[type=range] { width: 200px }
+    #val { color: #0f9 }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <label>Display Amount: <span id="val">1.00</span>
+    <input type="range" id="slider" min="0" max="1" step="0.01" value="1">
+  </label>
+  <div style="font-size:11px;color:#888">Drag slider — only this fraction of particles are drawn.<br>Simulation keeps running at full count.</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Three.js setup ──────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200)
+camera.position.set(0, 4, 12)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight)
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+})
+
+// ── Manual particle simulation (no module bundler needed) ───────────────────
+// Replicate the core loop inline so the example is self-contained.
+
+const COUNT = 400
+const LIFETIME = 3.0
+
+const positions  = new Float32Array(COUNT * 3)
+const sizes      = new Float32Array(COUNT)
+const ages       = new Float32Array(COUNT)
+const lifetimes  = new Float32Array(COUNT).fill(LIFETIME)
+const velX       = new Float32Array(COUNT)
+const velY       = new Float32Array(COUNT)
+const velZ       = new Float32Array(COUNT)
+const alive      = new Uint8Array(COUNT)
+
+// Seed RNG
+function lcg(seed) {
+  let s = seed | 0
+  return () => { s = (Math.imul(1664525, s) + 1013904223) | 0; return (s >>> 0) / 0xFFFFFFFF }
+}
+const rng = lcg(42)
+
+// Initialise all particles
+for (let i = 0; i < COUNT; i++) {
+  ages[i]      = rng() * LIFETIME          // stagger so pool is pre-filled
+  lifetimes[i] = LIFETIME * (0.7 + rng() * 0.6)
+  velX[i]      = (rng() - 0.5) * 2
+  velY[i]      = rng() * 3 + 1
+  velZ[i]      = (rng() - 0.5) * 2
+  alive[i]     = 1
+  positions[i * 3]     = (rng() - 0.5) * 4
+  positions[i * 3 + 1] = rng() * 4
+  positions[i * 3 + 2] = (rng() - 0.5) * 4
+  sizes[i] = 0.15 + rng() * 0.2
+}
+
+// THREE.Points geometry
+const geo = new THREE.BufferGeometry()
+const posAttr  = new THREE.BufferAttribute(positions, 3).setUsage(35048)
+const sizeAttr = new THREE.BufferAttribute(sizes, 1).setUsage(35048)
+geo.setAttribute('position', posAttr)
+geo.setAttribute('size', sizeAttr)
+geo.setDrawRange(0, COUNT)
+
+const mat = new THREE.PointsMaterial({
+  color: 0x88ddff,
+  size: 0.18,
+  sizeAttenuation: true,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+})
+const points = new THREE.Points(geo, mat)
+points.frustumCulled = false
+scene.add(points)
+
+// Grid helper
+scene.add(new THREE.GridHelper(20, 20, 0x333333, 0x222222))
+
+// ── UI ──────────────────────────────────────────────────────────────────────
+let displayAmount = 1.0
+const slider = document.getElementById('slider')
+const valEl  = document.getElementById('val')
+slider.addEventListener('input', () => {
+  displayAmount = parseFloat(slider.value)
+  valEl.textContent = displayAmount.toFixed(2)
+})
+
+// ── Animation loop ──────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+
+// Working arrays for alive particles (indices)
+const drawOrder = new Int32Array(COUNT)
+
+function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  // Step particles
+  for (let i = 0; i < COUNT; i++) {
+    if (!alive[i]) continue
+    ages[i] += dt
+    if (ages[i] >= lifetimes[i]) {
+      // Respawn
+      ages[i]      = 0
+      lifetimes[i] = LIFETIME * (0.7 + rng() * 0.6)
+      positions[i * 3]     = (rng() - 0.5) * 4
+      positions[i * 3 + 1] = 0
+      positions[i * 3 + 2] = (rng() - 0.5) * 4
+      velX[i] = (rng() - 0.5) * 2
+      velY[i] = rng() * 3 + 1
+      velZ[i] = (rng() - 0.5) * 2
+    }
+    velY[i] -= 2.5 * dt          // gravity
+    positions[i * 3]     += velX[i] * dt
+    positions[i * 3 + 1] += velY[i] * dt
+    positions[i * 3 + 2] += velZ[i] * dt
+  }
+
+  // Gather alive indices into drawOrder
+  let totalAlive = 0
+  for (let i = 0; i < COUNT; i++) {
+    if (alive[i]) drawOrder[totalAlive++] = i
+  }
+
+  // Apply displayAmount: only draw this fraction
+  const drawCount = Math.round(totalAlive * displayAmount)
+
+  // Fill position buffer for [0..drawCount)
+  for (let d = 0; d < drawCount; d++) {
+    const i  = drawOrder[d]
+    const d3 = d * 3
+    positions[d3]     = positions[i * 3]
+    positions[d3 + 1] = positions[i * 3 + 1]
+    positions[d3 + 2] = positions[i * 3 + 2]
+    sizes[d] = sizes[i]
+  }
+
+  posAttr.needsUpdate  = true
+  sizeAttr.needsUpdate = true
+  geo.setDrawRange(0, drawCount)
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+</script>
+</body>
+</html>

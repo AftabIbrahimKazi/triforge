@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GaussianBlur · GlareStreaks · MotionBlur · RenderLayers — @st-compositor-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 280px;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  #tabs {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; gap: 6px; flex-wrap: wrap; max-width: 260px; justify-content: flex-end;
+  }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 220px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>New Compositor Passes</h3>
+  GaussianBlur · GlareStreaks<br>
+  MotionBlur · RenderLayers
+</div>
+<div id="tabs"></div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":               "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":       "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-compositor-core": "../../st-compositor-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CompositorOutput, GaussianBlur, GlareStreaks, MotionBlur, RenderLayers } from '@st-compositor-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x050508)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 8)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.3))
+const spot = new THREE.PointLight(0xffffff, 8, 20)
+spot.position.set(0, 4, 2); scene.add(spot)
+
+// Emissive spheres (good targets for glare/blur)
+const spheres = []
+const colors = [0xff3300, 0x0088ff, 0xffcc00, 0x00ff88, 0xff00cc]
+for (let i = 0; i < 5; i++) {
+  const geo = new THREE.SphereGeometry(0.4, 24, 24)
+  const mat = new THREE.MeshStandardMaterial({
+    color: colors[i], emissive: colors[i], emissiveIntensity: 2,
+    roughness: 0.3, metalness: 0.4,
+  })
+  const mesh = new THREE.Mesh(geo, mat)
+  const a = (i / 5) * Math.PI * 2
+  mesh.position.set(Math.cos(a) * 3, 0, Math.sin(a) * 3)
+  scene.add(mesh)
+  spheres.push(mesh)
+}
+scene.add(new THREE.GridHelper(10, 10, 0x111133, 0x0a0a22))
+
+// ── Pass presets ──────────────────────────────────────────────────────────────
+const presets = [
+  {
+    name: 'GaussianBlur',
+    knobs: [
+      { label: 'sigma',  key: 'sigma',  min: 0.1, max: 10,  step: 0.1, def: 2 },
+    ],
+    build: (knobVals) => {
+      const p = new GaussianBlur({ sigma: knobVals.sigma ?? 2, passes: 2 })
+      return { passes: [p], live: (t) => { p.parameters.sigma = knobVals.sigma } }
+    },
+  },
+  {
+    name: 'GlareStreaks',
+    knobs: [
+      { label: 'threshold', key: 'threshold', min: 0,   max: 1,  step: 0.02, def: 0.6 },
+      { label: 'strength',  key: 'strength',  min: 0,   max: 3,  step: 0.1,  def: 1.0 },
+      { label: 'streaks',   key: 'streaks',   min: 2,   max: 8,  step: 2,    def: 4   },
+      { label: 'fade',      key: 'fade',      min: 0.5, max: 1,  step: 0.02, def: 0.9 },
+    ],
+    build: (v) => {
+      const p = new GlareStreaks({ threshold: v.threshold??0.6, strength: v.strength??1, streaks: v.streaks??4, fade: v.fade??0.9 })
+      return { passes: [p], live: (t) => {
+        p.parameters.threshold = v.threshold
+        p.parameters.strength  = v.strength
+        p.parameters.streaks   = v.streaks
+        p.parameters.fade      = v.fade
+      }}
+    },
+  },
+  {
+    name: 'MotionBlur',
+    knobs: [
+      { label: 'samples',       key: 'samples',       min: 1,  max: 16, step: 1,   def: 8  },
+      { label: 'velocityScale', key: 'velocityScale', min: 0,  max: 4,  step: 0.1, def: 1  },
+      { label: 'maxRadius',     key: 'maxRadius',     min: 1,  max: 60, step: 1,   def: 20 },
+    ],
+    build: (v) => {
+      const p = new MotionBlur({ samples: v.samples??8, velocityScale: v.velocityScale??1, maxRadius: v.maxRadius??20 })
+      return { passes: [p], live: (t) => {
+        p.parameters.samples       = v.samples
+        p.parameters.velocityScale = v.velocityScale
+        p.parameters.maxRadius     = v.maxRadius
+      }}
+    },
+  },
+  {
+    name: 'RenderLayers',
+    knobs: [],
+    build: (v) => {
+      // Layer 1 only (only first 3 spheres are on layer 1)
+      spheres.forEach((s, i) => { if (i < 3) s.layers.enable(1) })
+      const p = new RenderLayers({ layerMask: 0xffffffff })
+      return { passes: [p], live: () => {} }
+    },
+  },
+]
+
+let comp = null
+let liveFn = () => {}
+const knobValues = {}
+
+async function activatePreset(i) {
+  document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+
+  // Rebuild compositor
+  if (comp) { /* no explicit dispose needed */ }
+  const preset = presets[i]
+
+  // Collect default knob values
+  preset.knobs.forEach(k => { knobValues[k.key] = k.def })
+
+  const { passes, live } = preset.build(knobValues)
+  liveFn = live
+
+  comp = new CompositorOutput({ renderer, scene, camera, width: innerWidth, height: innerHeight })
+  for (const p of passes) comp.add(p)
+  await comp.compile()
+
+  // Rebuild panel
+  const panelEl = document.getElementById('panel')
+  panelEl.innerHTML = ''
+  for (const k of preset.knobs) {
+    const row   = document.createElement('label')
+    const val   = document.createElement('span')
+    const input = document.createElement('input')
+    input.type='range'; input.min=k.min; input.max=k.max; input.step=k.step; input.value=k.def
+    val.textContent = (+input.value).toFixed(2)
+    input.addEventListener('input', () => {
+      knobValues[k.key] = +input.value
+      val.textContent = (+input.value).toFixed(2)
+    })
+    row.innerHTML=`<span>${k.label}</span>`; row.appendChild(input); row.appendChild(val)
+    panelEl.appendChild(row)
+  }
+}
+
+// Build tabs
+const tabsEl = document.getElementById('tabs')
+presets.forEach((p, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = p.name
+  btn.addEventListener('click', () => activatePreset(i))
+  tabsEl.appendChild(btn)
+})
+activatePreset(0)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime()
+  spheres.forEach((s, i) => {
+    s.position.x = Math.cos(t * 0.5 + i * Math.PI * 2 / 5) * 3
+    s.position.z = Math.sin(t * 0.5 + i * Math.PI * 2 / 5) * 3
+  })
+  liveFn(t)
+  controls.update()
+  if (comp) comp.render(); else renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

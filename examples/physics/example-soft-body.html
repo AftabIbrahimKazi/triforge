@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-physics-core — Soft Body</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px; width: 240px;
+    background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 8px;
+    padding: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 13px;
+  }
+  h2 { font-size: 13px; color: #aaa; border-bottom: 1px solid #333; padding-bottom: 6px; }
+  label { display: flex; justify-content: space-between; align-items: center; }
+  input[type=range] { width: 120px; accent-color: #7af; }
+  button {
+    padding: 5px 0; background: #2a2a2a; border: 1px solid #444;
+    color: #eee; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px;
+  }
+  button:hover { background: #3a3a3a; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h2>Soft Body — st-physics-core</h2>
+  <label>Stiffness <input type="range" id="stiff" min="0.01" max="1" step="0.01" value="0.9"></label>
+  <label>Shape Match <input type="range" id="shape" min="0" max="0.5" step="0.01" value="0.1"></label>
+  <label>Damping <input type="range" id="damp" min="0" max="0.2" step="0.005" value="0.05"></label>
+  <label>Pressure <input type="range" id="press" min="0" max="20" step="0.5" value="5"></label>
+  <button id="reset">Reset</button>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.167/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { SoftBodySimulator, PlaneCollider } from '../../st-physics-core/dist/index.js'
+
+// ── Scene setup ──────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x1a1a2e)
+scene.fog = new THREE.Fog(0x1a1a2e, 20, 40)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 4, 8)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 1, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(5, 10, 5)
+sun.castShadow = true
+scene.add(sun)
+
+// ── Floor ────────────────────────────────────────────────────────────────────
+const floorGeo  = new THREE.PlaneGeometry(12, 12)
+const floorMat  = new THREE.MeshStandardMaterial({ color: 0x334455 })
+const floorMesh = new THREE.Mesh(floorGeo, floorMat)
+floorMesh.rotation.x = -Math.PI / 2
+floorMesh.receiveShadow = true
+scene.add(floorMesh)
+
+const gridHelper = new THREE.GridHelper(12, 12, 0x445566, 0x334455)
+scene.add(gridHelper)
+
+// ── Soft body ────────────────────────────────────────────────────────────────
+const RES = 8
+let geo, softBody, mesh
+
+function buildSoftBody() {
+  const sphereGeo = new THREE.SphereGeometry(0.8, RES, RES)
+  sphereGeo.translate(0, 3, 0)
+  sphereGeo.computeBoundingSphere()
+
+  if (mesh) scene.remove(mesh)
+
+  softBody = new SoftBodySimulator({
+    stiffness:           parseFloat(document.getElementById('stiff').value),
+    damping:             parseFloat(document.getElementById('damp').value),
+    pressure:            parseFloat(document.getElementById('press').value),
+    shapeMatchStiffness: parseFloat(document.getElementById('shape').value),
+    substeps: 4,
+    iterations: 8,
+  })
+
+  const floor = new PlaneCollider()
+  softBody.addCollider(floor)
+  softBody.setFromGeometry(sphereGeo)
+
+  geo = sphereGeo.clone()
+  softBody.setFromGeometry(geo)
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x4488ff, wireframe: false,
+    roughness: 0.4, metalness: 0.1, side: THREE.DoubleSide,
+  })
+  mesh = new THREE.Mesh(geo, mat)
+  mesh.castShadow = true
+  scene.add(mesh)
+}
+
+buildSoftBody()
+
+document.getElementById('reset').addEventListener('click', buildSoftBody)
+document.getElementById('stiff').addEventListener('input', () => {
+  if (softBody) softBody.parameters.stiffness = parseFloat(document.getElementById('stiff').value)
+})
+document.getElementById('damp').addEventListener('input', () => {
+  if (softBody) softBody.parameters.damping = parseFloat(document.getElementById('damp').value)
+})
+document.getElementById('press').addEventListener('input', () => {
+  if (softBody) softBody.parameters.pressure = parseFloat(document.getElementById('press').value)
+})
+document.getElementById('shape').addEventListener('input', () => {
+  if (softBody) softBody.parameters.shapeMatchStiffness = parseFloat(document.getElementById('shape').value)
+})
+
+// ── Animate ──────────────────────────────────────────────────────────────────
+let last = performance.now()
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - last) / 1000, 0.033)
+  last = now
+
+  softBody.step(dt)
+  softBody.apply(geo)
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

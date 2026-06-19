@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ShaderScript Node — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a10; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 420px; line-height: 1.8;
+  }
+  #info h3 { color: #7df; font-size: 12px; margin-bottom: 4px; }
+  #controls {
+    position: absolute; top: 12px; right: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    min-width: 230px;
+  }
+  #controls label { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  #controls input[type=range] { width: 120px; }
+  #controls span { min-width: 38px; text-align: right; color: #fff; }
+  #controls hr { border: none; border-top: 1px solid #333; margin: 4px 0; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>ShaderScript Node — custom GLSL as a node</h3>
+  The <b>ShaderScript</b> node wraps arbitrary GLSL in the shader graph.<br>
+  Input sockets connect from other nodes; output sockets feed into downstream nodes.<br><br>
+  <b>Example 1 — Ripple</b>: UV + time → wave pattern → emission<br>
+  <b>Example 2 — SDF Glow</b>: world position → signed-distance glow<br>
+  <b>Example 3 — Voronoi Script</b>: custom voronoi tiling in the graph<br><br>
+  Drag to orbit · Scroll to zoom
+</div>
+<div id="controls">
+  <b style="color:#7df">Script Uniforms</b>
+  <hr>
+  <label>Wave speed   <input type="range" id="speed"  min="0"   max="5"    step="0.05" value="1.5"> <span id="speedV">1.50</span></label>
+  <label>Wave freq    <input type="range" id="freq"   min="1"   max="30"   step="0.5"  value="8">   <span id="freqV">8.0</span></label>
+  <label>Glow radius  <input type="range" id="radius" min="0.1" max="2"    step="0.05" value="0.8"> <span id="radiusV">0.80</span></label>
+  <label>Cell scale   <input type="range" id="cells"  min="1"   max="20"   step="0.25" value="6">   <span id="cellsV">6.0</span></label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ShaderConfig, ShaderScript,
+  MaterialOutput, Emission, MixRGB, ColorRamp,
+  TextureCoordinate, Geometry, Value,
+  MapRange, ShaderMath, AnimatedNoiseTexture,
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 6)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0x223344, 0.5))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXAMPLE 1 — Ripple wave
+//   ShaderScript takes UV + speed + frequency as inputs,
+//   produces a float (wave) and a colour (tinted wave).
+// ─────────────────────────────────────────────────────────────────────────────
+const tc1 = new TextureCoordinate()
+
+const ripple = new ShaderScript({
+  inputs: {
+    uv:    tc1.output('UV'),        // connected from TextureCoordinate
+    speed: ['float', 1.5],          // live float uniform
+    freq:  ['float', 8.0],          // live float uniform
+  },
+  outputs: { wave: 'float', waveColor: 'color' },
+  glsl: `
+    float dist = length(uv - vec2(0.5, 0.5));
+    wave = sin(dist * freq * 6.28318 - speed * 3.0) * 0.5 + 0.5;
+    wave *= 1.0 - smoothstep(0.0, 0.5, dist);
+    waveColor = mix(vec3(0.05, 0.1, 0.4), vec3(0.2, 0.8, 1.0), wave);
+  `,
+  defs: '',
+  label: 'Ripple Wave',
+})
+
+// Feed script output into Emission
+const rippleEmit = new Emission({ color: ripple.output('waveColor'), strength: 3.0 })
+const rippleMat  = new MaterialOutput({ surface: rippleEmit.output('BSDF') })
+rippleMat.compile()
+// Inject time uniform (AnimatedNoiseTexture pattern)
+rippleMat.material.uniforms.uTime = { value: 0 }
+
+// We need to inject uTime into the script — the script uses the 'speed' uniform
+// but we animate via the speed itself, which is already a live uniform:
+//   ripple.parameters.speed = newValue
+
+const plane1 = new THREE.Mesh(new THREE.PlaneGeometry(2, 2, 64, 64), rippleMat.material)
+plane1.position.set(-2.5, 0, 0)
+scene.add(plane1)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXAMPLE 2 — SDF glow ring
+//   Custom signed-distance field in a ShaderScript node.
+//   No equivalent exists in the standard node library.
+// ─────────────────────────────────────────────────────────────────────────────
+const tc2 = new TextureCoordinate()
+
+const sdfGlow = new ShaderScript({
+  inputs: {
+    uv:     tc2.output('UV'),
+    radius: ['float', 0.8],         // ring radius
+    thick:  ['float', 0.06],        // ring thickness
+  },
+  outputs: { glow: 'float', glowColor: 'color' },
+  glsl: `
+    vec2  p   = uv * 2.0 - 1.0;
+    float d   = abs(length(p) - radius) - thick;
+    glow = clamp(1.0 - d / 0.12, 0.0, 1.0);
+    glow = pow(glow, 2.5);
+    float hue = atan(p.y, p.x) / 6.28318 + 0.5;
+    vec3  c   = 0.5 + 0.5 * cos(6.28318 * (hue + vec3(0.0, 0.33, 0.67)));
+    glowColor = c * glow;
+  `,
+  label: 'SDF Ring Glow',
+})
+
+const sdfEmit = new Emission({ color: sdfGlow.output('glowColor'), strength: 5.0 })
+const sdfMat  = new MaterialOutput({ surface: sdfEmit.output('BSDF') })
+sdfMat.compile()
+
+const plane2 = new THREE.Mesh(new THREE.PlaneGeometry(2, 2, 1, 1), sdfMat.material)
+plane2.position.set(0, 0, 0)
+scene.add(plane2)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXAMPLE 3 — Custom voronoi in script, fed into a ColorRamp node
+//   The script outputs a float which then connects to a standard ColorRamp.
+//   This shows ShaderScript composing with existing nodes.
+// ─────────────────────────────────────────────────────────────────────────────
+const tc3 = new TextureCoordinate()
+
+const voroScript = new ShaderScript({
+  inputs: {
+    uv:    tc3.output('UV'),
+    scale: ['float', 6.0],
+  },
+  outputs: { dist: 'float' },
+  defs: `
+float _vHash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float _voronoi(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  float d = 8.0;
+  for (int x = -1; x <= 1; x++)
+  for (int y = -1; y <= 1; y++) {
+    vec2 nb  = vec2(float(x), float(y));
+    vec2 pt  = vec2(_vHash(i+nb), _vHash(i+nb+vec2(13.7, 7.3)));
+    d = min(d, length(nb + pt - f));
+  }
+  return d;
+}`,
+  glsl: `dist = _voronoi(uv * scale);`,
+  label: 'Custom Voronoi',
+})
+
+// Pipe the script's float output into a ColorRamp — standard node composition
+const voroRamp = new ColorRamp({
+  fac:   voroScript.output('dist'),
+  stops: ['#000022', '#0022aa', '#00aaff', '#ffffff'],
+})
+const voroEmit = new Emission({ color: voroRamp.output('Color'), strength: 2.0 })
+const voroMat  = new MaterialOutput({ surface: voroEmit.output('BSDF') })
+voroMat.compile()
+
+const plane3 = new THREE.Mesh(new THREE.PlaneGeometry(2, 2, 1, 1), voroMat.material)
+plane3.position.set(2.5, 0, 0)
+scene.add(plane3)
+
+// ── Labels ────────────────────────────────────────────────────────────────────
+function addLabel(text, x, y) {
+  const div = document.createElement('div')
+  div.style.cssText = `position:absolute;color:#aaa;font:10px monospace;pointer-events:none;`
+  div.textContent = text
+  document.body.appendChild(div)
+  return { div, world: new THREE.Vector3(x, y, 0) }
+}
+const labels = [
+  addLabel('Ripple Wave (UV + speed + freq → wave)', -2.5, -1.2),
+  addLabel('SDF Ring Glow (UV + radius + thick → glow)', 0, -1.2),
+  addLabel('Custom Voronoi → ColorRamp (composing)', 2.5, -1.2),
+]
+
+// ── Sliders ───────────────────────────────────────────────────────────────────
+function bind(id, valId, dec, fn) {
+  const inp = document.getElementById(id)
+  const vEl = document.getElementById(valId)
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value); vEl.textContent = v.toFixed(dec); fn(v)
+  })
+}
+bind('speed',  'speedV',  2, v => ripple.parameters.speed  = v)
+bind('freq',   'freqV',   1, v => ripple.parameters.freq   = v)
+bind('radius', 'radiusV', 2, v => sdfGlow.parameters.radius = v)
+bind('cells',  'cellsV',  1, v => voroScript.parameters.scale = v)
+
+// ── Render ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+const clock = new THREE.Clock()
+;(function loop() {
+  requestAnimationFrame(loop)
+  const t = clock.getElapsedTime()
+
+  // Animate ripple by updating the speed parameter each frame
+  // (or we could connect an AnimatedNoiseTexture to time — both work)
+  if (rippleMat.material.uniforms.uTime) {
+    rippleMat.material.uniforms.uTime.value = t
+  }
+
+  // Label projection
+  labels.forEach(({ div, world }) => {
+    const v = world.clone().project(camera)
+    div.style.left = ((v.x * 0.5 + 0.5) * innerWidth)  + 'px'
+    div.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight) + 'px'
+  })
+
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

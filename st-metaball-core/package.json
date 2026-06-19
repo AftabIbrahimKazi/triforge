@@ -1,0 +1,22 @@
+{
+  "name": "@st-metaball-core",
+  "version": "0.1.0",
+  "description": "Blender-style metaball system for Three.js — organic blobs with live field evaluation",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node test/run-tests.js"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "three": ">=0.128.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.165.0",
+    "three": "^0.165.0",
+    "typescript": "^5.3.0"
+  }
+}

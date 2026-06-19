@@ -1,0 +1,133 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mirror Modifier — per-axis with vertex welding</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.75); padding: 16px; border-radius: 8px;
+      font-size: 13px; line-height: 2.2; min-width: 240px;
+    }
+    #ui h3 { color: #adf; margin-bottom: 4px; font-size: 13px; }
+    label { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .note { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.6; }
+    #info { position: fixed; bottom: 16px; left: 16px; font-size: 11px; color: #666; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h3>MirrorModifier — Blender-matched</h3>
+  <label>Mirror X <input type="checkbox" id="mx" checked></label>
+  <label>Mirror Y <input type="checkbox" id="my"></label>
+  <label>Mirror Z <input type="checkbox" id="mz"></label>
+  <label>Wireframe <input type="checkbox" id="wire"></label>
+  <div class="note">
+    Each axis applied sequentially.<br>
+    Vertices at mirror plane are welded<br>
+    — no seam at the boundary.<br><br>
+    Verts: <span id="verts">—</span>
+  </div>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ModifierStack, MirrorModifier, SubdivisionModifier, NormalRecalculateModifier } from '@st-modifier-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+
+// Axis helper lines
+const axisHelper = new THREE.AxesHelper(2)
+scene.add(axisHelper)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(2, 2, 4)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(3, 5, 3)
+scene.add(sun)
+
+// Asymmetric base shape — one quarter of a bumpy form, offset from origin
+// so the mirror effect is clearly visible
+const baseGeo = (() => {
+  const geo = new THREE.ConeGeometry(0.6, 1.2, 5, 2)
+  // Translate to positive X quadrant so mirroring is obvious
+  geo.translate(0.3, 0, 0.3)
+  return geo
+})()
+
+const mat     = new THREE.MeshPhongMaterial({ color: 0x44aa88, shininess: 60, side: THREE.DoubleSide })
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, opacity: 0.25, transparent: true })
+
+const mesh     = new THREE.Mesh(new THREE.BufferGeometry(), mat)
+const wireMesh = new THREE.Mesh(new THREE.BufferGeometry(), wireMat)
+wireMesh.visible = false
+scene.add(mesh)
+scene.add(wireMesh)
+
+let mirrorMod = new MirrorModifier({ x: true })
+
+function rebuild() {
+  const mx = document.getElementById('mx').checked
+  const my = document.getElementById('my').checked
+  const mz = document.getElementById('mz').checked
+
+  mirrorMod = new MirrorModifier({ x: mx, y: my, z: mz, mergeThreshold: 0.01 })
+
+  const stack = new ModifierStack(baseGeo)
+  stack.add(mirrorMod)
+  stack.add(new NormalRecalculateModifier())
+  const geo = stack.apply()
+
+  const old = mesh.geometry
+  mesh.geometry     = geo
+  wireMesh.geometry = geo
+  if (old.uuid !== baseGeo.uuid) old.dispose()
+
+  document.getElementById('verts').textContent =
+    geo.getAttribute('position').count.toLocaleString()
+}
+
+rebuild()
+
+document.getElementById('mx').addEventListener('change', rebuild)
+document.getElementById('my').addEventListener('change', rebuild)
+document.getElementById('mz').addEventListener('change', rebuild)
+document.getElementById('wire').addEventListener('change', e => {
+  wireMesh.visible = e.target.checked
+})
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

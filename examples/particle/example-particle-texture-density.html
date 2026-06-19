@@ -1,0 +1,287 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Texture Emission Density — st-particle-core</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0a; color: #eee; font-family: monospace; overflow: hidden; }
+    #canvas { display: block; }
+    #ui {
+      position: fixed; top: 12px; left: 12px; background: rgba(0,0,0,.75);
+      padding: 12px 16px; border-radius: 8px; min-width: 260px;
+    }
+    label { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; font-size: 13px; }
+    input[type=range] { width: 120px; }
+    span.val { min-width: 36px; text-align: right; }
+    button { margin: 4px 2px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
+    #preview { margin-top: 8px; }
+    canvas#checker { border: 1px solid #445; display: block; width: 100px; height: 100px; image-rendering: pixelated; }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="ui">
+  <b>Texture Emission Density</b><br><br>
+  <label>Mode
+    <span>
+      <button id="btnUniform">Uniform</button>
+      <button id="btnTexture">Texture</button>
+    </span>
+  </label>
+  <label>weightStrength
+    <input type="range" id="strength" min="0" max="1" step="0.01" value="1">
+    <span class="val" id="vStrength">1.00</span>
+  </label>
+  <div id="preview">
+    <div style="font-size:11px;margin-bottom:4px">Density texture (white = emit, black = no emit):</div>
+    <canvas id="checker" width="64" height="64"></canvas>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── renderer / scene / camera ─────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas'), antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight)
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+})
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d1117)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 8, 8)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+controls.update()
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+
+// ── checker-pattern canvas texture ────────────────────────────────────────
+const checkerCanvas = document.getElementById('checker')
+const ctx2d = checkerCanvas.getContext('2d', { willReadFrequently: true })
+const SIZE  = 64
+const CELLS = 4   // 4×4 checker → 8 cells each side
+
+function drawChecker() {
+  ctx2d.clearRect(0, 0, SIZE, SIZE)
+  const cell = SIZE / CELLS
+  for (let row = 0; row < CELLS; row++) {
+    for (let col = 0; col < CELLS; col++) {
+      ctx2d.fillStyle = (row + col) % 2 === 0 ? '#ffffff' : '#000000'
+      ctx2d.fillRect(col * cell, row * cell, cell, cell)
+    }
+  }
+}
+drawChecker()
+
+const checkerTex = new THREE.CanvasTexture(checkerCanvas)
+checkerTex.needsUpdate = true
+
+// ── emitter plane (flat 8×8 grid subdivided so we have good face coverage) ─
+const planeGeo = new THREE.PlaneGeometry(8, 8, 8, 8)
+planeGeo.rotateX(-Math.PI / 2)
+
+// Show the plane as a subtle grid
+const planeHelper = new THREE.Mesh(
+  planeGeo.clone(),
+  new THREE.MeshBasicMaterial({ color: 0x223344, wireframe: true, opacity: 0.3, transparent: true }),
+)
+scene.add(planeHelper)
+
+// Show texture on plane
+const texPlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(8, 8),
+  new THREE.MeshBasicMaterial({ map: checkerTex, transparent: true, opacity: 0.35, depthWrite: false }),
+)
+texPlane.rotation.x = -Math.PI / 2
+texPlane.position.y = 0.001
+scene.add(texPlane)
+
+// ── particle points ───────────────────────────────────────────────────────
+const MAX   = 2000
+const pPos  = new Float32Array(MAX * 3)
+const pVel  = new Float32Array(MAX * 3)
+const pAge  = new Float32Array(MAX)
+const pLife = new Float32Array(MAX).fill(1)
+const pAlive = new Uint8Array(MAX)
+
+const pGeo   = new THREE.BufferGeometry()
+const posAttr = new THREE.BufferAttribute(pPos, 3).setUsage(THREE.DynamicDrawUsage)
+pGeo.setAttribute('position', posAttr)
+pGeo.setDrawRange(0, 0)
+
+const pMat = new THREE.PointsMaterial({
+  color: 0xffffff, size: 0.12, transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending,
+})
+scene.add(new THREE.Points(pGeo, pMat))
+
+// ── build UV-indexed face data from planeGeo ─────────────────────────────
+// We need face positions and UV centroids for CDF sampling.
+const posAttrP = planeGeo.getAttribute('position')
+const uvAttrP  = planeGeo.getAttribute('uv')
+const idxP     = planeGeo.getIndex()
+const triCount = Math.floor(idxP.count / 3)
+
+// Precompute face centres, UV centroids, and areas
+const faceCentres = []
+const faceUVs     = []
+const faceAreas   = []
+
+const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3()
+const e1 = new THREE.Vector3(), e2 = new THREE.Vector3()
+
+for (let i = 0; i < triCount; i++) {
+  const a = idxP.getX(i*3), b = idxP.getX(i*3+1), c = idxP.getX(i*3+2)
+  vA.fromBufferAttribute(posAttrP, a)
+  vB.fromBufferAttribute(posAttrP, b)
+  vC.fromBufferAttribute(posAttrP, c)
+  e1.subVectors(vB, vA); e2.subVectors(vC, vA)
+  const area = e1.clone().cross(e2).length() * 0.5
+  faceCentres.push({ x: (vA.x+vB.x+vC.x)/3, y: (vA.y+vB.y+vC.y)/3, z: (vA.z+vB.z+vC.z)/3 })
+  faceUVs.push({
+    u: (uvAttrP.getX(a)+uvAttrP.getX(b)+uvAttrP.getX(c))/3,
+    v: (uvAttrP.getY(a)+uvAttrP.getY(b)+uvAttrP.getY(c))/3,
+  })
+  faceAreas.push(area)
+}
+
+// ── texture sampling (red channel from canvas) ────────────────────────────
+function sampleTexture(u, v) {
+  const x = Math.max(0, Math.min(SIZE-1, Math.floor(u * SIZE)))
+  const y = Math.max(0, Math.min(SIZE-1, Math.floor((1-v) * SIZE)))
+  const d = ctx2d.getImageData(x, y, 1, 1).data
+  return d[0] / 255   // red channel
+}
+
+// ── build CDF ─────────────────────────────────────────────────────────────
+let useTexture = true
+let strength   = 1.0
+let cdf        = new Float32Array(triCount)
+let cdfDirty   = true
+
+function rebuildCDF() {
+  let total = 0
+  for (let i = 0; i < triCount; i++) {
+    let w = faceAreas[i]
+    if (useTexture) {
+      const texVal = sampleTexture(faceUVs[i].u, faceUVs[i].v)
+      w *= (1 - strength) + strength * texVal
+    }
+    total += w
+    cdf[i] = total
+  }
+  if (total > 0) for (let i = 0; i < triCount; i++) cdf[i] /= total
+  cdfDirty = false
+}
+
+function sampleCDF(r) {
+  let lo = 0, hi = cdf.length - 1
+  while (lo < hi) { const m = (lo+hi)>>>1; if (cdf[m]<r) lo=m+1; else hi=m }
+  return lo
+}
+
+function pickFace() {
+  if (cdfDirty) rebuildCDF()
+  return sampleCDF(Math.random())
+}
+
+// ── emission ──────────────────────────────────────────────────────────────
+let emitAccum = 0
+const RATE    = 400
+
+function emit() {
+  const slot = emitAccum % MAX | 0
+  const fi   = pickFace()
+  const fc   = faceCentres[fi]
+  // Barycentric jitter within face
+  let r1 = Math.random(), r2 = Math.random()
+  if (r1 + r2 > 1) { r1 = 1-r1; r2 = 1-r2 }
+  const a = idxP.getX(fi*3), b = idxP.getX(fi*3+1), c = idxP.getX(fi*3+2)
+  vA.fromBufferAttribute(posAttrP, a)
+  vB.fromBufferAttribute(posAttrP, b)
+  vC.fromBufferAttribute(posAttrP, c)
+  const px = vA.x + (vB.x-vA.x)*r1 + (vC.x-vA.x)*r2
+  const pz = vA.z + (vB.z-vA.z)*r1 + (vC.z-vA.z)*r2
+
+  pPos[slot*3]   = px
+  pPos[slot*3+1] = 0
+  pPos[slot*3+2] = pz
+  pVel[slot*3]   = (Math.random()-0.5)*0.5
+  pVel[slot*3+1] = 1.5 + Math.random()*1.5
+  pVel[slot*3+2] = (Math.random()-0.5)*0.5
+  pAge[slot]     = 0
+  pLife[slot]    = 1.2 + Math.random()*0.8
+  pAlive[slot]   = 1
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────
+document.getElementById('btnUniform').addEventListener('click', () => {
+  useTexture = false; cdfDirty = true
+})
+document.getElementById('btnTexture').addEventListener('click', () => {
+  useTexture = true; cdfDirty = true
+})
+document.getElementById('strength').addEventListener('input', e => {
+  strength = parseFloat(e.target.value)
+  document.getElementById('vStrength').textContent = strength.toFixed(2)
+  cdfDirty = true
+})
+
+// ── main loop ─────────────────────────────────────────────────────────────
+let last = performance.now()
+
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - last) / 1000, 0.05)
+  last = now
+
+  emitAccum += RATE * dt
+  const toEmit = Math.min(Math.floor(emitAccum), 20)
+  emitAccum -= Math.floor(emitAccum)
+  for (let i = 0; i < toEmit; i++) emit()
+
+  let dc = 0
+  for (let i = 0; i < MAX; i++) {
+    if (!pAlive[i]) continue
+    pAge[i] += dt
+    if (pAge[i] >= pLife[i]) { pAlive[i] = 0; continue }
+    pVel[i*3+1] -= 4 * dt
+    pPos[i*3]   += pVel[i*3]   * dt
+    pPos[i*3+1] += pVel[i*3+1] * dt
+    pPos[i*3+2] += pVel[i*3+2] * dt
+
+    posAttr.array[dc*3]   = pPos[i*3]
+    posAttr.array[dc*3+1] = pPos[i*3+1]
+    posAttr.array[dc*3+2] = pPos[i*3+2]
+    dc++
+  }
+
+  posAttr.needsUpdate = true
+  pGeo.setDrawRange(0, dc)
+  controls.update()
+  renderer.render(scene, camera)
+}
+
+animate()
+</script>
+</body>
+</html>

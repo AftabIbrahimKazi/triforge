@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-keyframe — example</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:monospace; }
+  #info { position:absolute; top:10px; left:10px; color:#aaa; font-size:12px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div id="info">
+  st-keyframe — AnimationMixer<br>
+  Driving position &amp; scale on 5 boxes via KeyframeTrack + easings
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { KeyframeTrack, AnimationClip, AnimationMixer, Easings } from '../../st-keyframe/dist/index.js'
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 3, 10)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.2)
+sun.position.set(4, 8, 5)
+scene.add(sun)
+
+// ── 5 boxes with staggered bounce animations ──────────────────────────────────
+const colors  = [0xff4444, 0x44aaff, 0x44ff88, 0xffdd44, 0xff88cc]
+const mixer   = new AnimationMixer()
+
+for (let i = 0; i < 5; i++) {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.8, 0.8, 0.8),
+    new THREE.MeshStandardMaterial({ color: colors[i], metalness: 0.3, roughness: 0.5 }),
+  )
+  mesh.position.x = (i - 2) * 2
+  scene.add(mesh)
+
+  const offset = i * 0.3  // stagger
+
+  // Bounce Y position — KeyframeTrack(target, property, keyframes[])
+  const posTrack = new KeyframeTrack(mesh.position, 'y', [
+    { time: 0 + offset,   value: 0,   easing: Easings.easeInQuad  },
+    { time: 0.4 + offset, value: 2.5, easing: Easings.easeOutQuad },
+    { time: 0.8 + offset, value: 0,   easing: Easings.easeInQuad  },
+  ])
+
+  // Squish Y scale on impact
+  const scaleTrack = new KeyframeTrack(mesh.scale, 'y', [
+    { time: 0 + offset,    value: 1,   easing: Easings.easeInOutCubic },
+    { time: 0.4 + offset,  value: 1.3, easing: Easings.easeInOutCubic },
+    { time: 0.75 + offset, value: 0.6, easing: Easings.easeInOutCubic },
+    { time: 0.8 + offset,  value: 1,   easing: Easings.easeInOutCubic },
+  ])
+
+  // AnimationClip(name, tracks[])
+  const clip = new AnimationClip(`box${i}`, [posTrack, scaleTrack])
+  mixer.play(clip, { wrapMode: 'loop' })
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+;(function animate() {
+  requestAnimationFrame(animate)
+  mixer.update(clock.getDelta())
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

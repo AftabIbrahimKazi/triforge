@@ -1,0 +1,11 @@
+node_modules/
+
+# Personal coding standards — local only, never pushed
+My-Coding-Standards/
+
+# Compiled output (each package builds its own dist)
+dist/
+
+# OS
+.DS_Store
+Thumbs.db

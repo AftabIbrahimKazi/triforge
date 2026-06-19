@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Additional Renderers — @st-particle-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #06080f; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.65); padding: 8px 12px; border-radius: 4px; }
+  #tabs { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .tab { background: rgba(0,0,0,0.6); border: 1px solid #333; padding: 5px 12px;
+    border-radius: 4px; cursor: pointer; color: #aaa; font: 11px monospace; }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+</style>
+</head>
+<body>
+<div id="info">Additional Renderers — @st-particle-core<br>TrailRenderer · HaloRenderer · ObjectRenderer · LineRenderer</div>
+<div id="tabs"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem, PointEmitter,
+  GravityForce, DragForce, WindForce,
+  TrailRenderer, HaloRenderer, ObjectRenderer, LineRenderer
+} from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene   = new THREE.Scene()
+scene.background = new THREE.Color(0x06080f)
+const camera  = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500)
+camera.position.set(0, 5, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 3, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(5, 10, 5)
+scene.add(sun)
+
+const clock = new THREE.Clock()
+let activeSystem   = null
+let activeRend     = null
+
+function clearActive() {
+  if (activeSystem) { activeSystem.dispose?.(); activeSystem = null }
+  if (activeRend)   { scene.remove(activeRend.object3D); activeRend.dispose(); activeRend = null }
+}
+
+function baseSystem(rend) {
+  clearActive()
+  scene.add(rend.object3D)
+  const sys = new ParticleSystem({
+    count: 400, start: 0, end: 999,
+    lifetime: 3.5, lifetimeRandom: 0.5,
+    size: 0.15, physics: 'newtonian', gravity: 0, drag: 0,
+  })
+  sys.addEmitter(new PointEmitter({ position: { x: 0, y: 0, z: 0 }, normalVelocity: 2.5, randomVelocity: 1.5 }))
+  sys.addForce(new GravityForce(4))
+  sys.addForce(new DragForce({ linear: 0.3 }))
+  sys.setRenderer(rend)
+  activeSystem = sys
+  activeRend   = rend
+}
+
+const defs = [
+  {
+    name: 'TrailRenderer',
+    make: () => baseSystem(new TrailRenderer({ maxCount: 400, trailLength: 12, fadeOut: true }))
+  },
+  {
+    name: 'HaloRenderer\n(= BillboardRenderer)',
+    make: () => baseSystem(new HaloRenderer({ maxCount: 400, additive: true, fadeOut: true, opacity: 0.8 }))
+  },
+  {
+    name: 'ObjectRenderer\n(InstanceRenderer)',
+    make: () => {
+      clearActive()
+      const rend = new ObjectRenderer({
+        geometry: new THREE.IcosahedronGeometry(0.1, 0),
+        material: new THREE.MeshStandardMaterial({ color: 0xff6600 }),
+        maxCount: 300,
+        fadeOut:  true,
+      })
+      scene.add(rend.object3D)
+      const sys = new ParticleSystem({
+        count: 300, start: 0, end: 999,
+        lifetime: 3.0, lifetimeRandom: 0.4,
+        size: 0.12, physics: 'newtonian', gravity: 0, drag: 0,
+      })
+      sys.addEmitter(new PointEmitter({ position: { x: 0, y: 0, z: 0 }, normalVelocity: 2.0, randomVelocity: 1.5 }))
+      sys.addForce(new GravityForce(4))
+      sys.addForce(new DragForce({ linear: 0.3 }))
+      sys.setRenderer(rend)
+      activeSystem = sys
+      activeRend   = rend
+    }
+  },
+  {
+    name: 'LineRenderer',
+    make: () => {
+      clearActive()
+      const rend = new LineRenderer({ maxCount: 400 })
+      scene.add(rend.object3D)
+      const sys = new ParticleSystem({
+        count: 400, start: 0, end: 999,
+        lifetime: 3.5, lifetimeRandom: 0.5,
+        size: 0.12, physics: 'newtonian', gravity: 0, drag: 0,
+      })
+      sys.addEmitter(new PointEmitter({ position: { x: 0, y: 0, z: 0 }, normalVelocity: 2.0, randomVelocity: 1.5 }))
+      sys.addForce(new GravityForce(4))
+      sys.addForce(new WindForce({ x: 1.5, y: 0, z: 0 }))
+      sys.addForce(new DragForce({ linear: 0.2 }))
+      sys.setRenderer(rend)
+      activeSystem = sys
+      activeRend   = rend
+    }
+  }
+]
+
+const tabsEl = document.getElementById('tabs')
+function activateTab(i) {
+  tabsEl.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  defs[i].make()
+}
+
+defs.forEach((d, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = d.name
+  btn.addEventListener('click', () => activateTab(i))
+  tabsEl.appendChild(btn)
+})
+activateTab(0)
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+  if (activeSystem) activeSystem.update(dt)
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

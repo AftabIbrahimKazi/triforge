@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BallSocket &amp; ConeTwist Constraints — @st-physics-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 300px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #tabs {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; gap: 6px; flex-wrap: wrap; max-width: 280px; justify-content: flex-end;
+  }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 240px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>BallSocket &amp; ConeTwist Constraints</h3>
+  <b>BallSocket</b> — free rotation, locked position<br>
+  <b>ConeTwist</b> — swing + twist limits (ragdoll joints)<br><br>
+  Left demo: ragdoll chain of BallSocket joints.<br>
+  Right demo: ConeTwist chain with cone &amp; twist limits.<br><br>
+  <span class="code">new BallSocketConstraint(a, b, pivot)</span><br>
+  <span class="code">new ConeTwistConstraint(a, b, pivot, axis)</span>
+</div>
+<div id="tabs"></div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":            "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":    "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-physics-core": "../../st-physics-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  RigidBodyWorld,
+  BallSocketConstraint,
+  ConeTwistConstraint,
+} from '@st-physics-core'
+
+// ── Renderer / Scene ──────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x050810)
+scene.fog = new THREE.Fog(0x050810, 30, 60)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 4, 18)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+controls.enableDamping = true
+
+// Lighting
+const ambient = new THREE.AmbientLight(0x223344, 1.5)
+scene.add(ambient)
+const sun = new THREE.DirectionalLight(0xffffff, 2.5)
+sun.position.set(5, 12, 8)
+sun.castShadow = true
+scene.add(sun)
+
+// Grid
+const grid = new THREE.GridHelper(40, 40, 0x223344, 0x111b2e)
+grid.position.y = -6
+scene.add(grid)
+
+// ── Shared geometry helpers ────────────────────────────────────────────────────
+const SPHERE_GEO  = new THREE.SphereGeometry(0.35, 16, 12)
+const CYLINDER_GEO = new THREE.CylinderGeometry(0.05, 0.05, 1, 8)
+
+function makeMat(color) {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.3 })
+}
+
+// Line helpers to visualise constraint connections
+function makeLine(scene) {
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3))
+  const mat = new THREE.LineBasicMaterial({ color: 0x446688, transparent: true, opacity: 0.5 })
+  const line = new THREE.Line(geo, mat)
+  scene.add(line)
+  return line
+}
+
+function updateLine(line, pA, pB) {
+  const arr = line.geometry.attributes.position.array
+  arr[0] = pA.x; arr[1] = pA.y; arr[2] = pA.z
+  arr[3] = pB.x; arr[4] = pB.y; arr[5] = pB.z
+  line.geometry.attributes.position.needsUpdate = true
+}
+
+// ── Demo state ─────────────────────────────────────────────────────────────────
+let currentDemo = 'ballsocket'
+let activeObjects = []   // { body, mesh } pairs
+let activeLines   = []   // Line helpers
+let world         = null
+
+const DEMOS = {
+  ballsocket: {
+    label: 'BallSocket chain',
+    swingLimit: 0,
+    twistLimit: 0,
+    build: buildBallSocketChain,
+  },
+  conetwist: {
+    label: 'ConeTwist chain',
+    swingLimit: Math.PI / 4,
+    twistLimit: Math.PI / 6,
+    build: buildConeTwistChain,
+  },
+}
+
+// ── BallSocket demo ────────────────────────────────────────────────────────────
+function buildBallSocketChain(offsetX) {
+  const w = new RigidBodyWorld({ gravity: [0, -4, 0], substeps: 8 })
+  const objects = []
+  const lines   = []
+
+  const CHAIN_LENGTH = 6
+  const SEG_GAP      = 1.4
+  const COLORS = [0x4488ff, 0x44aaff, 0x44ccff, 0x66eeff, 0x99ffee, 0xbbffdd]
+
+  let prev = null
+  for (let i = 0; i < CHAIN_LENGTH; i++) {
+    const y = -i * SEG_GAP
+    const body = w.createBody({
+      shape: 'sphere', mass: i === 0 ? 0 : 1,
+      size: 0.35,
+      position: [offsetX, y, 0],
+    })
+
+    const mesh = new THREE.Mesh(SPHERE_GEO, makeMat(COLORS[i % COLORS.length]))
+    mesh.castShadow = true
+    scene.add(mesh)
+    objects.push({ body, mesh })
+
+    if (prev) {
+      const pivotY = (prev.body.position.y + body.position.y) / 2
+      const c = new BallSocketConstraint(prev.body, body, [offsetX, pivotY, 0], {
+        stiffness: 0.9, damping: 0.15,
+      })
+      w.addConstraint(c)
+      lines.push(makeLine(scene))
+    }
+    prev = { body }
+  }
+
+  return { world: w, objects, lines }
+}
+
+// ── ConeTwist demo ─────────────────────────────────────────────────────────────
+function buildConeTwistChain(offsetX) {
+  const w = new RigidBodyWorld({ gravity: [0, -4, 0], substeps: 8 })
+  const objects = []
+  const lines   = []
+
+  const CHAIN_LENGTH = 6
+  const SEG_GAP      = 1.4
+  const COLORS = [0xff8844, 0xff9944, 0xffbb44, 0xffdd66, 0xffee88, 0xffffaa]
+
+  let prev = null
+  for (let i = 0; i < CHAIN_LENGTH; i++) {
+    const y = -i * SEG_GAP
+    const body = w.createBody({
+      shape: 'sphere', mass: i === 0 ? 0 : 1,
+      size: 0.35,
+      position: [offsetX, y, 0],
+    })
+
+    const mesh = new THREE.Mesh(SPHERE_GEO, makeMat(COLORS[i % COLORS.length]))
+    mesh.castShadow = true
+    scene.add(mesh)
+    objects.push({ body, mesh })
+
+    if (prev) {
+      const pivotY = (prev.body.position.y + body.position.y) / 2
+      const c = new ConeTwistConstraint(
+        prev.body, body,
+        [offsetX, pivotY, 0],
+        [0, -1, 0],   // constraint axis points down the chain
+        {
+          stiffness:  0.9,
+          damping:    0.15,
+          swingLimit: swingLimitRef,
+          twistLimit: twistLimitRef,
+        },
+      )
+      // Store reference so slider can update it live
+      c._ref = c
+      w.addConstraint(c)
+      lines.push(makeLine(scene))
+    }
+    prev = { body }
+  }
+
+  return { world: w, objects, lines }
+}
+
+// ── Live parameter refs ────────────────────────────────────────────────────────
+let swingLimitRef = Math.PI / 4
+let twistLimitRef = Math.PI / 6
+
+// ── Tabs ───────────────────────────────────────────────────────────────────────
+const tabsEl = document.getElementById('tabs')
+Object.entries(DEMOS).forEach(([key, demo]) => {
+  const btn = document.createElement('button')
+  btn.className = 'tab' + (key === currentDemo ? ' active' : '')
+  btn.textContent = demo.label
+  btn.onclick = () => {
+    currentDemo = key
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'))
+    btn.classList.add('active')
+    rebuildScene()
+  }
+  tabsEl.appendChild(btn)
+})
+
+// ── Panel sliders ──────────────────────────────────────────────────────────────
+let stiffnessRef = 0.9
+let dampingRef   = 0.15
+
+function buildPanel() {
+  const panel = document.getElementById('panel')
+  panel.innerHTML = ''
+
+  function slider(label, min, max, step, val, onChange) {
+    const row = document.createElement('label')
+    const span = document.createElement('span')
+    span.textContent = label
+    const input = document.createElement('input')
+    input.type = 'range'; input.min = min; input.max = max; input.step = step
+    input.value = val
+    const val2 = document.createElement('span')
+    val2.textContent = Number(val).toFixed(2)
+    input.oninput = () => {
+      val2.textContent = Number(input.value).toFixed(2)
+      onChange(Number(input.value))
+    }
+    row.appendChild(span); row.appendChild(input); row.appendChild(val2)
+    panel.appendChild(row)
+  }
+
+  function allConstraints() {
+    if (!world) return []
+    return [
+      ...(world.left?._constraints ?? []),
+      ...(world.right?._constraints ?? []),
+    ]
+  }
+
+  slider('Stiffness', 0.1, 1.0, 0.01, stiffnessRef, v => {
+    stiffnessRef = v
+    for (const c of allConstraints()) {
+      if (c.parameters) c.parameters.stiffness = v
+    }
+  })
+  slider('Damping', 0.0, 0.5, 0.01, dampingRef, v => {
+    dampingRef = v
+    for (const c of allConstraints()) {
+      if (c.parameters) c.parameters.damping = v
+    }
+  })
+
+  slider('Swing Limit', 0, Math.PI, 0.01, swingLimitRef, v => {
+    swingLimitRef = v
+    for (const c of allConstraints()) {
+      if (c.parameters && 'swingLimit' in c.parameters) c.parameters.swingLimit = v
+    }
+  })
+  slider('Twist Limit', 0, Math.PI, 0.01, twistLimitRef, v => {
+    twistLimitRef = v
+    for (const c of allConstraints()) {
+      if (c.parameters && 'twistLimit' in c.parameters) c.parameters.twistLimit = v
+    }
+  })
+}
+
+// ── Build / Rebuild ────────────────────────────────────────────────────────────
+function rebuildScene() {
+  // Remove old meshes
+  for (const { mesh } of activeObjects) scene.remove(mesh)
+  for (const line of activeLines) scene.remove(line)
+  activeObjects = []
+  activeLines   = []
+  world = null
+
+  // Build left (BallSocket) and right (ConeTwist) side by side
+  const leftResult  = buildBallSocketChain(-3.5)
+  const rightResult = buildConeTwistChain(3.5)
+
+  // Merge into a single combined update; use the first world for stepping
+  // (each side has its own independent world — step both each frame)
+  world = { left: leftResult.world, right: rightResult.world }
+  activeObjects = [...leftResult.objects, ...rightResult.objects]
+  activeLines   = [...leftResult.lines, ...rightResult.lines]
+
+  buildPanel()
+}
+
+rebuildScene()
+
+// ── Animation ──────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  if (world) {
+    world.left.step(dt)
+    world.right.step(dt)
+  }
+
+  // Sync meshes
+  for (const { body, mesh } of activeObjects) {
+    mesh.position.copy(body.position)
+    mesh.quaternion.copy(body.orientation)
+  }
+
+  // Update connection lines
+  // Left chain
+  const leftObjs  = activeObjects.slice(0, 6)
+  const rightObjs = activeObjects.slice(6, 12)
+  for (let i = 0; i < leftObjs.length - 1; i++) {
+    updateLine(activeLines[i], leftObjs[i].body.position, leftObjs[i+1].body.position)
+  }
+  for (let i = 0; i < rightObjs.length - 1; i++) {
+    updateLine(activeLines[5 + i], rightObjs[i].body.position, rightObjs[i+1].body.position)
+  }
+
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

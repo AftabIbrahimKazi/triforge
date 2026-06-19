@@ -1,0 +1,234 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>st-particle-core — Velocity & Rotation Controls (Phase A3)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 12px; left: 12px;
+      background: rgba(0,0,0,0.65); padding: 12px 16px; border-radius: 6px;
+      display: flex; flex-direction: column; gap: 8px; min-width: 260px;
+    }
+    #ui h3 { font-size: 13px; color: #aef; margin-bottom: 4px; }
+    .row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .row label { width: 160px; }
+    .row input[type=range] { width: 100px; }
+    .row span { width: 40px; text-align: right; }
+    select { background: #222; color: #eee; border: 1px solid #555; padding: 2px 4px; font-family: monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h3>Velocity &amp; Rotation Controls</h3>
+
+  <div class="row">
+    <label>Angular Velocity Amount</label>
+    <input type="range" id="angAmount" min="0" max="10" step="0.1" value="3" />
+    <span id="angAmountVal">3.0</span>
+  </div>
+
+  <div class="row">
+    <label>Angular Velocity Mode</label>
+    <select id="angMode">
+      <option value="0">None</option>
+      <option value="1" selected>Velocity</option>
+      <option value="2">Horizontal (Y)</option>
+      <option value="3">Vertical (X)</option>
+      <option value="4">Global (Z)</option>
+      <option value="5">Random</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <label>Rotation Random</label>
+    <input type="range" id="rotRandom" min="0" max="1" step="0.01" value="0.5" />
+    <span id="rotRandomVal">0.50</span>
+  </div>
+
+  <div class="row">
+    <label>Rotation Phase</label>
+    <input type="range" id="rotPhase" min="0" max="6.28" step="0.1" value="0" />
+    <span id="rotPhaseVal">0.00</span>
+  </div>
+
+  <div class="row">
+    <label>Normal Velocity</label>
+    <input type="range" id="normVel" min="0" max="5" step="0.1" value="1" />
+    <span id="normVelVal">1.0</span>
+  </div>
+
+  <div class="row">
+    <label>Object Inherit</label>
+    <input type="range" id="objInherit" min="0" max="1" step="0.05" value="0" />
+    <span id="objInheritVal">0.00</span>
+  </div>
+
+  <p style="font-size:11px;color:#888;margin-top:4px">Orbit: drag · Zoom: scroll</p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem,
+  PointEmitter,
+  InstanceRenderer,
+} from '@st-particle-core'
+
+// ── Scene setup ─────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200)
+camera.position.set(0, 3, 8)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+// Grid for reference
+scene.add(new THREE.GridHelper(10, 20, 0x333333, 0x222222))
+
+// ── Particle geometry: flat arrow disc so rotation is obvious ──────────────
+
+function makeArrowGeometry() {
+  // A flat elongated triangle pointing +X so rotation is clearly visible
+  const geo = new THREE.BufferGeometry()
+  const verts = new Float32Array([
+     0.3,  0,   0,   // tip
+    -0.15,  0.08, 0, // upper base
+    -0.15, -0.08, 0, // lower base
+  ])
+  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3))
+  geo.setIndex([0, 1, 2])
+  geo.computeVertexNormals()
+  return geo
+}
+
+const arrowGeo = makeArrowGeometry()
+const arrowMat = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide })
+
+// ── Emitter & system ────────────────────────────────────────────────────────
+
+const emitter = new PointEmitter({
+  normalVelocity: 1,
+  randomVelocity: 0.3,
+  objectInherit: 0,
+})
+
+// Emitter moves back and forth on X to demonstrate objectInherit
+const emitterWorldVelocity = new THREE.Vector3()
+const emitterPos = new THREE.Vector3()
+let emitterPhase = 0
+
+const sys = new ParticleSystem({
+  count: 200,
+  lifetime: 3,
+  start: 0,
+  end: 9999,
+  seed: 42,
+  physics: 'newtonian',
+  gravity: 0,
+  rotationAxis: 2,       // angular (local Z)
+  rotationPhase: 0,
+  rotationRandom: 0.5,
+  angularVelocityMode: 1,  // velocity
+  angularVelocityAmount: 3,
+})
+sys.addEmitter(emitter)
+
+const instRenderer = new InstanceRenderer({
+  geometry: arrowGeo,
+  material: arrowMat,
+  maxCount: 300,
+  billboard: false,
+  fadeOut: true,
+})
+sys.setRenderer(instRenderer)
+scene.add(instRenderer.object3D)
+
+// ── UI wiring ────────────────────────────────────────────────────────────────
+
+function bindSlider(id, valId, decimals, onChange) {
+  const slider = document.getElementById(id)
+  const label  = document.getElementById(valId)
+  slider.addEventListener('input', () => {
+    const v = parseFloat(slider.value)
+    label.textContent = v.toFixed(decimals)
+    onChange(v)
+  })
+}
+
+bindSlider('angAmount', 'angAmountVal', 1, v => {
+  sys.parameters.angularVelocityAmount = v
+})
+bindSlider('rotRandom', 'rotRandomVal', 2, v => {
+  sys.parameters.rotationRandom = v
+  sys.reset()
+})
+bindSlider('rotPhase', 'rotPhaseVal', 2, v => {
+  sys.parameters.rotationPhase = v
+  sys.reset()
+})
+bindSlider('normVel', 'normVelVal', 1, v => {
+  emitter.parameters.normalVelocity = v
+  sys.reset()
+})
+bindSlider('objInherit', 'objInheritVal', 2, v => {
+  emitter.parameters.objectInherit = v
+})
+
+document.getElementById('angMode').addEventListener('change', e => {
+  sys.parameters.angularVelocityMode = parseInt(e.target.value)
+  sys.reset()
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+
+const clock = new THREE.Clock()
+
+function animate() {
+  requestAnimationFrame(animate)
+
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  // Move emitter position sinusoidally so objectInherit is observable
+  emitterPhase += dt
+  const prevX = emitterPos.x
+  emitterPos.x = Math.sin(emitterPhase) * 2
+  emitterWorldVelocity.set((emitterPos.x - prevX) / dt, 0, 0)
+  emitter.worldVelocity.copy(emitterWorldVelocity)
+
+  sys.update(dt)
+  controls.update()
+  renderer.render(scene, camera)
+}
+
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

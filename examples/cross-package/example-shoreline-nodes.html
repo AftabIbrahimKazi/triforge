@@ -1,0 +1,404 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Shoreline — Existing Nodes Only</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; }
+  canvas { display: block; }
+
+  #label {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.72); border: 1px solid rgba(100,200,255,0.3);
+    border-radius: 8px; padding: 10px 22px;
+    font: 600 12px/1.6 monospace; color: #fff;
+    pointer-events: none; z-index: 10; text-align: center;
+  }
+  #label .title { font-size: 14px; color: #6cd4ff; margin-bottom: 3px; }
+  #label .desc  { font-size: 9px; color: rgba(255,255,255,0.45); font-weight: 400; letter-spacing: .04em; }
+
+  #nodes {
+    position: fixed; bottom: 18px; left: 18px;
+    background: rgba(8,10,16,0.88); border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px; padding: 12px 16px;
+    font: 400 9px/1.7 monospace; color: rgba(255,255,255,0.45);
+    z-index: 10; backdrop-filter: blur(10px);
+    max-width: 260px;
+  }
+  #nodes .heading { font-size: 9px; font-weight: 600; letter-spacing: .14em;
+    text-transform: uppercase; color: rgba(255,255,255,0.35);
+    margin-bottom: 6px; padding-bottom: 5px;
+    border-bottom: 1px solid rgba(255,255,255,0.07); }
+  #nodes .node { color: #6cd4ff; }
+  #nodes .arrow { color: rgba(255,255,255,0.2); }
+</style>
+</head>
+<body>
+
+<div id="label">
+  <div class="title">Shoreline — Built from Existing Nodes</div>
+  <div class="desc">No new nodes. No raw GLSL. Only what already exists in @st-shader-core.</div>
+</div>
+
+<div id="nodes">
+  <div class="heading">Shore Material Graph</div>
+  <span class="node">Geometry</span> <span class="arrow">→</span>
+  <span class="node">SeparateXYZ</span> <span class="arrow">→</span> Z<br>
+  Z <span class="arrow">→</span>
+  <span class="node">MapRange</span> <span class="arrow">→</span> depthNorm<br>
+  <span class="node">AnimatedNoiseTexture</span> <span class="arrow">→</span> wavePhase<br>
+  wavePhase × 0.45 <span class="arrow">→</span> runup<br>
+  depthNorm + runup <span class="arrow">→</span> wetZone<br>
+  wetZone <span class="arrow">→</span>
+  <span class="node">MapRange</span> <span class="arrow">→</span> foamMask<br>
+  <span class="node">NoiseTexture</span>(detail=5) <span class="arrow">→</span> foamDetail<br>
+  foamMask × foamDetail <span class="arrow">→</span>
+  <span class="node">MapRange</span> <span class="arrow">→</span> foam<br>
+  wetZone <span class="arrow">→</span>
+  <span class="node">MapRange</span> <span class="arrow">→</span> wetSand<br>
+  <span class="node">MixRGB</span>(drySand→wetSand) <span class="arrow">→</span><br>
+  <span class="node">MixRGB</span>(→shallowWater) <span class="arrow">→</span><br>
+  <span class="node">MixRGB</span>(→foam) <span class="arrow">→</span>
+  <span class="node">PrincipledBSDF</span> <span class="arrow">→</span>
+  <span class="node">MaterialOutput</span>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js",
+    "@st-shader-core":   "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ModifierStack, OceanModifier } from '@st-modifier-core';
+import {
+  Geometry, SeparateXYZ, MapRange,
+  ShaderMath, Clamp,
+  NoiseTexture, AnimatedNoiseTexture,
+  MixRGB, RGB, Value,
+  PrincipledBSDF, Emission, AddShader, LayerWeight,
+  OceanAttribute, ColorRamp, MaterialOutput,
+} from '@st-shader-core';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDERER
+// ─────────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping        = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+document.body.appendChild(renderer.domElement);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENE
+// ─────────────────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.fog   = new THREE.FogExp2(0x7aaabf, 0.005);
+
+const SUN_DIR    = new THREE.Vector3(0.5, 0.38, -0.78).normalize();
+const OCEAN_SIZE = 160;
+const BEACH_DEPTH = 35;
+
+// Sky dome
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(1500, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: { uSun: { value: SUN_DIR } },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uSun; varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        float up = max(d.y, 0.0);
+        float h  = pow(1.0 - up, 5.0);
+        vec3 col = mix(
+          mix(vec3(0.02,0.07,0.22), vec3(0.05,0.22,0.50), smoothstep(0.5,0.0,up)),
+          vec3(0.52,0.62,0.72), h * 0.7);
+        float sunH = max(dot(normalize(vec3(uSun.x,0,uSun.z)), normalize(vec3(d.x,0,d.z))), 0.0);
+        col = mix(col, vec3(0.95,0.55,0.15), pow(sunH,3.0)*h*1.2);
+        float sd = dot(d, normalize(uSun));
+        col += vec3(0.92,0.58,0.18) * pow(max(sd,0.0), 80.0) * 0.7;
+        col += vec3(0.88,0.42,0.12) * pow(max(sd,0.0), 10.0) * h * 0.5;
+        col  = mix(col, vec3(1.0,0.96,0.82), smoothstep(0.999,0.9998,sd));
+        col  = mix(col, vec3(0.03,0.08,0.16), smoothstep(0.0,0.2,-d.y));
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  })
+);
+scene.add(sky);
+
+const sun = new THREE.DirectionalLight(0xffeedd, 4.0);
+sun.position.copy(SUN_DIR);
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0x3355aa, 2.5));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BEACH HEIGHT
+// ─────────────────────────────────────────────────────────────────────────────
+function beachY(z) {
+  if (z <= 0) return z * 0.04;
+  return (z / BEACH_DEPTH) * 3.5;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BEACH TERRAIN MESH
+// ─────────────────────────────────────────────────────────────────────────────
+const beachGeo = new THREE.PlaneGeometry(220, BEACH_DEPTH + 8, 44, 12);
+beachGeo.rotateX(-Math.PI / 2);
+beachGeo.translate(0, 0, (BEACH_DEPTH - 8) / 2);
+const bPos = beachGeo.getAttribute('position');
+for (let i = 0; i < bPos.count; i++) {
+  const z = bPos.getZ(i);
+  bPos.setY(i, beachY(z) + (Math.abs(z) > 1 ? (Math.random() - 0.5) * 0.06 : 0));
+}
+bPos.needsUpdate = true;
+beachGeo.computeVertexNormals();
+scene.add(new THREE.Mesh(beachGeo,
+  new THREE.MeshStandardMaterial({ color: 0xc8a060, roughness: 0.94 })
+));
+
+// Rocks
+const rMat = new THREE.MeshStandardMaterial({ color: 0x3a3844, roughness: 0.88 });
+[[-28,-5,1.8,0.9,1.5],[18,-4,1.4,0.8,1.2],[-10,-7,1.1,0.6,0.9],[32,-9,2.2,1.1,1.8]]
+  .forEach(([x,z,sx,sy,sz]) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1,7,5), rMat);
+    m.scale.set(sx,sy,sz); m.position.set(x, sy*0.4, z); scene.add(m);
+  });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OCEAN MESH
+// ─────────────────────────────────────────────────────────────────────────────
+const oceanMod = new OceanModifier({
+  resolution: 96, size: OCEAN_SIZE,
+  scale: 3.2, choppiness: 1.1,
+  windSpeed: 22.0, windAngle: 90.0,
+  damping: 0.08, depth: 200.0,
+  foamCoverage: 0.42, turbulence: 0.10,
+  waveCount: 20, seed: 42,
+});
+const oceanStack = new ModifierStack(new THREE.BufferGeometry());
+oceanStack.add(oceanMod);
+
+// Ocean shader (same as shoreline-compare)
+const lw     = new LayerWeight(0.35);
+const wc     = new MixRGB({ mode:'MIX', fac: lw.output('Fresnel'), colorA:'#010f1c', colorB:'#0a3a58' });
+const oBSDF  = new PrincipledBSDF({ baseColor: wc.output('Color'), roughness: new Value(0.09), ior: new Value(1.33) });
+const oa     = new OceanAttribute();
+const oRamp  = new ColorRamp({ fac: oa.output('Fac'), stops: ['#000000','#e8f4ff'] });
+const oEmit  = new Emission({ color: oRamp.output('Color'), strength: new Value(2.8) });
+const oMat   = new MaterialOutput({
+  surface: new AddShader({ shader1: oBSDF.output('BSDF'), shader2: oEmit.output('BSDF') }).output('BSDF')
+});
+oMat.compile();
+oMat.material.uniforms.uSunDirection = { value: SUN_DIR.clone() };
+oMat.material.uniforms.uSunColor     = { value: new THREE.Vector3(4.0, 3.5, 2.6) };
+oMat.material.uniforms.uAmbientColor = { value: new THREE.Vector3(0.22, 0.34, 0.60) };
+oMat.material.uniforms.time          = { value: 0 };
+
+let oceanGeo = null;
+const oceanMesh = new THREE.Mesh(new THREE.BufferGeometry(), oMat.material);
+scene.add(oceanMesh);
+
+function updateOcean(t) {
+  oceanMod.parameters.time = t;
+  const geo = oceanStack.apply();
+  const pos = geo.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) pos.setZ(i, pos.getZ(i) - OCEAN_SIZE / 2);
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  const prev = oceanGeo;
+  oceanGeo   = geo;
+  oceanMesh.geometry = oceanGeo;
+  if (prev) prev.dispose();
+  oMat.material.uniforms.time.value = t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHORE MESH — follows beach slope, Z = -1 to 9
+//
+// Sits 3 cm above the beach surface.  The Z < 0 portion dips below water and
+// is hidden by the ocean mesh — only the beach zone (Z ≥ 0) is visible.
+// ─────────────────────────────────────────────────────────────────────────────
+const SHORE_START = -1;
+const SHORE_END   =  9;
+const SHORE_W     = SHORE_END - SHORE_START;   // 10 units in Z
+
+const shoreBaseGeo = new THREE.PlaneGeometry(220, SHORE_W, 220, 100);
+shoreBaseGeo.rotateX(-Math.PI / 2);
+shoreBaseGeo.translate(0, 0, SHORE_START + SHORE_W / 2);   // centre at Z = 4
+
+const sPos = shoreBaseGeo.getAttribute('position');
+for (let i = 0; i < sPos.count; i++) {
+  const z = sPos.getZ(i);
+  sPos.setY(i, beachY(z) + 0.03);  // 3 cm above beach surface
+}
+sPos.needsUpdate = true;
+shoreBaseGeo.computeVertexNormals();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHORE MATERIAL — 100% existing nodes, zero new GLSL
+//
+// Node graph:
+//
+//  Geometry ──► SeparateXYZ ──► Z
+//                                └─► MapRange ──────────────────► depthNorm
+//                                      (Z: 9→0  maps to  0→1)
+//
+//  AnimatedNoiseTexture ─────────────────────────────────────────► wavePhase
+//  wavePhase × 0.45  ────────────────────────────────────────────► runup
+//  depthNorm + runup → Clamp ────────────────────────────────────► wetZone
+//
+//  wetZone − 0.62 → MapRange(SMOOTHSTEP 0..0.28) ───────────────► foamMask
+//  NoiseTexture(scale=8, detail=5, roughness=0.62) ──────────────► foamDetail
+//  foamMask × foamDetail → MapRange(SMOOTHSTEP 0.22..0.55) ──────► foam
+//
+//  wetZone → MapRange(SMOOTHSTEP 0.35..0.82) ───────────────────► wetSand
+//
+//  MixRGB(drySand → wetSand,  fac=wetSand)
+//  MixRGB(→ shallowWater,     fac=wetZone × 0.4)
+//  MixRGB(→ foamColor,        fac=foam)
+//  PrincipledBSDF(roughness=0.92) ──────────────────────────────► MaterialOutput
+// ─────────────────────────────────────────────────────────────────────────────
+
+// World Z → shore depth (0 = dry top, 1 = waterline)
+const geoNode   = new Geometry();
+const xyzNode   = new SeparateXYZ({ vector: geoNode.output('Position') });
+const depthNorm = new MapRange({
+  value:   xyzNode.output('Z'),
+  fromMin: SHORE_END,
+  fromMax: SHORE_START,
+  toMin:   0,
+  toMax:   1,
+  mode:    'LINEAR',
+  clamp:   true,
+});
+
+// Wave phase — irregular timing via 4-layer animated noise (same as Blender FBM)
+const wavePhase = new AnimatedNoiseTexture({ scale: 1.5, speed: 2.2 });
+
+// Runup: wave pushes the wet zone further up the beach
+const runupAmt  = new ShaderMath({ mode: 'MULTIPLY', a: wavePhase.output('Fac'), b: 0.45 });
+const wetRaw    = new ShaderMath({ mode: 'ADD',      a: depthNorm.output('Result'), b: runupAmt.output('Value') });
+const wetZone   = new Clamp({ value: wetRaw.output('Value'), min: 0, max: 1 });
+
+// Foam band — smoothstep above 0.62 of wetZone (leading wave edge)
+const foamPos   = new ShaderMath({ mode: 'SUBTRACT', a: wetZone.output('Result'), b: 0.62 });
+const foamMask  = new MapRange({
+  value:   foamPos.output('Value'),
+  fromMin: 0,
+  fromMax: 0.28,
+  toMin:   0,
+  toMax:   1,
+  mode:    'SMOOTHSTEP',
+  clamp:   true,
+});
+
+// Foam detail — NoiseTexture with detail=5 IS Blender's FBM (5-octave fractal noise)
+const foamDetail = new NoiseTexture({ scale: 8, detail: 5, roughness: 0.62, distortion: 0.5 });
+const foamRaw    = new ShaderMath({ mode: 'MULTIPLY', a: foamMask.output('Result'), b: foamDetail.output('Fac') });
+const foam       = new MapRange({
+  value:   foamRaw.output('Value'),
+  fromMin: 0.22,
+  fromMax: 0.55,
+  toMin:   0,
+  toMax:   1,
+  mode:    'SMOOTHSTEP',
+  clamp:   true,
+});
+
+// Wet sand — slightly darker sand behind retreating wave
+const wetSand = new MapRange({
+  value:   wetZone.output('Result'),
+  fromMin: 0.35,
+  fromMax: 0.82,
+  toMin:   0,
+  toMax:   1,
+  mode:    'SMOOTHSTEP',
+  clamp:   true,
+});
+
+// Shallow water tint factor (only in wettest zone)
+const shallowFac = new ShaderMath({ mode: 'MULTIPLY', a: wetZone.output('Result'), b: 0.38 });
+
+// Color mixing chain
+const drySandCol  = new RGB('#c8a060');
+const wetSandCol  = new RGB('#7a5228');
+const foamCol     = new RGB('#e8f4ff');
+const shallowCol  = new RGB('#5bc8d8');
+
+const sandBlend  = new MixRGB({ mode:'MIX', fac: wetSand.output('Result'),    colorA: drySandCol.output('Color'), colorB: wetSandCol.output('Color') });
+const waterTint  = new MixRGB({ mode:'MIX', fac: shallowFac.output('Value'),  colorA: sandBlend.output('Color'),  colorB: shallowCol.output('Color') });
+const withFoam   = new MixRGB({ mode:'MIX', fac: foam.output('Result'),        colorA: waterTint.output('Color'),  colorB: foamCol.output('Color') });
+
+// Final material — PrincipledBSDF, no custom GLSL
+const shoreBSDF = new PrincipledBSDF({
+  baseColor: withFoam.output('Color'),
+  roughness: new Value(0.92),
+});
+const shoreMat = new MaterialOutput({ surface: shoreBSDF.output('BSDF') });
+shoreMat.compile();
+shoreMat.material.uniforms.uSunDirection = { value: SUN_DIR.clone() };
+shoreMat.material.uniforms.uSunColor     = { value: new THREE.Vector3(3.5, 3.0, 2.2) };
+shoreMat.material.uniforms.uAmbientColor = { value: new THREE.Vector3(0.28, 0.38, 0.55) };
+shoreMat.material.uniforms.time          = { value: 0 };
+
+const shoreMesh = new THREE.Mesh(shoreBaseGeo, shoreMat.material);
+scene.add(shoreMesh);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAMERA
+// ─────────────────────────────────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.3, 2000);
+camera.position.set(0, 3.5, 16);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.5, 0);
+controls.enableDamping  = true;
+controls.dampingFactor  = 0.05;
+controls.maxPolarAngle  = Math.PI * 0.5;
+controls.update();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESIZE
+// ─────────────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+let elapsed = 0;
+
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt;
+
+  updateOcean(elapsed);
+  shoreMat.material.uniforms.time.value = elapsed;
+  sky.position.copy(camera.position);
+  controls.update();
+
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

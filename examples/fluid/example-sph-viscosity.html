@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SPH Viscosity Modes — @st-fluid-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 310px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #tabs {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; gap: 6px;
+  }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 250px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>SPH Viscosity Modes</h3>
+  <b>Standard</b> — Müller 2003 Laplacian kernel<br>
+  <b>XSPH</b> — velocity blending toward neighbours<br>
+  &nbsp;&nbsp;More stable, good for thick fluids<br>
+  <b>Stiff</b> — divergence damping, near-incompressible<br>
+  &nbsp;&nbsp;Best for honey / oil-like fluids<br><br>
+  <span class="code">new SPHSimulator({ viscosityType: 'xsph' })</span>
+</div>
+<div id="tabs"></div>
+<div id="panel"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-fluid-core":  "../../st-fluid-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { SPHSimulator } from '@st-fluid-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x060810)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 50)
+camera.position.set(0, 1, 7)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffeedd, 1.5)
+sun.position.set(3, 6, 4); scene.add(sun)
+scene.add(new THREE.GridHelper(8, 8, 0x111122, 0x0a0a18))
+
+// Domain box
+scene.add(new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(4, 4, 4)),
+  new THREE.LineBasicMaterial({ color: 0x223355, opacity: 0.4, transparent: true }),
+))
+
+let sim = null
+let ptMesh = null
+
+function buildSim({ viscosityType, viscosity, factor, particleCount }) {
+  if (ptMesh) { scene.remove(ptMesh); ptMesh.geometry.dispose() }
+
+  sim = new SPHSimulator({
+    particleCount,
+    viscosityType,
+    viscosity,
+    smoothingRadius: 0.35,
+    substeps: 2,
+    gravity: [0, -9.8, 0],
+  })
+  sim.parameters.xsphFactor  = factor
+  sim.parameters.stiffFactor = factor
+  sim.setDomain([-2, -2, -2], [2, 2, 2])
+
+  // Drop from upper half
+  const n   = particleCount
+  const pos = new Array(n * 3)
+  const cbrt = Math.ceil(Math.cbrt(n))
+  let idx = 0
+  outer: for (let z = 0; z < cbrt; z++)
+  for (let y = 0; y < cbrt; y++)
+  for (let x = 0; x < cbrt; x++) {
+    if (idx >= n) break outer
+    pos[idx*3]   = (x / cbrt - 0.5) * 2.5
+    pos[idx*3+1] = 0.5 + (y / cbrt) * 1.2
+    pos[idx*3+2] = (z / cbrt - 0.5) * 2.5
+    idx++
+  }
+  sim.setPositions(pos)
+
+  const geo = sim.getGeometry()
+  const color = viscosityType === 'standard' ? 0x44aaff
+              : viscosityType === 'xsph'     ? 0xff8844
+              :                                0x88ee55
+  ptMesh = new THREE.Points(geo, new THREE.PointsMaterial({
+    color, size: 0.07, sizeAttenuation: true, transparent: true, opacity: 0.9,
+  }))
+  scene.add(ptMesh)
+}
+
+// ── Presets ───────────────────────────────────────────────────────────────────
+const presets = [
+  {
+    name: 'Standard',
+    knobs: [
+      { label: 'viscosity',  key: 'viscosity',     min: 0,   max: 2,   step: 0.05, def: 0.1  },
+      { label: 'particles',  key: 'particleCount', min: 50,  max: 400, step: 50,   def: 200  },
+    ],
+    fn: (v) => buildSim({ viscosityType: 'standard', factor: 0.5, ...v }),
+  },
+  {
+    name: 'XSPH',
+    knobs: [
+      { label: 'xsph factor', key: 'factor',        min: 0,   max: 1,   step: 0.05, def: 0.5  },
+      { label: 'particles',   key: 'particleCount', min: 50,  max: 400, step: 50,   def: 200  },
+    ],
+    fn: (v) => buildSim({ viscosityType: 'xsph', viscosity: 0.05, ...v }),
+  },
+  {
+    name: 'Stiff',
+    knobs: [
+      { label: 'stiff factor', key: 'factor',        min: 0,   max: 2,   step: 0.1,  def: 0.5  },
+      { label: 'particles',    key: 'particleCount', min: 50,  max: 400, step: 50,   def: 200  },
+    ],
+    fn: (v) => buildSim({ viscosityType: 'stiff', viscosity: 0.05, ...v }),
+  },
+]
+
+const panelEl = document.getElementById('panel')
+const tabsEl  = document.getElementById('tabs')
+
+function activatePreset(i) {
+  document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  const preset = presets[i]
+  const v = {}
+  preset.knobs.forEach(k => { v[k.key] = k.def })
+
+  panelEl.innerHTML = ''
+  for (const k of preset.knobs) {
+    const row = document.createElement('label')
+    const val = document.createElement('span')
+    const inp = document.createElement('input')
+    inp.type = 'range'; inp.min = k.min; inp.max = k.max; inp.step = k.step; inp.value = k.def
+    val.textContent = (+inp.value).toFixed(2)
+    inp.addEventListener('input', () => {
+      v[k.key] = +inp.value
+      val.textContent = (+inp.value).toFixed(2)
+      preset.fn(v)
+    })
+    row.innerHTML = `<span>${k.label}</span>`
+    row.appendChild(inp); row.appendChild(val)
+    panelEl.appendChild(row)
+  }
+  preset.fn(v)
+}
+
+presets.forEach((p, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = p.name
+  btn.addEventListener('click', () => activatePreset(i))
+  tabsEl.appendChild(btn)
+})
+activatePreset(0)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.033)
+  if (sim && ptMesh) {
+    sim.step(dt)
+    sim.updateGeometry(ptMesh.geometry)
+    ptMesh.geometry.getAttribute('position').needsUpdate = true
+  }
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BoidField — Cross-System Interaction — @st-particle-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 320px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #tabs { position: absolute; top: 12px; right: 14px; display: flex; gap: 6px; }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 240px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <h3>BoidField — Cross-System Interaction</h3>
+  <b>Orange</b> — predator system (orbiting)<br>
+  <b>Blue</b> — prey system steered by BoidField<br><br>
+  <span class="code">new BoidField(predator.pool, { repelRadius: 1.5 })</span><br>
+  <span class="code">prey.addForce(field)</span><br><br>
+  No cross-package imports — just pool reference.
+</div>
+
+<div id="tabs"></div>
+<div id="panel"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":               "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":       "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core":   "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+function makeCircleTex(size = 64) {
+  const c = document.createElement('canvas')
+  c.width = c.height = size
+  const ctx = c.getContext('2d')
+  const r = size / 2
+  const grad = ctx.createRadialGradient(r, r, 0, r, r, r)
+  grad.addColorStop(0, 'rgba(255,255,255,1)')
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.8)')
+  grad.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = grad
+  ctx.beginPath(); ctx.arc(r, r, r, 0, Math.PI * 2); ctx.fill()
+  return new THREE.CanvasTexture(c)
+}
+const dotTex = makeCircleTex()
+
+import {
+  ParticleSystem, PointEmitter, BillboardRenderer,
+  GravityForce, DragForce, BoidField,
+} from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x060810)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 30)
+camera.position.set(0, 2, 7)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+scene.add(new THREE.AmbientLight(0x334455, 2))
+scene.add(new THREE.GridHelper(8, 8, 0x111122, 0x0a0a18))
+
+let predatorSys, preySys, field
+let predatorRen, preyRen
+
+function buildSystems(v) {
+  // Remove old renderers
+  if (predatorRen) scene.remove(predatorRen.object3D)
+  if (preyRen) scene.remove(preyRen.object3D)
+
+  // ── Predator system — orbits the scene ───────────────────────────────────
+  predatorSys = new ParticleSystem({ count: 8, lifetime: 99, lifetimeRandom: 0, gravity: 0 })
+  predatorRen = new BillboardRenderer({ maxCount: 8,
+    color: 0xff8833, map: dotTex, additive: true, sizeAttenuation: true })
+  const predEmitter = new PointEmitter({ position: [0,0,0], spread: 1.5, velocity: [0,0,0] })
+  predatorSys.addEmitter(predEmitter)
+  predatorSys.setRenderer(predatorRen)
+  scene.add(predatorRen.object3D)
+  predatorSys.update(0)
+
+  // ── Prey system — steered away from predators ─────────────────────────────
+  preySys = new ParticleSystem({ count: v.count ?? 300, lifetime: 6, lifetimeRandom: 0.5, gravity: 0 })
+  preyRen = new BillboardRenderer({ maxCount: v.count ?? 300,
+    color: 0x44aaff, map: dotTex, additive: true, sizeAttenuation: true })
+
+  const preyEmitter = new PointEmitter({ position: [0, 0.5, 0], spread: 2, velocity: [0, 0, 0] })
+  preySys.addEmitter(preyEmitter)
+  preySys.setRenderer(preyRen)
+  preySys.addForce(new DragForce({ strength: 1.5 }))
+
+  field = new BoidField(predatorSys.pool, {
+    repelRadius:    v.repelRadius   ?? 1.5,
+    repelStrength:  v.repelStrength ?? 4.0,
+    attractRadius:  v.attractMode   ? 3.0 : 0,
+    attractStrength: v.attractMode  ? 2.0 : 0,
+  })
+  preySys.addForce(field)
+  scene.add(preyRen.object3D)
+}
+
+// ── Presets ───────────────────────────────────────────────────────────────────
+const presets = [
+  {
+    name: 'Predator / Prey',
+    knobs: [
+      { label: 'repel radius',   min: 0.2, max: 3,   step: 0.1, def: 1.5, key: 'repelRadius' },
+      { label: 'repel strength', min: 0,   max: 10,  step: 0.5, def: 4.0, key: 'repelStrength' },
+      { label: 'prey count',     min: 50,  max: 500, step: 50,  def: 300, key: 'count' },
+    ],
+    orbitRadius: 1.2, orbitSpeed: 0.6,
+  },
+  {
+    name: 'Swarm Attractor',
+    knobs: [
+      { label: 'attract radius',   min: 0.5, max: 5,   step: 0.2, def: 3.0, key: 'attractRadius' },
+      { label: 'attract strength', min: 0,   max: 8,   step: 0.5, def: 3.0, key: 'attractStrength' },
+      { label: 'swarm count',      min: 50,  max: 500, step: 50,  def: 300, key: 'count' },
+    ],
+    attractMode: true, orbitRadius: 0.5, orbitSpeed: 1.2,
+  },
+]
+
+const tabsEl  = document.getElementById('tabs')
+const panelEl = document.getElementById('panel')
+let activePreset = presets[0]
+const state = {}
+
+function activatePreset(i) {
+  document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  activePreset = presets[i]
+  panelEl.innerHTML = ''
+  activePreset.knobs.forEach(k => { state[k.key] = k.def })
+
+  for (const k of activePreset.knobs) {
+    const row = document.createElement('label')
+    const val = document.createElement('span')
+    const inp = document.createElement('input')
+    inp.type = 'range'; inp.min = k.min; inp.max = k.max; inp.step = k.step; inp.value = k.def
+    val.textContent = (+inp.value).toFixed(2)
+    inp.addEventListener('input', () => {
+      state[k.key] = +inp.value; val.textContent = (+inp.value).toFixed(2)
+      if (k.key === 'count') {
+        buildSystems({ ...state, attractMode: activePreset.attractMode })
+      } else if (field?.parameters) {
+        Object.assign(field.parameters, {
+          repelRadius:     state.repelRadius     ?? 0,
+          repelStrength:   state.repelStrength   ?? 0,
+          attractRadius:   state.attractRadius   ?? 0,
+          attractStrength: state.attractStrength ?? 0,
+        })
+      }
+    })
+    row.innerHTML = `<span>${k.label}</span>`
+    row.appendChild(inp); row.appendChild(val)
+    panelEl.appendChild(row)
+  }
+  buildSystems({ ...state, attractMode: activePreset.attractMode })
+}
+
+presets.forEach((p, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'; btn.textContent = p.name
+  btn.addEventListener('click', () => activatePreset(i))
+  tabsEl.appendChild(btn)
+})
+activatePreset(0)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+let elapsed = 0
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.033)
+  elapsed += dt
+  const r  = activePreset.orbitRadius ?? 1.2
+  const s  = activePreset.orbitSpeed  ?? 0.6
+
+  // Step predator system each frame so particles are emitted
+  predatorSys?.update(dt)
+
+  // Override positions of alive predator particles to orbit the scene
+  // (done after predatorSys.update so we overwrite the physics-integrated positions)
+  if (predatorSys) {
+    const alive = predatorSys.pool.filter(p => p.alive)
+    alive.forEach((p, i) => {
+      const phi = (i / Math.max(alive.length, 1)) * Math.PI * 2 + elapsed * s
+      p.position.set(
+        Math.sin(phi) * r,
+        Math.sin(phi * 2) * 0.4,
+        Math.cos(phi) * r,
+      )
+    })
+    // Re-render predators after overriding positions
+    predatorRen.update(predatorSys.pool, alive.length)
+  }
+
+  preySys?.update(dt)
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

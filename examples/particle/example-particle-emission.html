@@ -1,0 +1,252 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>@st-particle-core — Emission Controls</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #05070d; overflow: hidden; font: 12px/1.5 monospace; color: #ccc; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; top: 14px; left: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    z-index: 10;
+  }
+  .hud-box {
+    background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px; padding: 10px 14px;
+    backdrop-filter: blur(8px);
+  }
+  .hud-title {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: rgba(255,255,255,0.35); margin-bottom: 8px;
+  }
+  .hud-row {
+    display: grid; grid-template-columns: 140px 130px 40px;
+    align-items: center; gap: 6px; margin: 4px 0;
+  }
+  .hud-row label { font-size: 10px; color: rgba(255,255,255,0.5); }
+  .hud-row input[type=range] {
+    -webkit-appearance: none; width: 100%; height: 3px;
+    background: rgba(255,255,255,0.15); border-radius: 2px; outline: none;
+  }
+  .hud-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%;
+    background: #4a9eff; border: 2px solid rgba(255,255,255,0.5); cursor: pointer;
+  }
+  .hud-row .v { font-size: 10px; color: #fff; text-align: right; }
+
+  #labels {
+    position: fixed; bottom: 24px; left: 0; right: 0;
+    display: flex; justify-content: space-around;
+    pointer-events: none;
+  }
+  .col-label {
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: rgba(255,255,255,0.4); text-align: center;
+  }
+  .col-label span { display: block; color: rgba(255,255,255,0.18); font-size: 10px; margin-top: 3px; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div class="hud-box">
+    <div class="hud-title">Emission Controls</div>
+    <div class="hud-row">
+      <label>Lifetime Random</label>
+      <input type="range" id="lr" min="0" max="1" step="0.01" value="0.5">
+      <span class="v" id="lr-v">0.50</span>
+    </div>
+    <div class="hud-row">
+      <label>Normal Velocity</label>
+      <input type="range" id="nv" min="0" max="3" step="0.05" value="1">
+      <span class="v" id="nv-v">1.00</span>
+    </div>
+    <div class="hud-row">
+      <label>Random Velocity</label>
+      <input type="range" id="rv" min="0" max="3" step="0.05" value="0.5">
+      <span class="v" id="rv-v">0.50</span>
+    </div>
+  </div>
+  <div class="hud-box">
+    <div class="hud-title">Info</div>
+    <div style="font-size:10px;color:rgba(255,255,255,0.4);line-height:1.8">
+      Left: emitFrom faces (evenDistribution)<br>
+      Right: emitFrom volume (bounding box)<br>
+      Opacity fades with normalised lifetime
+    </div>
+  </div>
+</div>
+
+<div id="labels">
+  <div class="col-label">Surface Emission<span>emitFrom: faces · evenDistribution: true</span></div>
+  <div class="col-label">Volume Emission<span>emitFrom: volume · bounding box</span></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem,
+  MeshEmitter,
+  GravityForce, DragForce,
+  BillboardRenderer,
+} from '@st-particle-core'
+
+// ── Scene setup ──────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.fog    = new THREE.FogExp2(0x05070d, 0.06)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200)
+camera.position.set(0, 4, 12)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+controls.target.set(0, 1, 0)
+
+// ── Shared sphere source geometry ─────────────────────────────────────────────
+
+const sphereGeo = new THREE.SphereGeometry(1.5, 32, 20)
+
+// Wireframe hints so the emitter surfaces are visible
+const wireMat = new THREE.MeshBasicMaterial({ color: 0x223344, wireframe: true, opacity: 0.18, transparent: true })
+const leftMesh  = new THREE.Mesh(sphereGeo, wireMat)
+const rightMesh = new THREE.Mesh(sphereGeo, wireMat)
+leftMesh.position.x  = -4
+rightMesh.position.x =  4
+scene.add(leftMesh, rightMesh)
+
+// ── Left system — surface emission (faces + evenDistribution) ─────────────────
+
+const leftEmitter = new MeshEmitter({
+  emitFrom:        'faces',
+  evenDistribution: true,
+  normalVelocity:   1,
+  randomVelocity:   0.5,
+})
+
+const leftSys = new ParticleSystem({
+  count:          600,
+  lifetime:       2.5,
+  lifetimeRandom: 0.5,
+  seed:           1,
+  start:          0,
+  end:            9999,
+  size:           0.06,
+  sizeRandom:     0.3,
+})
+leftSys.addEmitter(leftEmitter)
+leftSys.addForce(new GravityForce(0.4))
+leftSys.addForce(new DragForce({ linear: 0.8 }))
+leftSys.setGeometry(sphereGeo)
+
+const leftRender = new BillboardRenderer({
+  maxCount:        600,
+  color:           0x44aaff,
+  additive:        true,
+  fadeOut:         true,
+  sizeAttenuation: true,
+})
+leftSys.setRenderer(leftRender)
+leftRender.object3D.position.x = -4
+scene.add(leftRender.object3D)
+
+// ── Right system — volume emission ─────────────────────────────────────────────
+
+const rightEmitter = new MeshEmitter({
+  emitFrom:      'volume',
+  normalVelocity: 0,
+  randomVelocity: 1.2,
+})
+
+const rightSys = new ParticleSystem({
+  count:          600,
+  lifetime:       2.5,
+  lifetimeRandom: 0.5,
+  seed:           2,
+  start:          0,
+  end:            9999,
+  size:           0.06,
+  sizeRandom:     0.3,
+})
+rightSys.addEmitter(rightEmitter)
+rightSys.addForce(new GravityForce(0.4))
+rightSys.addForce(new DragForce({ linear: 0.8 }))
+rightSys.setGeometry(sphereGeo)
+
+const rightRender = new BillboardRenderer({
+  maxCount:        600,
+  color:           0xff8844,
+  additive:        true,
+  fadeOut:         true,
+  sizeAttenuation: true,
+})
+rightSys.setRenderer(rightRender)
+rightRender.object3D.position.x = 4
+scene.add(rightRender.object3D)
+
+// ── HUD controls ──────────────────────────────────────────────────────────────
+
+function bindSlider(id, valId, onChange) {
+  const el = document.getElementById(id)
+  const vEl = document.getElementById(valId)
+  el.addEventListener('input', () => {
+    vEl.textContent = parseFloat(el.value).toFixed(2)
+    onChange(parseFloat(el.value))
+  })
+}
+
+bindSlider('lr', 'lr-v', v => {
+  leftSys.parameters.lifetimeRandom  = v
+  rightSys.parameters.lifetimeRandom = v
+})
+bindSlider('nv', 'nv-v', v => {
+  leftEmitter.parameters.normalVelocity = v
+})
+bindSlider('rv', 'rv-v', v => {
+  leftEmitter.parameters.randomVelocity  = v
+  rightEmitter.parameters.randomVelocity = v
+})
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+// ── Animate ───────────────────────────────────────────────────────────────────
+
+const clock = new THREE.Clock()
+
+function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+  controls.update()
+  leftSys.update(dt)
+  rightSys.update(dt)
+  renderer.render(scene, camera)
+}
+animate()
+</script>
+</body>
+</html>

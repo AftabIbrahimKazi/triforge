@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Converter Nodes — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px; }
+  #labels { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .label { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.6);
+    padding: 2px 7px; border-radius: 3px; font: 10px monospace; color: #eee; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="info">Converter Nodes — @st-shader-core<br>MapRange · Clamp · FloatCurve · Blackbody · Wavelength</div>
+<div id="labels"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  MaterialOutput, PrincipledBSDF, Emission,
+  NoiseTexture, ColorRamp,
+  MapRange, Clamp, FloatCurve, Blackbody, Wavelength,
+  Value
+} from '@st-shader-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d0d)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 12)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.3))
+const sun = new THREE.DirectionalLight(0xffffff, 2)
+sun.position.set(5, 8, 4)
+scene.add(sun)
+
+function noiseFloat() {
+  return new NoiseTexture({ scale: 3.0 }).output('Fac')
+}
+
+const defs = [
+  {
+    name: 'MapRange\n(LINEAR)',
+    build: () => {
+      const mr   = new MapRange({ value: noiseFloat(), fromMin: 0.0, fromMax: 1.0, toMin: 0.2, toMax: 0.95 })
+      const ramp = new ColorRamp({ fac: mr.output('Result'), stops: ['#001144', '#4499ff'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: mr.output('Result') })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'Clamp',
+    build: () => {
+      const cl   = new Clamp({ value: noiseFloat(), min: 0.3, max: 0.7 })
+      const ramp = new ColorRamp({ fac: cl.output('Result'), stops: ['#330000', '#ff4400', '#ffcc00'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.5 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'FloatCurve',
+    build: () => {
+      const fc   = new FloatCurve({
+        value: noiseFloat(),
+        points: [[0,0],[0.25,0.75],[0.5,0.1],[0.75,0.9],[1,0.5]]
+      })
+      const ramp = new ColorRamp({ fac: fc.output('Value'), stops: ['#002200', '#00aa44', '#ccffcc'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.4 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'Blackbody\n(1000–8000K)',
+    build: () => {
+      // Map noise → temperature range 1000–8000 K
+      const mr   = new MapRange({ value: noiseFloat(), fromMin: 0.0, fromMax: 1.0, toMin: 1000.0, toMax: 8000.0 })
+      const bb   = new Blackbody({ temperature: mr.output('Result') })
+      const emit = new Emission({ color: bb.output('Color'), strength: 1.5 })
+      const mat  = new MaterialOutput({ surface: emit.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'Wavelength\n(380–780nm)',
+    build: () => {
+      // Map noise → visible spectrum 380–780 nm
+      const mr   = new MapRange({ value: noiseFloat(), fromMin: 0.0, fromMax: 1.0, toMin: 380.0, toMax: 780.0 })
+      const wl   = new Wavelength({ wavelength: mr.output('Result') })
+      const bsdf = new PrincipledBSDF({ baseColor: wl.output('Color'), roughness: 0.3 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  }
+]
+
+const geo    = new THREE.SphereGeometry(0.9, 48, 32)
+const span   = (defs.length - 1) * 2.4
+const labels = document.getElementById('labels')
+
+const spheres = defs.map((def, i) => {
+  const mat  = def.build()
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.position.x = -span / 2 + i * 2.4
+  scene.add(mesh)
+  const lbl = document.createElement('div')
+  lbl.className = 'label'
+  lbl.textContent = def.name
+  labels.appendChild(lbl)
+  return { mesh, lbl }
+})
+
+function projectLabel(mesh, lbl) {
+  const v = mesh.position.clone().project(camera)
+  lbl.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px'
+  lbl.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight + 78) + 'px'
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  spheres.forEach(({ mesh, lbl }) => projectLabel(mesh, lbl))
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

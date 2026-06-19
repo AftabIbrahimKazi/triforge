@@ -1,0 +1,181 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Self Effect — st-particle-core</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box }
+    body { background: #111; overflow: hidden; font-family: monospace }
+    canvas { display: block }
+    #ui {
+      position: fixed; top: 16px; left: 16px; color: #eee;
+      display: flex; flex-direction: column; gap: 10px; width: 260px;
+    }
+    .row { display: flex; align-items: center; gap: 10px; font-size: 13px }
+    button {
+      padding: 6px 14px; border: 1px solid #555; background: #222;
+      color: #eee; cursor: pointer; border-radius: 4px; font-family: monospace;
+    }
+    button.active { background: #1a5c1a; border-color: #4c4 }
+    .info { font-size: 11px; color: #888 }
+    #stats { font-size: 12px; color: #fa0 }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <div style="font-size:14px;font-weight:bold;margin-bottom:4px">Self Effect</div>
+  <div class="row">
+    <button id="btnOff" class="active" onclick="setSelf(false)">Self Effect OFF</button>
+    <button id="btnOn"               onclick="setSelf(true)">Self Effect ON</button>
+  </div>
+  <div id="stats"></div>
+  <div class="info">When ON, overlapping particles repel each other.<br>Uses equal-mass elastic collision (O(n²)).</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Three.js setup ──────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200)
+camera.position.set(0, 2, 18)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight)
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+})
+
+scene.add(new THREE.GridHelper(16, 16, 0x333333, 0x222222))
+
+// ── Simulation ───────────────────────────────────────────────────────────────
+const COUNT = 60
+const SIZE  = 0.5          // collision diameter
+const HALF  = SIZE * 0.5
+
+function lcg(seed) {
+  let s = seed | 0
+  return () => { s = (Math.imul(1664525, s) + 1013904223) | 0; return (s >>> 0) / 0xFFFFFFFF }
+}
+const rng = lcg(13)
+
+const px = new Float32Array(COUNT)
+const py = new Float32Array(COUNT)
+const pz = new Float32Array(COUNT)
+const vx = new Float32Array(COUNT)
+const vy = new Float32Array(COUNT)
+const vz = new Float32Array(COUNT)
+
+// Spawn in a tight cluster
+for (let i = 0; i < COUNT; i++) {
+  px[i] = (rng() - 0.5) * 2
+  py[i] = 0.3 + rng() * 4
+  pz[i] = (rng() - 0.5) * 2
+  vx[i] = (rng() - 0.5) * 0.5
+  vy[i] = rng() * 2
+  vz[i] = (rng() - 0.5) * 0.5
+}
+
+// Instanced spheres
+const sphereGeo = new THREE.SphereGeometry(HALF, 8, 6)
+const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffaa44, wireframe: false, transparent: true, opacity: 0.7 })
+const instanced = new THREE.InstancedMesh(sphereGeo, sphereMat, COUNT)
+instanced.frustumCulled = false
+scene.add(instanced)
+
+const _mat = new THREE.Matrix4()
+const _pos = new THREE.Vector3()
+const _s   = new THREE.Vector3(1, 1, 1)
+const _q   = new THREE.Quaternion()
+
+let selfEffect = false
+
+window.setSelf = (v) => {
+  selfEffect = v
+  document.getElementById('btnOff').classList.toggle('active', !v)
+  document.getElementById('btnOn').classList.toggle('active', v)
+}
+
+// ── Loop ─────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+let collisionsThisFrame = 0
+
+function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  // Physics step
+  for (let i = 0; i < COUNT; i++) {
+    vy[i] -= 4.0 * dt   // gentle gravity
+    px[i] += vx[i] * dt
+    py[i] += vy[i] * dt
+    pz[i] += vz[i] * dt
+
+    // Bounce off floor
+    if (py[i] < HALF) { py[i] = HALF; vy[i] = Math.abs(vy[i]) * 0.9 }
+    // Soft walls (AABB ±6)
+    const W = 6
+    if (px[i] < -W) { px[i] = -W; vx[i] = Math.abs(vx[i]) }
+    if (px[i] >  W) { px[i] =  W; vx[i] = -Math.abs(vx[i]) }
+    if (pz[i] < -W) { pz[i] = -W; vz[i] = Math.abs(vz[i]) }
+    if (pz[i] >  W) { pz[i] =  W; vz[i] = -Math.abs(vz[i]) }
+  }
+
+  // Self-effect collision pass
+  collisionsThisFrame = 0
+  if (selfEffect) {
+    const minDist = SIZE   // two particles collide when centres are within SIZE (each radius = HALF)
+    for (let i = 0; i < COUNT - 1; i++) {
+      for (let j = i + 1; j < COUNT; j++) {
+        const dx = px[i] - px[j]
+        const dy = py[i] - py[j]
+        const dz = pz[i] - pz[j]
+        const d2 = dx * dx + dy * dy + dz * dz
+        if (d2 < minDist * minDist && d2 > 1e-12) {
+          const d    = Math.sqrt(d2)
+          const nx   = dx / d, ny = dy / d, nz = dz / d
+          const dvn  = (vx[i] - vx[j]) * nx + (vy[i] - vy[j]) * ny + (vz[i] - vz[j]) * nz
+          if (dvn < 0) {
+            vx[i] -= dvn * nx; vy[i] -= dvn * ny; vz[i] -= dvn * nz
+            vx[j] += dvn * nx; vy[j] += dvn * ny; vz[j] += dvn * nz
+            collisionsThisFrame++
+          }
+        }
+      }
+    }
+  }
+
+  // Update instanced mesh
+  for (let i = 0; i < COUNT; i++) {
+    _pos.set(px[i], py[i], pz[i])
+    _mat.compose(_pos, _q, _s)
+    instanced.setMatrixAt(i, _mat)
+  }
+  instanced.instanceMatrix.needsUpdate = true
+
+  document.getElementById('stats').textContent =
+    `Collisions this frame: ${collisionsThisFrame}`
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+</script>
+</body>
+</html>

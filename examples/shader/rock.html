@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rock — @st-shader-core</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #111; }
+    canvas { display: block; }
+    #info {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      line-height: 1.9;
+      color: #888;
+      background: rgba(0, 0, 0, 0.75);
+      padding: 10px 14px;
+      border-radius: 6px;
+      border: 1px solid #222;
+      pointer-events: none;
+    }
+    #info b  { color: #ccc; }
+    #info em { color: #555; font-style: normal; }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <b>Rock</b> — geometry comparison · same material on both<br>
+    <em>Left — RadiusParametricGeometry (@three-radius-parametric)</em><br>
+    <em>Right — THREE.SphereGeometry (built-in)</em><br>
+    <em>Drag to orbit · Scroll to zoom</em>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three":                      "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
+        "three/addons/":              "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/",
+        "@st-shader-core":            "../../st-shader-core/dist/bundle.js",
+        "@three-radius-parametric":   "../../radius-parametric-geometry/dist/index.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three'
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+    import { RadiusParametricGeometry } from '@three-radius-parametric'
+    import {
+      ShaderConfig,
+      Geometry,
+      MusgraveTexture,
+      NoiseTexture,
+      VoronoiTexture,
+      ColorRamp,
+      MixRGB,
+      RGBtoBW,
+      Bump,
+      MapRange,
+      PrincipledBSDF,
+      MaterialOutput,
+    } from '@st-shader-core'
+
+    ShaderConfig.errorLevel = 'verbose'
+
+    // ── Renderer ──────────────────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+    renderer.setSize(innerWidth, innerHeight)
+    renderer.toneMapping         = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.6
+    renderer.shadowMap.enabled   = true
+    renderer.shadowMap.type      = THREE.PCFSoftShadowMap
+    document.body.appendChild(renderer.domElement)
+
+    // ── Scene ─────────────────────────────────────────────────────────────────
+    const scene = new THREE.Scene()
+    scene.background = new THREE.Color(0x8a9aaa)
+    scene.fog = new THREE.Fog(0x8a9aaa, 8, 30)
+
+    // ── Camera ────────────────────────────────────────────────────────────────
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+    camera.position.set(0, 1.5, 8)
+
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.dampingFactor = 0.05
+    controls.target.set(0, 0, 0)
+    controls.update()
+
+    // ── Lighting ──────────────────────────────────────────────────────────────
+    // Key light — warm directional (sun/studio spot)
+    const key = new THREE.DirectionalLight(0xfff4e0, 4.5)
+    key.position.set(3, 5, 2)
+    key.castShadow = true
+    key.shadow.mapSize.set(2048, 2048)
+    key.shadow.camera.near = 0.1
+    key.shadow.camera.far  = 30
+    key.shadow.camera.left = key.shadow.camera.bottom = -5
+    key.shadow.camera.right = key.shadow.camera.top   =  5
+    scene.add(key)
+
+    // Fill light — cool blue from opposite side, dim
+    const fill = new THREE.DirectionalLight(0xc8d8ff, 1.2)
+    fill.position.set(-4, 2, -3)
+    scene.add(fill)
+
+    // Rim light — slight warm backlight for edge definition
+    const rim = new THREE.DirectionalLight(0xffe8c0, 0.6)
+    rim.position.set(0, -1, -5)
+    scene.add(rim)
+
+    // Ambient — very dark so shadows read well
+    scene.add(new THREE.AmbientLight(0x8a9aaa, 1.2))
+
+    // ── Rock Material — node graph ─────────────────────────────────────────────
+    //
+    // Color pipeline:
+    //   MusgraveTexture(scale:1.5) → ColorRamp(dark grey → mid grey → warm grey)
+    //   NoiseTexture(scale:8)      → ColorRamp(dark → grey)
+    //   MixRGB(MIX, fac:0.45) to blend both colour layers
+    //
+    // Bump pipeline (3 stacked layers — each feeds normal into next):
+    //   Layer 1 — large form:  MusgraveTexture → RGBtoBW → Bump(strength:4)
+    //   Layer 2 — grain:       NoiseTexture(scale:12) → RGBtoBW → Bump(strength:2, normal:layer1)
+    //   Layer 3 — cracks:      VoronoiTexture(DISTANCE_TO_EDGE) → Bump(strength:1, normal:layer2)
+    //
+    // Roughness:
+    //   NoiseTexture(scale:20) → MapRange(0.72 → 0.94)
+    //
+    // Output:
+    //   PrincipledBSDF(baseColor, roughness, normal) → MaterialOutput
+
+    // ── Object-space position — seamless, no UV seam or pole pinch ────────────
+    const objPos = new Geometry()
+
+    // ── Texture sources ────────────────────────────────────────────────────────
+    const largeForm = new MusgraveTexture({
+      scale:      1.5,
+      detail:     10.0,
+      dimension:  0.9,
+      lacunarity: 2.1,
+      vector:     objPos.output('Position'),
+    })
+
+    const medGrain = new NoiseTexture({
+      scale:      8.0,
+      detail:     7.0,
+      roughness:  0.65,
+      distortion: 0.25,
+      vector:     objPos.output('Position'),
+    })
+
+    const fineGrain = new NoiseTexture({
+      scale:      22.0,
+      detail:     4.0,
+      roughness:  0.55,
+      vector:     objPos.output('Position'),
+    })
+
+    const cracks = new VoronoiTexture({
+      scale:   5.5,
+      feature: 'DISTANCE_TO_EDGE',
+      vector:  objPos.output('Position'),
+    })
+
+    // ── Color ──────────────────────────────────────────────────────────────────
+    // Large-form colour — dark charcoal through warm mid-grey
+    const baseRamp = new ColorRamp({
+      fac:   largeForm.output('Fac'),
+      stops: ['#5a2a18', '#7a3e28', '#9a5638', '#b87050', '#cc9070', '#deb090'],
+    })
+
+    // Grain overlay — darker rust/brown patches for variation
+    const grainRamp = new ColorRamp({
+      fac:   medGrain.output('Fac'),
+      stops: ['#4a2015', '#6e3522', '#924c32', '#b06848'],
+    })
+
+    // Blend the two colour layers
+    const surfaceColor = new MixRGB({
+      mode:   'MIX',
+      fac:    0.5,
+      colorA: baseRamp.output('Color'),
+      colorB: grainRamp.output('Color'),
+    })
+
+    // ── Bump — layer 1: large form ─────────────────────────────────────────────
+    const largeLuma = new RGBtoBW({ color: largeForm.output('Color') })
+    const largeBump = new Bump({
+      height:   largeLuma.output('Val'),
+      strength: 2.0,
+      distance: 0.6,
+    })
+
+    // ── Bump — layer 2: medium grain ───────────────────────────────────────────
+    const grainLuma = new RGBtoBW({ color: medGrain.output('Color') })
+    const grainBump = new Bump({
+      height:   grainLuma.output('Val'),
+      strength: 1.2,
+      distance: 0.15,
+      normal:   largeBump.output('Normal'),
+    })
+
+    // ── Bump — layer 3: voronoi cracks ─────────────────────────────────────────
+    const crackBump = new Bump({
+      height:   cracks.output('Distance'),
+      strength: 0.8,
+      distance: 0.08,
+      normal:   grainBump.output('Normal'),
+    })
+
+    // ── Roughness ──────────────────────────────────────────────────────────────
+    const roughness = new MapRange({
+      value:   fineGrain.output('Fac'),
+      fromMin: 0.0,
+      fromMax: 1.0,
+      toMin:   0.10,
+      toMax:   0.90,
+      clamp:   true,
+    })
+
+    // ── BSDF ───────────────────────────────────────────────────────────────────
+    const rockBSDF = new PrincipledBSDF({
+      baseColor: surfaceColor.output('Color'),
+      roughness: roughness.output('Result'),
+      metallic:  0.0,
+      ior:       1.5,
+      normal:    crackBump.output('Normal'),
+    })
+
+    // ── Output ─────────────────────────────────────────────────────────────────
+    const output = new MaterialOutput({ surface: rockBSDF.output('BSDF') })
+    output.compile()
+    const rockMat = output.material
+
+    // ── Geometry — left: RadiusParametricGeometry, right: THREE.SphereGeometry ──
+    const leftGeo  = new RadiusParametricGeometry(
+      (u, v) => 1.4 * Math.sin(v * Math.PI),
+      (u, v) => 1.4 * Math.cos(v * Math.PI),
+      { radiusSegments: 128, heightSegments: 64 }
+    )
+    const rightGeo = new THREE.SphereGeometry(1.4, 128, 64)
+
+    const leftMesh  = new THREE.Mesh(leftGeo,  rockMat)
+    const rightMesh = new THREE.Mesh(rightGeo, rockMat)
+
+    leftMesh.position.x  = -2.0
+    rightMesh.position.x =  2.0
+
+    leftMesh.castShadow  = rightMesh.castShadow  = true
+    leftMesh.receiveShadow = rightMesh.receiveShadow = true
+
+    scene.add(leftMesh, rightMesh)
+
+    // Ground plane
+    const groundGeo = new THREE.PlaneGeometry(20, 20)
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x6a7a88, roughness: 1.0 })
+    const ground    = new THREE.Mesh(groundGeo, groundMat)
+    ground.rotation.x    = -Math.PI / 2
+    ground.position.y    = -1.4
+    ground.receiveShadow = true
+    scene.add(ground)
+
+    // ── Resize ────────────────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(innerWidth, innerHeight)
+    })
+
+    // ── Render loop ───────────────────────────────────────────────────────────
+    function animate() {
+      requestAnimationFrame(animate)
+      controls.update()
+      renderer.render(scene, camera)
+    }
+
+    animate()
+  </script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>@st-core-types — Shared Interface Showcase</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080c14; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 14px; left: 14px;
+    background: rgba(0,0,0,0.72); padding: 14px 18px; border-radius: 6px;
+    max-width: 360px; line-height: 1.8;
+  }
+  #ui h3 { color: #adf; font-size: 12px; margin-bottom: 8px; }
+  .iface { color: #7df; }
+  .pkg   { color: #fd8; }
+  .ok    { color: #4f8; }
+  .sep   { border-top: 1px solid #333; margin: 8px 0; }
+  #log   { margin-top: 8px; font-size: 10px; color: #aaa; max-height: 200px; overflow-y: auto; }
+  #info  { position: fixed; bottom: 12px; left: 14px; font-size: 10px; color: #555; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>@st-core-types — Interface Conformance</h3>
+  Each ecosystem package satisfies its <span class="iface">interface</span><br>
+  without importing from any other package.<br>
+  <div class="sep"></div>
+  <div id="log">Checking…</div>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":               "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":       "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core":   "../../st-modifier-core/dist/index.js",
+    "@st-particle-core":   "../../st-particle-core/dist/index.js",
+    "@st-curve-core":      "../../st-curve-core/dist/index.js",
+    "@st-physics-core":    "../../st-physics-core/dist/index.js",
+    "@st-animation-core":  "../../st-animation-core/dist/index.js",
+    "@st-keyframe":        "../../st-keyframe/dist/index.js",
+    "@st-hair-core":       "../../st-hair-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { SubdivisionModifier, ModifierStack } from '@st-modifier-core'
+import { ParticleSystem, MeshEmitter, GravityForce, BillboardRenderer } from '@st-particle-core'
+import { BezierCurve, buildAutoHandles } from '@st-curve-core'
+import { RigidBodyWorld, SpringConstraint } from '@st-physics-core'
+import { Armature, PoseBone } from '@st-animation-core'
+import { KeyframeTrack, QuaternionTrack } from '@st-keyframe'
+import { HairSystem, HairDynamics } from '@st-hair-core'
+
+const log = document.getElementById('log')
+const results = []
+
+function check(iface, pkg, value, test) {
+  try {
+    test(value)
+    results.push({ ok: true, iface, pkg })
+    log.innerHTML += `<div><span class="ok">✓</span> <span class="iface">${iface}</span> ← <span class="pkg">${pkg}</span></div>`
+  } catch(e) {
+    results.push({ ok: false, iface, pkg, err: e.message })
+    log.innerHTML += `<div style="color:#f66">✗ ${iface} ← ${pkg}: ${e.message}</div>`
+  }
+}
+
+// ── IModifier ← st-modifier-core ─────────────────────────────────────────────
+const mod = new SubdivisionModifier({ levels: 1 })
+check('IModifier', '@st-modifier-core', mod, m => {
+  if (typeof m.name !== 'string') throw new Error('name not string')
+  if (typeof m.enabled !== 'boolean') throw new Error('enabled not boolean')
+  if (typeof m.apply !== 'function') throw new Error('apply not function')
+  if (typeof m.parameters !== 'object') throw new Error('parameters not object')
+})
+
+// ── IGeometryProvider — modifier stack wired to particle emitter ──────────────
+const baseGeo = new THREE.IcosahedronGeometry(1, 1)
+const stack   = new ModifierStack(baseGeo)
+stack.add(mod)
+const provider = () => stack.apply()
+check('IGeometryProvider', 'ModifierStack', provider, fn => {
+  if (typeof fn !== 'function') throw new Error('not a function')
+  const geo = fn()
+  if (!geo.getAttribute('position')) throw new Error('no position attribute')
+})
+
+// ── IAnimatable ← multiple packages ──────────────────────────────────────────
+check('IAnimatable', '@st-modifier-core', mod, m => {
+  if (typeof m.parameters !== 'object') throw new Error('no parameters')
+  if (typeof m.parameters.levels !== 'number') throw new Error('levels not number')
+})
+
+const sys = new ParticleSystem({ count: 10 })
+check('IAnimatable', '@st-particle-core', sys, s => {
+  if (typeof s.parameters.count !== 'number') throw new Error('count not number')
+})
+
+// ── IKeyframeTarget ← st-keyframe ────────────────────────────────────────────
+const target = mod.parameters
+const track  = new KeyframeTrack(target, 'levels', [{ time: 0, value: 1 }, { time: 2, value: 3 }])
+check('IKeyframeTarget', '@st-keyframe', track, t => {
+  if (typeof t.evaluate !== 'function') throw new Error('evaluate not function')
+  t.evaluate(1)
+  if (target.levels < 1 || target.levels > 3) throw new Error('value out of range')
+})
+
+// ── ICurve ← st-curve-core ───────────────────────────────────────────────────
+const anchors = [new THREE.Vector3(0,0,0), new THREE.Vector3(1,1,0), new THREE.Vector3(2,0,0), new THREE.Vector3(3,1,0)]
+const curve   = new BezierCurve(buildAutoHandles(anchors))
+check('ICurve', '@st-curve-core', curve, c => {
+  const pt = c.getPoint(0.5)
+  if (!(pt instanceof THREE.Vector3)) throw new Error('getPoint not Vector3')
+  const tan = c.getTangent(0.5)
+  if (!(tan instanceof THREE.Vector3)) throw new Error('getTangent not Vector3')
+})
+
+// ── IConstraint ← st-physics-core ────────────────────────────────────────────
+const world = new RigidBodyWorld()
+const bodyA = world.createBody({ position: [0,0,0], mass: 1 })
+const bodyB = world.createBody({ position: [0,2,0], mass: 1 })
+const spring = new SpringConstraint(bodyA, bodyB, { stiffness: 5 })
+world.addConstraint(spring)
+check('IConstraint', '@st-physics-core', spring, c => {
+  if (typeof c.type !== 'string') throw new Error('type not string')
+  if (typeof c.solve !== 'function') throw new Error('solve not function')
+  if (typeof c.enabled !== 'boolean') throw new Error('enabled not boolean')
+})
+
+// ── IPoseBone ← st-animation-core ────────────────────────────────────────────
+const arm  = new Armature([{ name: 'root', head: new THREE.Vector3(0,0,0), tail: new THREE.Vector3(0,1,0) }])
+const bone = arm.pose['root']
+check('IPoseBone', '@st-animation-core', bone, b => {
+  if (typeof b.name !== 'string') throw new Error('name not string')
+  if (typeof b.parameters.rotationX !== 'number') throw new Error('rotationX not number')
+  if (typeof b.getQuaternion !== 'function') throw new Error('getQuaternion not function')
+  if (typeof b.setQuaternion !== 'function') throw new Error('setQuaternion not function')
+})
+
+// ── IStrand ← st-hair-core ───────────────────────────────────────────────────
+const strand = { points: [[0,0,0],[0,0.5,0],[0,1,0]], normal: [0,0,1] }
+const hair   = new HairSystem({ mode: 'line' })
+hair.addStrand(strand)
+check('IStrand', '@st-hair-core', strand, s => {
+  if (!Array.isArray(s.points)) throw new Error('points not array')
+  if (s.points[0].length !== 3) throw new Error('points not [x,y,z]')
+})
+
+// ── IGeometryProvider wired to ParticleSystem ─────────────────────────────────
+sys.setGeometryProvider(provider)
+check('IGeometryProvider→ParticleSystem', '@st-particle-core', sys, s => {
+  if (typeof s.setGeometryProvider !== 'function') throw new Error('setGeometryProvider not function')
+  // update() should call provider and not throw
+  s.addEmitter(new MeshEmitter({ emitFrom: 'faces' }))
+  s.update(0.016)
+})
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+const pass = results.filter(r => r.ok).length
+const fail = results.filter(r => !r.ok).length
+log.innerHTML += `<div class="sep" style="border-top:1px solid #333;margin:6px 0"></div>`
+log.innerHTML += `<div>${pass} passed${fail > 0 ? `, <span style="color:#f66">${fail} failed</span>` : ' <span class="ok">✓ all</span>'}</div>`
+
+// ── Live scene showing the wired systems ──────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x080c14)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 6)
+const orb = new OrbitControls(camera, renderer.domElement)
+scene.add(new THREE.AmbientLight(0x223344, 3))
+const dl = new THREE.DirectionalLight(0xffffff, 2); dl.position.set(3,5,3); scene.add(dl)
+
+// Show the modifier-stack surface
+const surfMesh = new THREE.Mesh(stack.apply(), new THREE.MeshPhongMaterial({ color: 0x3366aa, transparent: true, opacity: 0.35, wireframe: false }))
+scene.add(surfMesh)
+
+// Particle system emitting from modifier-stack geometry
+const dotCv = document.createElement('canvas'); dotCv.width = dotCv.height = 32
+const dc = dotCv.getContext('2d')
+const dg = dc.createRadialGradient(16,16,0,16,16,16)
+dg.addColorStop(0,'rgba(255,255,255,1)'); dg.addColorStop(1,'rgba(255,255,255,0)')
+dc.fillStyle = dg; dc.beginPath(); dc.arc(16,16,16,0,Math.PI*2); dc.fill()
+const tex = new THREE.CanvasTexture(dotCv)
+
+const liveRen = new BillboardRenderer({ maxCount: 300, color: 0x88ccff, map: tex, additive: true })
+const liveSys = new ParticleSystem({ count: 300, lifetime: 2.5, gravity: -0.3, size: 0.05 })
+liveSys.setGeometryProvider(() => stack.apply())
+liveSys.addEmitter(new MeshEmitter({ emitFrom: 'faces', evenDistribution: true, normalVelocity: 0.4 }))
+liveSys.addForce(new GravityForce({ strength: 0.2 }))
+liveSys.setRenderer(liveRen)
+scene.add(liveRen.object3D)
+
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  liveSys.update(Math.min(clock.getDelta(), 0.033))
+  orb.update()
+  renderer.render(scene, camera)
+})
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>st-shader-core — parameters refactor demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.7); padding: 16px; border-radius: 8px;
+      min-width: 260px; font-size: 13px; line-height: 2;
+    }
+    #ui h3 { margin-bottom: 8px; color: #adf; font-size: 14px; }
+    label { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    input[type=range] { width: 120px; }
+    span.val { color: #ffa; min-width: 36px; text-align: right; }
+    #info { position: fixed; bottom: 16px; left: 16px; font-size: 11px; color: #888; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h3>noise.parameters (live, no recompile)</h3>
+  <label>scale       <input type="range" id="scale"       min="0.5" max="20"  step="0.1" value="3"><span class="val" id="scale-val">3.0</span></label>
+  <label>detail      <input type="range" id="detail"      min="1"   max="8"   step="0.5" value="3"><span class="val" id="detail-val">3.0</span></label>
+  <label>roughness   <input type="range" id="roughness"   min="0"   max="1"   step="0.01" value="0.5"><span class="val" id="roughness-val">0.5</span></label>
+  <label>distortion  <input type="range" id="distortion"  min="0"   max="2"   step="0.05" value="0"><span class="val" id="distortion-val">0.0</span></label>
+  <h3 style="margin-top:12px">bsdf.parameters (live)</h3>
+  <label>metallic    <input type="range" id="metallic"    min="0" max="1" step="0.01" value="0"><span class="val" id="metallic-val">0.0</span></label>
+  <label>bsdfRough   <input type="range" id="bsdfrough"   min="0" max="1" step="0.01" value="0.5"><span class="val" id="bsdfrough-val">0.5</span></label>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll · parameters update live with no recompile</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  NoiseTexture, ColorRamp, PrincipledBSDF, MaterialOutput, Bump, RGBtoBW,
+  ShaderConfig
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+// ── Scene ──────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 0.5, 3)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.3))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(3, 5, 3)
+scene.add(sun)
+
+// ── Node graph — compiled ONCE ────────────────────────────────────────────────
+const noise = new NoiseTexture({ scale: 3.0, detail: 3.0, roughness: 0.5, distortion: 0.0 })
+const ramp  = new ColorRamp({ fac: noise.output('Fac'), stops: ['#1a0a00', '#5c3a00', '#c87020', '#f0c060'] })
+const bump  = new Bump({ height: new RGBtoBW({ color: noise.output('Color') }).output('Val'), strength: 1.5 })
+const bsdf  = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.5, normal: bump.output('Normal') })
+const mat   = new MaterialOutput({ surface: bsdf.output('BSDF') })
+mat.compile()  // ← compile() runs ONCE — parameters drive live uniforms after this
+
+// ── Meshes ────────────────────────────────────────────────────────────────────
+const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), mat.material)
+sphere.position.x = -1.3
+scene.add(sphere)
+
+const torus = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.28, 32, 64), mat.material)
+torus.position.x = 1.3
+scene.add(torus)
+
+// ── UI wiring — directly mutates parameters, zero recompile ──────────────────
+function bind(id, node, param) {
+  const slider = document.getElementById(id)
+  const label  = document.getElementById(id + '-val')
+  slider.addEventListener('input', () => {
+    const v = parseFloat(slider.value)
+    node.parameters[param] = v          // ← live GPU uniform update
+    label.textContent = v.toFixed(2)
+  })
+}
+
+bind('scale',      noise, 'scale')
+bind('detail',     noise, 'detail')
+bind('roughness',  noise, 'roughness')
+bind('distortion', noise, 'distortion')
+bind('metallic',   bsdf,  'metallic')
+bind('bsdfrough',  bsdf,  'roughness')
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+renderer.setAnimationLoop(() => {
+  controls.update()
+  torus.rotation.y += 0.005
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

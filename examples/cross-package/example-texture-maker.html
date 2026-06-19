@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Texture Maker — Ring + Surface</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080c10; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+
+  #controls {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 290px;
+    background: rgba(0,4,12,0.92); border-left: 1px solid #1a2535;
+    overflow-y: auto; padding: 10px 12px;
+  }
+  #controls::-webkit-scrollbar { width: 3px; }
+  #controls::-webkit-scrollbar-thumb { background: rgba(80,120,180,0.3); border-radius: 2px; }
+
+  h3  { font-size: 10px; margin: 8px 0 2px; letter-spacing: 0.08em; }
+  hr  { border: none; border-top: 1px solid #1a2535; margin: 5px 0; }
+
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 2px 0; }
+  .row label { color: #889; font-size: 10px; flex-shrink: 0; min-width: 90px; }
+  .row input[type=range] { flex: 1; height: 3px; appearance: none; -webkit-appearance: none;
+    background: rgba(255,255,255,0.12); border-radius: 2px; outline: none; }
+  .row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 11px; height: 11px;
+    border-radius: 50%; cursor: pointer; }
+  .row .val { min-width: 36px; text-align: right; color: #fff; font-size: 10px; }
+
+  /* accent thumb colours per section */
+  .ring-section  input[type=range]::-webkit-slider-thumb { background: #4488ff; }
+  .surf-section  input[type=range]::-webkit-slider-thumb { background: #ff8844; }
+  .comb-section  input[type=range]::-webkit-slider-thumb { background: #88dd88; }
+  .color-section input[type=range]::-webkit-slider-thumb { background: #cc88ff; }
+  .coord-section input[type=range]::-webkit-slider-thumb { background: #aabbcc; }
+
+  .col-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 2px 0; }
+  .col-row span { color: #889; font-size: 10px; }
+  .col-row input[type=color] { width: 50px; height: 18px; border: 1px solid #333;
+    border-radius: 3px; padding: 0; background: none; cursor: pointer; }
+
+  .type-group { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0; }
+  .type-btn {
+    padding: 2px 7px; border: 1px solid #2a3545; border-radius: 3px;
+    background: rgba(255,255,255,0.04); color: #667; font: 9px monospace;
+    cursor: pointer; transition: all 0.12s;
+  }
+  .type-btn:hover  { border-color: #445566; color: #99aacc; }
+  .type-btn.active { border-color: #3366aa; color: #88aadd; background: rgba(40,80,160,0.25); }
+
+  .shape-group { display: flex; gap: 4px; margin: 4px 0; }
+  .shape-btn {
+    flex: 1; padding: 4px 0; border: 1px solid #2a3545; border-radius: 3px;
+    background: rgba(255,255,255,0.04); color: #667; font: 9px monospace;
+    cursor: pointer; text-align: center; transition: all 0.12s;
+  }
+  .shape-btn:hover  { border-color: #446; color: #aab; }
+  .shape-btn.active { border-color: #448844; color: #88cc88; background: rgba(40,100,40,0.25); }
+
+  .act-btn {
+    width: 100%; padding: 5px 0; border: 1px solid #1a2535; border-radius: 3px;
+    background: rgba(20,50,100,0.2); color: #7799bb; font: 10px monospace;
+    cursor: pointer; margin-top: 4px; letter-spacing: 0.04em;
+  }
+  .act-btn:hover { background: rgba(30,70,140,0.35); }
+  #import-file { display: none; }
+
+  #hint   { position: absolute; bottom: 12px; left: 12px;
+            color: rgba(255,255,255,0.2); font: 10px monospace; pointer-events: none; }
+  #status { position: absolute; top: 12px; left: 12px;
+            color: rgba(100,220,100,0.6); font: 10px monospace; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="hint">DRAG TO ORBIT &nbsp;·&nbsp; SCROLL TO ZOOM</div>
+<div id="status">Ready</div>
+
+<div id="controls">
+
+  <!-- ── Preview shape ────────────────────── -->
+  <h3 style="color:#aabbcc">PREVIEW SHAPE</h3>
+  <div class="shape-group">
+    <button class="shape-btn" data-shape="flat">Flat</button>
+    <button class="shape-btn" data-shape="sphere">Sphere</button>
+    <button class="shape-btn active" data-shape="ring">Ring</button>
+  </div>
+  <hr>
+
+  <!-- ── Layer 1: Rings / Stripes ─────────── -->
+  <h3 style="color:#4488ff" class="ring-section">① RING / STRIPE LAYER</h3>
+  <p style="font-size:9px;color:#445;margin-bottom:3px">Radial distance → WaveTexture → concentric bands</p>
+  <div class="ring-section">
+    <div class="row"><label>Ring frequency</label><input type="range" id="rFreq"  min="0.5" max="50"  step="0.25" value="40.75"><span class="val" id="rFreqV">40.75</span></div>
+    <div class="row"><label>Distortion</label>    <input type="range" id="rDist"  min="0"   max="8"   step="0.05" value="8">    <span class="val" id="rDistV">8.00</span></div>
+    <div class="row"><label>Detail</label>        <input type="range" id="rDet"   min="0"   max="8"   step="0.5"  value="8">    <span class="val" id="rDetV">8.0</span></div>
+    <div class="row"><label>Ring contrast</label> <input type="range" id="rContr" min="0.1" max="5"   step="0.05" value="1">    <span class="val" id="rContrV">1.00</span></div>
+  </div>
+  <hr>
+
+  <!-- ── Layer 2: Surface texture ─────────── -->
+  <h3 style="color:#ff8844" class="surf-section">② SURFACE TEXTURE</h3>
+  <p style="font-size:9px;color:#445;margin-bottom:3px">Musgrave × Noise — applied within each stripe</p>
+  <div class="surf-section">
+    <b style="font-size:9px;color:#cc7733">Noise 1 — large scale</b>
+    <div class="row"><label>Scale</label>   <input type="range" id="n1Scale" min="0.5" max="30"  step="0.25" value="30">   <span class="val" id="n1ScaleV">30.0</span></div>
+    <div class="row"><label>Detail</label>  <input type="range" id="n1Det"   min="1"   max="8"   step="0.5"  value="1">    <span class="val" id="n1DetV">1.0</span></div>
+    <div class="row"><label>Roughness</label><input type="range" id="n1Rough" min="0"  max="1"   step="0.01" value="0.25"> <span class="val" id="n1RoughV">0.25</span></div>
+
+    <b style="font-size:9px;color:#cc7733;margin-top:4px;display:block">Noise 2 — fine grain</b>
+    <div class="row"><label>Scale</label>   <input type="range" id="nScale" min="0.5" max="40"  step="0.25" value="40">   <span class="val" id="nScaleV">40.0</span></div>
+    <div class="row"><label>Detail</label>  <input type="range" id="nDet"   min="1"   max="8"   step="0.5"  value="8">    <span class="val" id="nDetV">8.0</span></div>
+    <div class="row"><label>Roughness</label><input type="range" id="nRough" min="0"  max="1"   step="0.01" value="1">    <span class="val" id="nRoughV">1.00</span></div>
+
+    <b style="font-size:9px;color:#cc7733;margin-top:4px;display:block">Mix</b>
+    <div class="row"><label>N1 ↔ N2</label> <input type="range" id="sBlend" min="0"   max="1"   step="0.01" value="0.25"> <span class="val" id="sBlendV">0.25</span></div>
+  </div>
+  <hr>
+
+  <!-- ── Combine ───────────────────────────── -->
+  <h3 style="color:#88dd88" class="comb-section">③ COMBINE</h3>
+  <div class="comb-section">
+    <div class="row"><label>Ring strength</label>  <input type="range" id="ringStr"  min="0"   max="1"   step="0.01" value="0.5">  <span class="val" id="ringStrV">0.50</span></div>
+    <div class="row"><label>Surf strength</label>  <input type="range" id="surfStr"  min="0"   max="1"   step="0.01" value="1">    <span class="val" id="surfStrV">1.00</span></div>
+    <div class="row"><label>Warp scale</label>     <input type="range" id="warpSc"  min="0.5" max="20"  step="0.25" value="10">   <span class="val" id="warpScV">10.0</span></div>
+    <div class="row"><label>Warp strength</label>  <input type="range" id="warpStr" min="0"   max="3"   step="0.05" value="0.05"> <span class="val" id="warpStrV">0.05</span></div>
+  </div>
+  <hr>
+
+  <!-- ── Color mapping ─────────────────────── -->
+  <h3 style="color:#cc88ff" class="color-section">④ COLOR MAPPING</h3>
+  <div class="color-section">
+    <div class="col-row"><span>Dark</span>   <input type="color" id="cDark"   value="#000000"></div>
+    <div class="col-row"><span>Mid</span>    <input type="color" id="cMid"    value="#926649"></div>
+    <div class="col-row"><span>Bright</span> <input type="color" id="cBright" value="#ff8800"></div>
+    <div class="row"><label>Mid point</label>    <input type="range" id="cMidPt" min="0.05" max="0.95" step="0.01" value="0.25"><span class="val" id="cMidPtV">0.25</span></div>
+    <div class="row"><label>Shadow cut</label>   <input type="range" id="cLow"   min="0"    max="0.9"  step="0.01" value="0.15"><span class="val" id="cLowV">0.15</span></div>
+    <div class="row"><label>Highlight cut</label><input type="range" id="cHigh"  min="0.1"  max="1"    step="0.01" value="1">   <span class="val" id="cHighV">1.00</span></div>
+    <div class="row"><label>Brightness</label>   <input type="range" id="bright" min="0.1"  max="12"   step="0.1"  value="5">   <span class="val" id="brightV">5.0</span></div>
+  </div>
+  <hr>
+
+  <!-- ── Coordinate ────────────────────────── -->
+  <h3 style="color:#aabbcc" class="coord-section">⑤ COORDINATE</h3>
+  <div class="coord-section">
+    <div class="row"><label>Scale X</label>   <input type="range" id="mScX" min="0.1" max="15"  step="0.1" value="1">  <span class="val" id="mScXV">1.0</span></div>
+    <div class="row"><label>Scale Y</label>   <input type="range" id="mScY" min="0.1" max="15"  step="0.1" value="1">  <span class="val" id="mScYV">1.0</span></div>
+    <div class="row"><label>Rotation°</label> <input type="range" id="mRot" min="0"   max="360" step="1"   value="360"><span class="val" id="mRotV">360</span></div>
+    <div class="row"><label>Offset X</label>  <input type="range" id="mOx"  min="-5"  max="5"   step="0.05" value="0"><span class="val" id="mOxV">0.00</span></div>
+    <div class="row"><label>Offset Y</label>  <input type="range" id="mOy"  min="-5"  max="5"   step="0.05" value="0"><span class="val" id="mOyV">0.00</span></div>
+  </div>
+  <hr>
+
+  <button class="act-btn" id="btn-export">⬇ Export texture JSON</button>
+  <button class="act-btn" id="btn-import">⬆ Import texture JSON</button>
+  <input type="file" id="import-file" accept=".json">
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ShaderConfig, MaterialOutput, Emission,
+  MixRGB, CombineRGB, RGBtoBW,
+  NoiseTexture, WaveTexture,
+  VectorMath, MapRange, ShaderMath,
+  TextureCoordinate, Geometry, Mapping,
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const W = () => innerWidth - 290
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(W(), innerHeight)
+renderer.toneMapping        = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.0
+renderer.outputColorSpace   = THREE.SRGBColorSpace
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x06080c)
+const camera = new THREE.PerspectiveCamera(45, W() / innerHeight, 0.1, 100)
+camera.position.set(0, 1.4, 2.2)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true; controls.dampingFactor = 0.06
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const S = {
+  shape:   'ring',
+  // Ring / stripe
+  rFreq: 40.75, rDist: 8.0, rDet: 8.0, rContr: 1.0,
+  // Surface — Noise 1 (large scale)
+  n1Scale: 30.0, n1Det: 1.0, n1Rough: 0.25,
+  // Surface — Noise 2 (fine grain)
+  nScale: 40.0, nDet: 8.0, nRough: 1.0,
+  // Surface blend
+  sBlend: 0.25,
+  // Combine
+  ringStr: 0.5, surfStr: 1.0,
+  warpSc: 10.0, warpStr: 0.05,
+  // Color
+  cDark: '#000000', cMid: '#926649', cBright: '#ff8800',
+  cMidPt: 0.25, cLow: 0.15, cHigh: 1.0, bright: 5.0,
+  // Coordinate
+  mScX: 1.0, mScY: 1.0, mRot: 360.0, mOx: 0.0, mOy: 0.0,
+}
+
+// ── Preview mesh ──────────────────────────────────────────────────────────────
+let previewMesh = null
+const GEOS = {
+  flat:   () => new THREE.PlaneGeometry(2, 2, 64, 64),
+  sphere: () => new THREE.SphereGeometry(1, 96, 72),
+  ring:   () => new THREE.RingGeometry(0.35, 1.0, 256, 16),
+}
+const CAM_POS = {
+  flat:   new THREE.Vector3(0, 0,   2.8),
+  sphere: new THREE.Vector3(0, 0,   2.8),
+  ring:   new THREE.Vector3(0, 1.4, 2.2),
+}
+
+function makePreviewMesh(mat) {
+  if (previewMesh) { scene.remove(previewMesh); previewMesh.geometry.dispose() }
+  previewMesh = new THREE.Mesh(GEOS[S.shape](), mat)
+  if (S.shape === 'ring') previewMesh.rotation.x = -Math.PI * 0.36
+  scene.add(previewMesh)
+}
+
+// ── Helper: hex → [r,g,b] ─────────────────────────────────────────────────────
+function hex3(h) {
+  return [parseInt(h.slice(1,3),16)/255, parseInt(h.slice(3,5),16)/255, parseInt(h.slice(5,7),16)/255]
+}
+
+// ── Build graph ───────────────────────────────────────────────────────────────
+let liveNodes = {}
+
+function build() {
+  document.getElementById('status').textContent = 'Building…'
+
+  // ── Coordinate source ────────────────────────────────────────────────────────
+  const tc   = new TextureCoordinate()
+  const geom = new Geometry()
+  const rawVec = S.shape === 'sphere' ? tc.output('Normal') : tc.output('Generated')
+
+  // Coordinate mapping (scale, rotation, offset)
+  const mapping = new Mapping({
+    vector:   rawVec,
+    scale:    [S.mScX, S.mScY, 1.0],
+    rotation: [0, 0, S.mRot],
+    location: [S.mOx, S.mOy, 0],
+  })
+
+  // ── LAYER 1: Ring / Stripe texture ──────────────────────────────────────────
+  // Feed the RADIAL DISTANCE (VectorMath LENGTH) into WaveTexture so the bands
+  // are CIRCULAR (concentric rings) rather than parallel lines.
+  // Warp noise is added to the distance before the wave, making rings irregular.
+  const warpN = new NoiseTexture({ vector: mapping.output('Vector'), scale: S.warpSc, detail: 3, roughness: 0.6 })
+  const warpedDist = new VectorMath({ mode: 'LENGTH', vector: mapping.output('Vector') })
+
+  // Combine distance with warp: distorted_distance = dist + warpStr * noise
+  const warpScale  = new ShaderMath({ mode: 'MULTIPLY', a: warpN.output('Fac'), b: S.warpStr })
+  const distWarped = new ShaderMath({ mode: 'ADD', a: warpedDist.output('Value'), b: warpScale.output('Value') })
+
+  // Feed warped distance into WaveTexture as a vec3 (all channels same = radial)
+  const distVec = new CombineRGB({ r: distWarped.output('Value'), g: distWarped.output('Value'), b: distWarped.output('Value') })
+  const rings   = new WaveTexture({ vector: distVec.output('Color'), scale: S.rFreq, distortion: S.rDist, detail: S.rDet, waveType: 'SINE' })
+
+  // Boost ring contrast (power curve sharpens the transitions between bands)
+  const rContr  = new MapRange({ value: rings.output('Fac'), fromMin: 0, fromMax: 1, toMin: 0, toMax: 1, clamp: true })
+  const rBoosted = new ShaderMath({ mode: 'POWER', a: rContr.output('Result'), b: S.rContr })
+
+  // ── LAYER 2: Surface texture (Noise 1 × Noise 2) ─────────────────────────────
+  // Noise 1: large-scale cloud structure (low frequency)
+  const noise1   = new NoiseTexture({ vector: mapping.output('Vector'), scale: S.n1Scale, detail: S.n1Det, roughness: S.n1Rough })
+  // Noise 2: fine grain detail (high frequency)
+  const noiseTex = new NoiseTexture({ vector: mapping.output('Vector'), scale: S.nScale,  detail: S.nDet,  roughness: S.nRough })
+
+  // Blend N1 and N2 (sBlend=0 → pure N1 large-scale, sBlend=1 → pure N2 fine grain)
+  const n1Col   = new CombineRGB({ r: noise1.output('Fac'),   g: noise1.output('Fac'),   b: noise1.output('Fac') })
+  const n2Col   = new CombineRGB({ r: noiseTex.output('Fac'), g: noiseTex.output('Fac'), b: noiseTex.output('Fac') })
+  const surfMix = new MixRGB({ mode: 'MULTIPLY', fac: 1, colorA: n1Col.output('Color'), colorB: n2Col.output('Color') })
+  // sBlend then crossfades between the multiplied result and pure N2 grain
+  const blended = new MixRGB({ mode: 'MIX', fac: S.sBlend, colorA: surfMix.output('Color'), colorB: n2Col.output('Color') })
+  const surfBW  = new RGBtoBW({ color: blended.output('Color') })
+
+  // ── COMBINE: Rings × Surface ─────────────────────────────────────────────────
+  // The ring mask controls STRUCTURE (where bands are).
+  // The surface texture controls DETAIL within the bands.
+  // Multiply them: dark ring gaps stay dark, bright ring peaks show surface detail.
+  const rWeighted = new ShaderMath({ mode: 'MULTIPLY', a: rBoosted.output('Value'),  b: S.ringStr })
+  const sWeighted = new ShaderMath({ mode: 'MULTIPLY', a: surfBW.output('Val'),       b: S.surfStr })
+  const combined  = new ShaderMath({ mode: 'MULTIPLY', a: rWeighted.output('Value'), b: sWeighted.output('Value') })
+
+  // ── COLOR MAPPING: 3-stop gradient (Dark → Mid → Bright) ─────────────────────
+  // Stage 1: combinedFac 0…midPt → dark to mid
+  const s1    = new MapRange({ value: combined.output('Value'), fromMin: S.cLow, fromMax: S.cHigh * S.cMidPt, toMin: 0, toMax: 1, clamp: true })
+  const mix1  = new MixRGB({ mode: 'MIX', fac: s1.output('Result'), colorA: S.cDark, colorB: S.cMid })
+  // Stage 2: combinedFac midPt…1 → mid to bright
+  const s2    = new MapRange({ value: combined.output('Value'), fromMin: S.cHigh * S.cMidPt, fromMax: S.cHigh, toMin: 0, toMax: 1, clamp: true })
+  const mix2  = new MixRGB({ mode: 'MIX', fac: s2.output('Result'), colorA: mix1.output('Color'), colorB: S.cBright })
+
+  // ── Emission + compile ───────────────────────────────────────────────────────
+  const emit = new Emission({ color: mix2.output('Color'), strength: S.bright })
+  const out  = new MaterialOutput({ surface: emit.output('BSDF') })
+  out.compile()
+
+  makePreviewMesh(out.material)
+
+  // Store live node refs
+  liveNodes = { warpN, warpScale, rings, rContr, noise1, noiseTex, emit, mix1, mix2 }
+
+  document.getElementById('status').textContent = '✓ Built'
+}
+
+// ── Bind helpers ──────────────────────────────────────────────────────────────
+function bind(id, valId, dec, fn) {
+  const inp = document.getElementById(id)
+  const vEl = document.getElementById(valId)
+  if (!inp) return
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value); vEl.textContent = v.toFixed(dec); fn(v)
+  })
+}
+// Live float bind (updates GPU uniform, no rebuild)
+function liveBind(id, valId, dec, stateKey, nodeGetter, paramKey) {
+  bind(id, valId, dec, v => {
+    S[stateKey] = v
+    const n = nodeGetter()
+    if (n && n.parameters && paramKey in n.parameters) n.parameters[paramKey] = v
+    else build()
+  })
+}
+// Rebuild bind
+function rebuildBind(id, valId, dec, stateKey) {
+  bind(id, valId, dec, v => { S[stateKey] = v; build() })
+}
+
+// ── Ring layer binds ──────────────────────────────────────────────────────────
+rebuildBind('rFreq',  'rFreqV',  1, 'rFreq')
+rebuildBind('rDist',  'rDistV',  2, 'rDist')
+rebuildBind('rDet',   'rDetV',   1, 'rDet')
+rebuildBind('rContr', 'rContrV', 2, 'rContr')
+
+// ── Surface layer binds ───────────────────────────────────────────────────────
+liveBind('n1Scale', 'n1ScaleV', 1, 'n1Scale', () => liveNodes.noise1,   'scale')
+liveBind('n1Det',   'n1DetV',   1, 'n1Det',   () => liveNodes.noise1,   'detail')
+liveBind('n1Rough', 'n1RoughV', 2, 'n1Rough', () => liveNodes.noise1,   'roughness')
+liveBind('nScale',  'nScaleV',  1, 'nScale',  () => liveNodes.noiseTex, 'scale')
+liveBind('nDet',    'nDetV',    1, 'nDet',    () => liveNodes.noiseTex, 'detail')
+liveBind('nRough',  'nRoughV',  2, 'nRough',  () => liveNodes.noiseTex, 'roughness')
+rebuildBind('sBlend', 'sBlendV', 2, 'sBlend')
+
+// ── Combine binds ─────────────────────────────────────────────────────────────
+rebuildBind('ringStr',  'ringStrV',  2, 'ringStr')
+rebuildBind('surfStr',  'surfStrV',  2, 'surfStr')
+liveBind('warpSc',  'warpScV',  1, 'warpSc',  () => liveNodes.warpN, 'scale')
+rebuildBind('warpStr', 'warpStrV', 2, 'warpStr')
+
+// ── Color binds ───────────────────────────────────────────────────────────────
+rebuildBind('cMidPt', 'cMidPtV', 2, 'cMidPt')
+rebuildBind('cLow',   'cLowV',   2, 'cLow')
+rebuildBind('cHigh',  'cHighV',  2, 'cHigh')
+liveBind('bright', 'brightV', 1, 'bright', () => liveNodes.emit, 'strength')
+
+function cpBind(id, stateKey, nodeGetter, paramKey) {
+  document.getElementById(id).addEventListener('input', e => {
+    S[stateKey] = e.target.value
+    const n = nodeGetter()
+    if (n) { n.parameters[paramKey] = hex3(e.target.value) } else build()
+  })
+}
+cpBind('cDark',   'cDark',   () => liveNodes.mix1, 'colorA')
+cpBind('cMid',    'cMid',    () => liveNodes.mix1, 'colorB')
+cpBind('cBright', 'cBright', () => liveNodes.mix2, 'colorB')
+
+// ── Coordinate binds ─────────────────────────────────────────────────────────
+rebuildBind('mScX', 'mScXV', 1, 'mScX')
+rebuildBind('mScY', 'mScYV', 1, 'mScY')
+rebuildBind('mRot', 'mRotV', 0, 'mRot')
+rebuildBind('mOx',  'mOxV',  2, 'mOx')
+rebuildBind('mOy',  'mOyV',  2, 'mOy')
+
+// ── Shape buttons ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.shape-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    S.shape = btn.dataset.shape
+    const cp = CAM_POS[S.shape]
+    camera.position.copy(cp); camera.lookAt(0,0,0); controls.target.set(0,0,0); controls.update()
+    build()
+  })
+})
+
+// ── Export / Import ───────────────────────────────────────────────────────────
+function getExport() {
+  return { _note: 'Texture Maker — Ring + Surface recipe', ...S }
+}
+function applyImport(d) {
+  Object.assign(S, d)
+  // Sync all sliders
+  const set = (id, val, dec) => {
+    const inp = document.getElementById(id), vEl = document.getElementById(id+'V')
+    if (inp) { inp.value = val; if (vEl) vEl.textContent = parseFloat(val).toFixed(dec) }
+  }
+  set('rFreq',S.rFreq,1); set('rDist',S.rDist,2); set('rDet',S.rDet,1); set('rContr',S.rContr,2)
+  set('n1Scale',S.n1Scale,1); set('n1Det',S.n1Det,1); set('n1Rough',S.n1Rough,2)
+  set('nScale',S.nScale,1); set('nDet',S.nDet,1); set('nRough',S.nRough,2); set('sBlend',S.sBlend,2)
+  set('ringStr',S.ringStr,2); set('surfStr',S.surfStr,2); set('warpSc',S.warpSc,1); set('warpStr',S.warpStr,2)
+  set('cMidPt',S.cMidPt,2); set('cLow',S.cLow,2); set('cHigh',S.cHigh,2); set('bright',S.bright,1)
+  set('mScX',S.mScX,1); set('mScY',S.mScY,1); set('mRot',S.mRot,0); set('mOx',S.mOx,2); set('mOy',S.mOy,2)
+  ;['cDark','cMid','cBright'].forEach(id => { const el=document.getElementById(id); if(el) el.value=S[id] })
+  document.querySelectorAll('[data-mus]').forEach(b => b.classList.toggle('active', b.dataset.mus===S.musType))
+  document.querySelectorAll('.shape-btn').forEach(b => b.classList.toggle('active', b.dataset.shape===S.shape))
+  const cp = CAM_POS[S.shape]; camera.position.copy(cp); camera.lookAt(0,0,0); controls.update()
+  build()
+}
+
+document.getElementById('btn-export').addEventListener('click', () => {
+  Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([JSON.stringify(getExport(),null,2)],{type:'application/json'})),
+    download: 'texture-recipe.json',
+  }).click()
+})
+document.getElementById('btn-import').addEventListener('click', () => document.getElementById('import-file').click())
+document.getElementById('import-file').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return
+  const r = new FileReader()
+  r.onload = ev => { try { applyImport(JSON.parse(ev.target.result)) } catch { alert('Invalid JSON') } }
+  r.readAsText(file); e.target.value = ''
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = W() / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(W(), innerHeight)
+})
+
+// ── Initial build + render loop ───────────────────────────────────────────────
+build()
+;(function loop() {
+  requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

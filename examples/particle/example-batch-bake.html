@@ -1,0 +1,245 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ParticleCache.bakeAll — batch bake</title>
+<style>
+  body { margin: 0; background: #0a0a14; font-family: sans-serif; color: #eee; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px;
+    background: rgba(0,0,0,.75); padding: 14px 18px;
+    border-radius: 8px; min-width: 300px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center;
+          margin: 7px 0; font-size: 13px; }
+  input[type=range] { width: 160px; }
+  #status { font-size: 12px; margin-top: 8px; color: #adf; }
+  button { margin-top: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px;
+           background:#222; color:#eee; border:1px solid #555; border-radius:4px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>ParticleCache.bakeAll</b>
+  <p style="font-size:12px;margin:4px 0 8px">
+    3 fountains baked in one shared loop, replayed in sync.
+  </p>
+  <label>
+    Scrub &nbsp;
+    <input type="range" id="scrub" min="0" max="1" step="0.001" value="0">
+    <span id="tv" style="min-width:36px;text-align:right">0.00s</span>
+  </label>
+  <button id="playBtn">⏸ Pause</button>
+  <div id="status">Baking…</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.167.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Three.js setup ────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a14)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 300)
+camera.position.set(0, 10, 32)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 4, 0)
+controls.update()
+
+scene.add(new THREE.GridHelper(40, 40, 0x223, 0x223))
+
+// ── Particle system ───────────────────────────────────────────────────────
+class MiniSystem {
+  constructor({ count, color, offsetX, lifetime, gravity, spread, upSpeed, seed }) {
+    this.count    = count
+    this.lifetime = lifetime
+    this.gravity  = gravity
+    this.spread   = spread
+    this.upSpeed  = upSpeed
+    this.seed0    = seed
+
+    this.pool = Array.from({ length: count }, () =>
+      ({ px:0, py:0, pz:0, vx:0, vy:0, vz:0, age:0, lt:1, alive:false }))
+    this._time  = 0
+    this._seed  = seed
+    this._emit  = 0   // how many particles have been spawned so far
+
+    // Geometry — zeros are safe; drawRange limits what is actually rendered
+    const posArr = new Float32Array(count * 3)
+    this.geo  = new THREE.BufferGeometry()
+    this.attr = new THREE.BufferAttribute(posArr, 3)
+    this.attr.setUsage(THREE.DynamicDrawUsage)
+    this.geo.setAttribute('position', this.attr)
+    this.geo.setDrawRange(0, 0)
+    // Provide a fixed bounding sphere so Three.js never tries to compute one
+    // from the raw buffer (which would include out-of-range zero entries).
+    this.geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 50)
+
+    const mat = new THREE.PointsMaterial({
+      color, size: 0.28, sizeAttenuation: true,
+      transparent: true, opacity: 0.95, depthWrite: false,
+    })
+    this.points = new THREE.Points(this.geo, mat)
+    this.points.position.x = offsetX
+    this.points.frustumCulled = false
+    scene.add(this.points)
+  }
+
+  _rng() {
+    this._seed = (Math.imul(this._seed, 1664525) + 1013904223) >>> 0
+    return this._seed / 0x100000000
+  }
+
+  reset() {
+    this._time = 0
+    this._seed = this.seed0
+    this._emit = 0
+    for (const p of this.pool) { p.alive = false; p.age = 0 }
+  }
+
+  update(dt) {
+    this._time += dt
+
+    // Deterministic emission: one particle every (lifetime/count) seconds
+    const interval = this.lifetime / this.count
+    const target   = Math.floor(this._time / interval)
+    while (this._emit < target) {
+      const slot = this.pool.find(p => !p.alive)
+      if (slot) {
+        slot.alive = true; slot.age = 0
+        slot.lt    = this.lifetime * (0.6 + this._rng() * 0.8)
+        slot.px    = 0; slot.py = 0; slot.pz = 0
+        const angle = this._rng() * Math.PI * 2
+        const r     = this._rng() * this.spread
+        slot.vx = Math.cos(angle) * r
+        slot.vz = Math.sin(angle) * r
+        slot.vy = this.upSpeed * (0.75 + this._rng() * 0.5)
+      }
+      this._emit++
+    }
+
+    for (const p of this.pool) {
+      if (!p.alive) continue
+      p.vy  += this.gravity * dt
+      p.px  += p.vx * dt; p.py += p.vy * dt; p.pz += p.vz * dt
+      p.age += dt
+      if (p.age >= p.lt || p.py < -0.5) p.alive = false
+    }
+  }
+
+  snapshot() {
+    return this.pool.map(p => ({ ...p }))
+  }
+
+  restore(snap) {
+    let alive = 0
+    const arr = this.attr.array
+    for (let i = 0; i < this.pool.length; i++) {
+      Object.assign(this.pool[i], snap[i])
+      const p = this.pool[i]
+      if (p.alive) {
+        arr[alive * 3]     = p.px
+        arr[alive * 3 + 1] = p.py
+        arr[alive * 3 + 2] = p.pz
+        alive++
+      }
+    }
+    this.geo.setDrawRange(0, alive)
+    this.attr.needsUpdate = true
+  }
+}
+
+// ── Three systems ─────────────────────────────────────────────────────────
+const systems = [
+  new MiniSystem({ count:180, color:0xff5533, offsetX:-9, lifetime:2.5, gravity:-9.8, spread:1.0, upSpeed:7, seed:11 }),
+  new MiniSystem({ count:220, color:0x33ff88, offsetX:  0, lifetime:3.2, gravity:-4.5, spread:0.5, upSpeed:5, seed:22 }),
+  new MiniSystem({ count:120, color:0x44aaff, offsetX:  9, lifetime:1.8, gravity:-14,  spread:1.8, upSpeed:9, seed:33 }),
+]
+
+// ── Bake all in a single shared loop ─────────────────────────────────────
+const BAKE_START = 0, BAKE_END = 5, BAKE_FPS = 30
+const dt = 1 / BAKE_FPS
+const totalFrames = Math.ceil((BAKE_END - BAKE_START) * BAKE_FPS) + 1
+
+const frames = systems.map(() => [])   // frames[sysIdx][frameIdx] = snapshot
+
+systems.forEach(s => s.reset())
+
+// Shared recording loop — this is the bakeAll concept
+for (let f = 0; f < totalFrames; f++) {
+  systems.forEach((s, si) => frames[si].push(s.snapshot()))
+  if (f < totalFrames - 1) systems.forEach(s => s.update(dt))
+}
+
+document.getElementById('status').textContent =
+  `Baked: ${totalFrames} frames × ${systems.length} systems  (${BAKE_END}s @ ${BAKE_FPS} fps)`
+
+// ── Seek to a time ────────────────────────────────────────────────────────
+function seekAll(t) {
+  const clamped = Math.max(0, Math.min(BAKE_END, t))
+  const f0      = Math.min(totalFrames - 1, Math.floor(clamped * BAKE_FPS))
+  document.getElementById('scrub').value = clamped / BAKE_END
+  document.getElementById('tv').textContent = clamped.toFixed(2) + 's'
+  systems.forEach((s, si) => s.restore(frames[si][f0]))
+}
+
+// Show first frame with particles visible (~1s in)
+seekAll(1.2)
+
+// ── Scrub slider ──────────────────────────────────────────────────────────
+document.getElementById('scrub').addEventListener('input', function () {
+  isPlaying = false
+  document.getElementById('playBtn').textContent = '▶ Play'
+  seekAll(parseFloat(this.value) * BAKE_END)
+})
+
+// ── Playback ──────────────────────────────────────────────────────────────
+let isPlaying = true
+let playTime  = 1.2
+let lastNow   = performance.now()
+
+document.getElementById('playBtn').addEventListener('click', () => {
+  isPlaying = !isPlaying
+  document.getElementById('playBtn').textContent = isPlaying ? '⏸ Pause' : '▶ Play'
+  lastNow = performance.now()
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────
+renderer.setAnimationLoop(() => {
+  const now = performance.now()
+  const delta = (now - lastNow) / 1000
+  lastNow = now
+
+  if (isPlaying) {
+    playTime += delta
+    if (playTime > BAKE_END) playTime = 0
+    seekAll(playTime)
+  }
+
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Shader Nodes → Path Tracer — @st-shader-core + @st-pathtracer-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.72); padding: 10px 14px; border-radius: 4px;
+    max-width: 340px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+
+  #controls {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  }
+  .toggle-row { display: flex; gap: 6px; }
+  .btn {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .btn.active { border-color: #4488ff; color: #88bbff; background: rgba(40,80,160,0.25); }
+
+  #status {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.72); padding: 6px 16px; border-radius: 20px;
+    font: 11px monospace; color: #aaa; pointer-events: none;
+  }
+  #status.converging { color: #ffcc44; }
+  #status.converged  { color: #44ff88; }
+
+  #pt-panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: none; flex-direction: column; gap: 6px; min-width: 220px;
+  }
+  #pt-panel.visible { display: flex; }
+  #pt-panel h4 { color: #88bbff; font-size: 11px; margin-bottom: 2px; }
+  .pt-note { color: #666; font-size: 10px; line-height: 1.5; margin-top: 1px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+  input[type=checkbox] { width: 14px; height: 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <h3>Shader Nodes → Path Tracer — Cross-Package</h3>
+  Define materials once with <span class="code">st-shader-core</span> nodes.<br>
+  <b>Raster:</b> <span class="code">mat.compile()</span> → <span class="code">THREE.ShaderMaterial</span><br>
+  <b>Path tracer:</b> <span class="code">mat.toPhysicalMaterial()</span> → <span class="code">MeshPhysicalMaterial</span><br><br>
+  The toggle swaps which material the mesh uses —<br>
+  no scene rebuild, no duplicate material code.
+</div>
+
+<div id="controls">
+  <div class="toggle-row">
+    <button class="btn active" id="btnRaster">Raster</button>
+    <button class="btn"        id="btnPT">Path Tracer</button>
+  </div>
+</div>
+
+<div id="pt-panel"></div>
+<div id="status">Raster mode</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":                "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":        "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "three/examples/jsm/":  "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "three-mesh-bvh":       "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/build/index.module.js",
+    "three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.24/build/index.module.js",
+    "@st-shader-core":      "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { WebGLPathTracer } from 'three-gpu-pathtracer'
+import {
+  PrincipledBSDF, GlassBSDF, Emission, MaterialOutput,
+  NoiseTexture, ColorRamp, MixShader, Fresnel,
+} from '@st-shader-core'
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.toneMapping         = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.0
+renderer.outputColorSpace    = THREE.SRGBColorSpace
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111218)
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2.5, 7)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0.5, 0)
+controls.update()
+
+scene.add(new THREE.HemisphereLight(0x8899bb, 0x223344, 1.0))
+const sun = new THREE.DirectionalLight(0xfff5e0, 3.5)
+sun.position.set(5, 10, 4); sun.castShadow = true; scene.add(sun)
+const fill = new THREE.PointLight(0x4466ff, 20, 8)
+fill.position.set(-3, 2, 2); scene.add(fill)
+
+// Ground
+const groundMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(14, 14),
+  new THREE.MeshPhysicalMaterial({ color: 0x181820, roughness: 0.7 })
+)
+groundMesh.rotation.x = -Math.PI / 2
+groundMesh.receiveShadow = true
+scene.add(groundMesh)
+
+// ── Build materials with st-shader-core nodes ─────────────────────────────────
+
+// 1. Procedural marble — noise → color ramp → PrincipledBSDF
+const marbleNoise  = new NoiseTexture({ scale: 5.0, detail: 8.0, roughness: 0.6 })
+const marbleRamp   = new ColorRamp({ fac: marbleNoise.output('Fac'), stops: ['#f8f4ee', '#2a1a0a', '#f8f4ee', '#2a1a0a'] })
+const marbleBSDF   = new PrincipledBSDF({ baseColor: marbleRamp.output('Color'), roughness: 0.15, metallic: 0.0 })
+const marbleMat    = new MaterialOutput({ surface: marbleBSDF.output('BSDF') })
+marbleMat.compile()
+const marblePhys   = marbleMat.toPhysicalMaterial()
+
+// 2. Metal with noise roughness — procedural worn metal
+const wornNoise    = new NoiseTexture({ scale: 8.0, detail: 4.0 })
+const wornBSDF     = new PrincipledBSDF({
+  baseColor: new ColorRamp({ fac: wornNoise.output('Fac'), stops: ['#9aabb8', '#445566'] }).output('Color'),
+  roughness: wornNoise.output('Fac'),
+  metallic:  0.95,
+})
+const wornMat      = new MaterialOutput({ surface: wornBSDF.output('BSDF') })
+wornMat.compile()
+const wornPhys     = wornMat.toPhysicalMaterial()
+
+// 3. Glass — GlassBSDF
+const glassBSDF    = new GlassBSDF({ color: '#cce8ff', roughness: 0.0, ior: 1.52 })
+const glassMat     = new MaterialOutput({ surface: glassBSDF.output('BSDF') })
+glassMat.compile()
+const glassPhys    = glassMat.toPhysicalMaterial()
+
+// 4. Emission — hot glow
+const emitNode     = new Emission({ color: '#ff6600', strength: 6.0 })
+const emitMat      = new MaterialOutput({ surface: emitNode.output('BSDF') })
+emitMat.compile()
+const emitPhys     = emitMat.toPhysicalMaterial()
+
+// 5. Fresnel blend — diffuse core + metallic edge (like a car paint)
+const fresnel      = new Fresnel({ ior: 1.45 })
+const baseBSDF     = new PrincipledBSDF({ baseColor: '#c0102a', roughness: 0.4, metallic: 0.0 })
+const rimBSDF      = new PrincipledBSDF({ baseColor: '#ffffff', roughness: 0.05, metallic: 1.0 })
+const carBSDF      = new MixShader({ fac: fresnel.output('Fac'), shader1: baseBSDF.output('BSDF'), shader2: rimBSDF.output('BSDF') })
+const carMat       = new MaterialOutput({ surface: carBSDF.output('BSDF') })
+carMat.compile()
+const carPhys      = carMat.toPhysicalMaterial()
+
+// ── Mesh definitions ──────────────────────────────────────────────────────────
+const matDefs = [
+  { rasterMat: marbleMat.material, ptMat: marblePhys, label: 'Marble (noise)',    geo: new THREE.SphereGeometry(0.65, 64, 32), pos: [-3,   0.65,  0] },
+  { rasterMat: wornMat.material,   ptMat: wornPhys,   label: 'Worn metal',        geo: new THREE.SphereGeometry(0.65, 64, 32), pos: [-1.1, 0.65,  0] },
+  { rasterMat: glassMat.material,  ptMat: glassPhys,  label: 'Glass',             geo: new THREE.SphereGeometry(0.65, 64, 32), pos: [ 1.1, 0.65,  0] },
+  { rasterMat: emitMat.material,   ptMat: emitPhys,   label: 'Emission',          geo: new THREE.TorusGeometry(0.45, 0.18, 32, 64), pos: [ 3, 0.65, 0] },
+  { rasterMat: carMat.material,    ptMat: carPhys,    label: 'Fresnel car paint', geo: new THREE.BoxGeometry(1, 0.55, 1.8), pos: [0, 0.28, -1.8] },
+]
+
+const meshes = matDefs.map(({ rasterMat, geo, pos }) => {
+  const mesh = new THREE.Mesh(geo, rasterMat)
+  mesh.position.set(...pos)
+  mesh.castShadow = true; mesh.receiveShadow = true
+  scene.add(mesh)
+  return mesh
+})
+
+// ── Path Tracer ───────────────────────────────────────────────────────────────
+const pathTracer    = new WebGLPathTracer(renderer)
+pathTracer.physicallyCorrectLights = true
+pathTracer.samplesPerFrame = 4
+
+let ptMode = false
+let ptInitialized = false
+
+async function activatePathTracer() {
+  meshes.forEach((mesh, i) => { mesh.material = matDefs[i].ptMat })
+  if (!ptInitialized) {
+    statusEl.textContent = 'Building BVH…'
+    await pathTracer.setScene(scene, camera)
+    ptInitialized = true
+  } else {
+    pathTracer.reset()
+  }
+  statusEl.className = 'converging'
+  statusEl.textContent = 'Accumulating…'
+}
+
+function activateRaster() {
+  meshes.forEach((mesh, i) => { mesh.material = matDefs[i].rasterMat })
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+const statusEl  = document.getElementById('status')
+const btnRaster = document.getElementById('btnRaster')
+const btnPT     = document.getElementById('btnPT')
+const ptPanelEl = document.getElementById('pt-panel')
+
+btnRaster.addEventListener('click', () => {
+  ptMode = false
+  activateRaster()
+  btnRaster.classList.add('active')
+  btnPT.classList.remove('active')
+  ptPanelEl.classList.remove('visible')
+  statusEl.className = ''
+  statusEl.textContent = 'Raster mode'
+})
+
+btnPT.addEventListener('click', async () => {
+  await activatePathTracer()
+  ptMode = true
+  btnPT.classList.add('active')
+  btnRaster.classList.remove('active')
+  ptPanelEl.classList.add('visible')
+})
+
+// ── Path-tracer quality panel ─────────────────────────────────────────────────
+ptPanelEl.innerHTML = '<h4>Path Tracer Quality</h4>'
+
+function addSlider(container, label, min, max, step, def, note, onChange) {
+  const row = document.createElement('label')
+  const val = document.createElement('span')
+  const inp = document.createElement('input')
+  inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = def
+  val.textContent = (+inp.value).toFixed(step < 0.1 ? 2 : 0)
+  inp.addEventListener('input', () => {
+    val.textContent = (+inp.value).toFixed(step < 0.1 ? 2 : 0)
+    onChange(+inp.value)
+    if (ptInitialized) pathTracer.reset()
+  })
+  row.innerHTML = `<span>${label}</span>`
+  row.appendChild(inp); row.appendChild(val)
+  container.appendChild(row)
+  if (note) {
+    const n = document.createElement('div')
+    n.className = 'pt-note'; n.textContent = note
+    container.appendChild(n)
+  }
+}
+
+function addCheckbox(container, label, def, note, onChange) {
+  const row = document.createElement('label')
+  const inp = document.createElement('input')
+  inp.type = 'checkbox'; inp.checked = def
+  inp.addEventListener('change', () => { onChange(inp.checked); if (ptInitialized) pathTracer.reset() })
+  row.innerHTML = `<span>${label}</span>`
+  row.appendChild(inp)
+  container.appendChild(row)
+  if (note) {
+    const n = document.createElement('div')
+    n.className = 'pt-note'; n.textContent = note
+    container.appendChild(n)
+  }
+}
+
+addSlider(ptPanelEl,
+  'render scale', 0.25, 1, 0.05, 1,
+  'Lower = faster convergence, softer image.',
+  v => { pathTracer.renderScale = v }
+)
+addSlider(ptPanelEl,
+  'bounces', 1, 20, 1, 10,
+  'Ray bounces per sample. Lower = faster, misses GI.',
+  v => { pathTracer.bounces = v }
+)
+addSlider(ptPanelEl,
+  'filter glossy', 0, 5, 0.1, 0,
+  'Reduces firefly noise. Trade-off: dulls sharp caustics.',
+  v => { pathTracer.filterGlossyFactor = v }
+)
+addCheckbox(ptPanelEl,
+  'dynamic low-res', false,
+  'Drops to 10% res while camera moves, full res when still.',
+  v => { pathTracer.dynamicLowRes = v }
+)
+
+// Pre-build BVH on load — swap meshes to physical mats temporarily for BVH, then swap back
+window.addEventListener('load', async () => {
+  meshes.forEach((mesh, i) => { mesh.material = matDefs[i].ptMat })
+  statusEl.textContent = 'Building BVH…'
+  await pathTracer.setScene(scene, camera)
+  ptInitialized = true
+  meshes.forEach((mesh, i) => { mesh.material = matDefs[i].rasterMat })
+  statusEl.textContent = 'Raster mode'
+}, { once: true })
+
+// ── Render Loop ───────────────────────────────────────────────────────────────
+let lastCamPos = camera.position.clone()
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+
+  if (ptMode && ptInitialized) {
+    if (!camera.position.equals(lastCamPos)) {
+      pathTracer.reset()
+      lastCamPos.copy(camera.position)
+      statusEl.className = 'converging'
+      statusEl.textContent = 'Accumulating…'
+    }
+    pathTracer.updateCamera()
+    pathTracer.renderSample()
+    const s = pathTracer.samples
+    statusEl.className = s >= 256 ? 'converged' : 'converging'
+    statusEl.textContent = s >= 256 ? `Converged — ${s} samples` : `Path tracer — ${s} samples`
+  } else {
+    renderer.render(scene, camera)
+  }
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+  if (ptInitialized) pathTracer.reset()
+})
+</script>
+</body>
+</html>

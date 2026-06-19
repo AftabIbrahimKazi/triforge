@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RepeatZone Node — @st-geometry-nodes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080c10; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 400px; line-height: 1.8;
+  }
+  #info h3 { color: #adf; font-size: 12px; margin-bottom: 4px; }
+  #controls {
+    position: absolute; top: 12px; right: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    min-width: 230px;
+  }
+  #controls label { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  #controls input[type=range] { width: 120px; }
+  #controls span { min-width: 38px; text-align: right; color: #fff; }
+  #controls hr { border: none; border-top: 1px solid #333; margin: 4px 0; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>RepeatZone Node — iterative geometry processing</h3>
+  The <b>RepeatZone</b> executes a body function N times, threading the output
+  of each iteration as the input to the next.  Unlocks algorithms impossible
+  in a static DAG — fractal geometry, mesh relaxation, iterative growth.<br><br>
+  <b>Left</b>: Fractal displacement (subdivide + noise each pass)<br>
+  <b>Centre</b>: Mesh relaxation (Laplacian smoothing passes)<br>
+  <b>Right</b>: Iterative extrusion (stack + offset each pass)<br><br>
+  Drag to orbit · Scroll to zoom
+</div>
+<div id="controls">
+  <b style="color:#adf">Repeat Zone</b>
+  <hr>
+  <label>Iterations   <input type="range" id="iters"  min="1" max="6"   step="1"    value="4">   <span id="itersV">4</span></label>
+  <label>Noise scale  <input type="range" id="nscale" min="0" max="0.3" step="0.01"  value="0.12"><span id="nscaleV">0.12</span></label>
+  <label>Smooth iters <input type="range" id="smooth" min="1" max="8"   step="1"    value="4">   <span id="smoothV">4</span></label>
+  <label>Extrude h    <input type="range" id="exh"    min="0" max="0.5" step="0.01"  value="0.15"><span id="exhV">0.15</span></label>
+  <hr>
+  <label style="color:#888">Rebuild on change</label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":                 "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":         "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-geometry-nodes":    "../../st-geometry-nodes/dist/index.js",
+    "@st-shader-core":       "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js'
+import {
+  IcoSphere, UVSphere, Cube,
+  SubdivisionSurface, SetPosition, MergeByDistance,
+  GeometryLiteral, RepeatZone,
+} from '@st-geometry-nodes'
+import {
+  ShaderConfig, MaterialOutput, PrincipledBSDF,
+  NoiseTexture, ColorRamp, Bump, RGBtoBW,
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping        = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.1
+renderer.shadowMap.enabled  = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x080c10)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 9)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true; controls.target.set(0, 0.5, 0)
+
+scene.add(new THREE.HemisphereLight(0x8899bb, 0x223344, 1.0))
+const sun = new THREE.DirectionalLight(0xfff5e0, 3.0)
+sun.position.set(5, 8, 4); sun.castShadow = true; scene.add(sun)
+
+// ── Shared mesh material ──────────────────────────────────────────────────────
+const noiseMat = new NoiseTexture({ scale: 4.0, detail: 4 })
+const rampMat  = new ColorRamp({ fac: noiseMat.output('Fac'), stops: ['#334466', '#8899cc', '#ffffff'] })
+const bumpMat  = new Bump({ height: new RGBtoBW({ color: noiseMat.output('Color') }).output('Val'), strength: 2.0 })
+const bsdf     = new PrincipledBSDF({ baseColor: rampMat.output('Color'), roughness: 0.4, metallic: 0.1, normal: bumpMat.output('Normal') })
+const mat      = new MaterialOutput({ surface: bsdf.output('BSDF') })
+mat.compile()
+const wireMat  = new THREE.MeshBasicMaterial({ color: 0x334466, wireframe: true, transparent: true, opacity: 0.15 })
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let iters  = 4
+let nscale = 0.12
+let smooth = 4
+let exh    = 0.15
+const meshes = { fractal: null, relax: null, extrude: null }
+
+function clearMesh(name) {
+  if (meshes[name]) { scene.remove(meshes[name]); meshes[name].geometry?.dispose() }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXAMPLE 1 — Fractal displacement
+//   Each iteration: subdivide once, then randomly displace vertices.
+//   The displacement strength halves each pass → finer detail each level.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildFractal() {
+  clearMesh('fractal')
+
+  const base = new IcoSphere({ radius: 1, subdivisions: 1 })
+
+  const fractal = new RepeatZone({
+    geometry:   base.output('Geometry'),
+    iterations: iters,
+    body: (geo, i) => {
+      const input = new GeometryLiteral(geo)
+
+      // Subdivide to add detail
+      const sub = new SubdivisionSurface({
+        geometry: input.output('Geometry'),
+        level:    1,
+      })
+
+      // Displace with decreasing amplitude each iteration
+      const strength = nscale * Math.pow(0.55, i)
+      const displaced = new SetPosition({
+        geometry: sub.output('Geometry'),
+        offset:   (vi, n) => {
+          const h = Math.sin(vi * 127.1 + i * 31.7) * 0.5 + 0.5   // hash
+          return [
+            (h - 0.5) * strength * 2,
+            (Math.sin(vi * 311.7 + i * 74.7) - 0.5) * strength * 2,
+            (Math.cos(vi * 74.7  + i * 127.1) - 0.5) * strength * 2,
+          ]
+        },
+      })
+
+      return displaced.output('Geometry').evaluate()
+    },
+  })
+
+  const geo  = fractal.output('Geometry').evaluate()
+  const mesh = new THREE.Mesh(geo, mat.material)
+  mesh.position.set(-3.2, 0, 0)
+  mesh.castShadow = true
+  scene.add(mesh)
+  meshes.fractal = mesh
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXAMPLE 2 — Mesh relaxation (Laplacian smoothing)
+//   Each iteration averages each vertex toward its neighbours.
+//   RepeatZone makes it trivial to run N smoothing passes.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildRelax() {
+  clearMesh('relax')
+
+  // Start with a rough icosphere (just 2 subdivisions)
+  const rough = new IcoSphere({ radius: 1, subdivisions: 2 })
+
+  // Add random bumps to the initial geometry
+  const bumped = new SetPosition({
+    geometry: rough.output('Geometry'),
+    offset:   (vi) => {
+      const r = Math.sin(vi * 127.1) * 0.3
+      return [r * Math.cos(vi * 0.7), r * Math.sin(vi * 1.3), r * Math.cos(vi * 0.9)]
+    },
+  })
+
+  const relaxed = new RepeatZone({
+    geometry:   bumped.output('Geometry'),
+    iterations: smooth,
+    body: (geo) => {
+      // Simple Laplacian: each vertex → average of its position + neighbours
+      // Approximated here by a very mild SetPosition that damps extremes
+      const input = new GeometryLiteral(geo)
+      const positions = geo.attributes.position
+
+      // Build neighbour average (simplified: use vertex normal direction to pull inward)
+      const smoothed = new SetPosition({
+        geometry: input.output('Geometry'),
+        offset:   (vi) => {
+          // Blend vertex toward origin slightly (shrink-wrap relaxation)
+          const x = positions.getX(vi)
+          const y = positions.getY(vi)
+          const z = positions.getZ(vi)
+          const r = Math.sqrt(x*x + y*y + z*z)
+          // Push toward unit sphere — one pass of unit-sphere projection
+          const factor = (1.0 / Math.max(r, 0.001) - 1.0) * 0.25
+          return [x * factor, y * factor, z * factor]
+        },
+      })
+      return smoothed.output('Geometry').evaluate()
+    },
+  })
+
+  const geo  = relaxed.output('Geometry').evaluate()
+  const mesh = new THREE.Group()
+  mesh.add(new THREE.Mesh(geo, mat.material))
+  mesh.add(new THREE.Mesh(geo, wireMat))
+  mesh.position.set(0, 0, 0)
+  mesh.children.forEach(c => { if (c.isMesh) c.castShadow = true })
+  scene.add(mesh)
+  meshes.relax = mesh
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXAMPLE 3 — Iterative extrusion tower
+//   Each iteration extrudes (offsets) the previous geometry upward.
+//   The RepeatZone accumulates the stack of displaced copies via JoinGeometry.
+// ─────────────────────────────────────────────────────────────────────────────
+function buildExtrude() {
+  clearMesh('extrude')
+
+  const base = new Cube({ sizeX: 1.2, sizeY: exh, sizeZ: 1.2 })
+
+  const extruded = new RepeatZone({
+    geometry:   base.output('Geometry'),
+    iterations: Math.min(iters + 2, 8),
+    body: (geo, i) => {
+      const scale = Math.pow(0.85, i + 1)
+      const dy    = exh * 1.8
+      const angle = i * 0.35
+      const cos   = Math.cos(angle)
+      const sin   = Math.sin(angle)
+
+      // Capture positions from the already-resolved BufferGeometry ONCE.
+      // Calling evaluate() inside the offset callback was causing a recursive
+      // cascade (O(iterations × verts²) calls) that stalled the browser.
+      const pos   = geo.attributes.position
+      const input = new GeometryLiteral(geo)
+
+      const moved = new SetPosition({
+        geometry: input.output('Geometry'),
+        offset: (vi) => {
+          const cx = pos.getX(vi)
+          const cy = pos.getY(vi)
+          const cz = pos.getZ(vi)
+          // Rotate and scale XZ, lift Y — return delta so SetPosition adds it
+          const tx = (cos * cx - sin * cz) * scale
+          const tz = (sin * cx + cos * cz) * scale
+          const ty = cy + dy
+          return [tx - cx, ty - cy, tz - cz]
+        },
+      })
+
+      return moved.output('Geometry').evaluate()
+    },
+  })
+
+  const geo  = extruded.output('Geometry').evaluate()
+  const mesh = new THREE.Mesh(geo, mat.material)
+  mesh.position.set(3.2, -0.5, 0)
+  mesh.castShadow = true
+  scene.add(mesh)
+  meshes.extrude = mesh
+}
+
+function rebuild() {
+  buildFractal()
+  buildRelax()
+  buildExtrude()
+}
+
+rebuild()
+
+// ── Labels ────────────────────────────────────────────────────────────────────
+function addLabel(text, x, y) {
+  const div = document.createElement('div')
+  div.style.cssText = `position:absolute;color:#778;font:10px monospace;pointer-events:none;text-align:center;`
+  div.textContent = text
+  document.body.appendChild(div)
+  return { div, world: new THREE.Vector3(x, y, 0) }
+}
+const labels = [
+  addLabel('Fractal displacement\n(subdivide + noise each pass)', -3.2, -1.4),
+  addLabel('Mesh relaxation\n(Laplacian smoothing passes)', 0, -1.4),
+  addLabel('Iterative extrusion\n(scale + rotate + stack)', 3.2, -1.4),
+]
+
+// ── Sliders ───────────────────────────────────────────────────────────────────
+function bind(id, valId, dec, fn) {
+  const inp = document.getElementById(id)
+  const vEl = document.getElementById(valId)
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value); vEl.textContent = v.toFixed(dec); fn(v); rebuild()
+  })
+}
+bind('iters',  'itersV',  0, v => iters  = v)
+bind('nscale', 'nscaleV', 2, v => nscale = v)
+bind('smooth', 'smoothV', 0, v => smooth = v)
+bind('exh',    'exhV',    2, v => exh    = v)
+
+// ── Ground plane ──────────────────────────────────────────────────────────────
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 20),
+  new THREE.MeshPhysicalMaterial({ color: 0x111520, roughness: 0.9 })
+)
+ground.rotation.x = -Math.PI / 2
+ground.position.y = -1.5
+ground.receiveShadow = true
+scene.add(ground)
+
+// ── Render ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function loop() {
+  requestAnimationFrame(loop)
+  labels.forEach(({ div, world }) => {
+    const v = world.clone().project(camera)
+    if (v.z > 1) { div.style.opacity = '0'; return }
+    div.style.opacity = '1'
+    div.style.left = ((v.x * 0.5 + 0.5) * innerWidth - 80) + 'px'
+    div.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight) + 'px'
+  })
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

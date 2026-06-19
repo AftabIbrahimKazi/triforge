@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-curve-core — Bezier · Catmull-Rom · NURBS · Path-Follow</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #08080f; overflow: hidden; font-family: monospace; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px;
+    color: #ccc; font-size: 12px; line-height: 1.8;
+    background: rgba(0,0,0,0.6); padding: 12px 16px; border-radius: 6px;
+  }
+  #ui h3 { color: #fff; margin-bottom: 6px; }
+  .row { display: flex; justify-content: space-between; gap: 16px; }
+  .val { color: #7df; }
+  #controls {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px;
+  }
+  button {
+    background: #1a1a2e; color: #ccc; border: 1px solid #334;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  button.active { background: #223366; border-color: #4466cc; color: #fff; }
+  button:hover { background: #2a2a3e; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>st-curve-core</h3>
+  <div class="row"><span>mode</span><span class="val" id="v-mode">Catmull-Rom</span></div>
+  <div class="row"><span>bevel</span><span class="val" id="v-bevel">Tube</span></div>
+  <div class="row"><span>path offset</span><span class="val" id="v-offset">0.00</span></div>
+  <div class="row"><span>arc length</span><span class="val" id="v-len">—</span></div>
+</div>
+
+<div id="controls">
+  <button id="btn-catmull" class="active">Catmull-Rom</button>
+  <button id="btn-bezier">Bezier</button>
+  <button id="btn-nurbs">NURBS</button>
+  <button id="btn-bevel">⬡ Bevel: Tube</button>
+  <button id="btn-profile">⊕ Profile: Circle</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Inline st-curve-core (no build step) ────────────────────────────────────
+
+// ── Math helpers ─────────────────────────────────────────────────────────────
+const V = (x,y,z) => new THREE.Vector3(x,y,z)
+const V2 = (x,y) => new THREE.Vector2(x,y)
+
+// BaseCurve
+class BaseCurve {
+  getLength(div=200) {
+    let l=0, prev=this.getPoint(0)
+    for(let i=1;i<=div;i++){const c=this.getPoint(i/div);l+=prev.distanceTo(c);prev=c}
+    return l
+  }
+  buildArcLengthLUT(div=200){
+    const lut=[{t:0,len:0}];let acc=0,prev=this.getPoint(0)
+    for(let i=1;i<=div;i++){const ti=i/div,c=this.getPoint(ti);acc+=prev.distanceTo(c);lut.push({t:ti,len:acc});prev=c}
+    return lut
+  }
+  getUtoTmapping(u,lut){
+    const tl=lut[lut.length-1].len,target=u*tl
+    let lo=0,hi=lut.length-1
+    while(lo<hi){const mid=(lo+hi)>>1;if(lut[mid].len<target)lo=mid+1;else hi=mid}
+    if(lo===0)return 0
+    const a=lut[lo-1],b=lut[lo]
+    if(b.len===a.len)return b.t
+    return a.t+(target-a.len)/(b.len-a.len)*(b.t-a.t)
+  }
+  getSpacedPoints(count,div=200){
+    const lut=this.buildArcLengthLUT(div)
+    return Array.from({length:count},(_,i)=>this.getPoint(this.getUtoTmapping(i/(count-1),lut)))
+  }
+  getTangent(t){
+    const d=1e-4
+    const p0=this.getPoint(Math.max(0,t-d)), p1=this.getPoint(Math.min(1,t+d))
+    return p1.clone().sub(p0).normalize()
+  }
+}
+
+// BezierCurve
+class BezierCurve extends BaseCurve {
+  constructor(pts){ super(); this._pts=pts }
+  get segmentCount(){ return Math.floor((this._pts.length-1)/3) }
+  getPoint(t){
+    t=Math.max(0,Math.min(1,t))
+    const s=this.segmentCount,seg=Math.min(Math.floor(t*s),s-1),l=t*s-seg
+    const b=seg*3,n=this._pts.length
+    const p0=this._pts[b%n],p1=this._pts[(b+1)%n],p2=this._pts[(b+2)%n],p3=this._pts[(b+3)%n]
+    const mt=1-l
+    return V(
+      mt**3*p0.x+3*mt**2*l*p1.x+3*mt*l**2*p2.x+l**3*p3.x,
+      mt**3*p0.y+3*mt**2*l*p1.y+3*mt*l**2*p2.y+l**3*p3.y,
+      mt**3*p0.z+3*mt**2*l*p1.z+3*mt*l**2*p2.z+l**3*p3.z,
+    )
+  }
+}
+
+// CatmullRomCurve
+class CatmullRomCurve extends BaseCurve {
+  constructor(pts,{tension=0.5,closed=false}={}){ super(); this._pts=pts; this.tension=tension; this.closed=closed }
+  getPoint(t){
+    t=Math.max(0,Math.min(1,t))
+    const pts=this._pts,n=pts.length,segs=this.closed?n:n-1
+    const seg=Math.min(Math.floor(t*segs),segs-1),l=t*segs-seg,a=this.tension
+    let p0,p1,p2,p3
+    if(this.closed){p0=pts[(seg-1+n)%n];p1=pts[seg%n];p2=pts[(seg+1)%n];p3=pts[(seg+2)%n]}
+    else{p0=seg===0?pts[0]:pts[seg-1];p1=pts[seg];p2=pts[seg+1];p3=seg+2<n?pts[seg+2]:pts[n-1]}
+    const l2=l*l,l3=l2*l
+    const m1x=a*(p2.x-p0.x),m1y=a*(p2.y-p0.y),m1z=a*(p2.z-p0.z)
+    const m2x=a*(p3.x-p1.x),m2y=a*(p3.y-p1.y),m2z=a*(p3.z-p1.z)
+    const h00=2*l3-3*l2+1,h10=l3-2*l2+l,h01=-2*l3+3*l2,h11=l3-l2
+    return V(h00*p1.x+h10*m1x+h01*p2.x+h11*m2x,h00*p1.y+h10*m1y+h01*p2.y+h11*m2y,h00*p1.z+h10*m1z+h01*p2.z+h11*m2z)
+  }
+}
+
+// NURBS
+function basisFn(i,p,u,knots,uMax){
+  if(p===0){if(u===uMax)return knots[i+1]===uMax?1:0;return(u>=knots[i]&&u<knots[i+1])?1:0}
+  const l=knots[i+p]-knots[i],r=knots[i+p+1]-knots[i+1]
+  let res=0
+  if(l>0)res+=(u-knots[i])/l*basisFn(i,p-1,u,knots,uMax)
+  if(r>0)res+=(knots[i+p+1]-u)/r*basisFn(i+1,p-1,u,knots,uMax)
+  return res
+}
+function openKnots(n,order){
+  const p=order-1,total=n+order,k=[]
+  for(let i=0;i<total;i++){if(i<order)k.push(0);else if(i>=n)k.push(n-p);else k.push(i-p)}
+  return k
+}
+class NURBSCurve extends BaseCurve {
+  constructor(pts,{order=4,weights,knots}={}){
+    super();this._pts=pts;this.order=Math.min(order,pts.length)
+    this._w=weights||pts.map(()=>1);this._k=knots||openKnots(pts.length,this.order)
+  }
+  getPoint(t){
+    t=Math.max(0,Math.min(1,t))
+    const n=this._pts.length,p=this.order-1,knots=this._k
+    const lo=knots[p],hi=knots[n],u=lo+t*(hi-lo)
+    let wx=0,wy=0,wz=0,ww=0
+    for(let i=0;i<n;i++){const b=basisFn(i,p,u,knots,hi)*this._w[i];wx+=this._pts[i].x*b;wy+=this._pts[i].y*b;wz+=this._pts[i].z*b;ww+=b}
+    if(ww===0)return this._pts[0].clone()
+    return V(wx/ww,wy/ww,wz/ww)
+  }
+}
+
+// RMF frames
+function computeRMFrames(curve,count){
+  const lut=curve.buildArcLengthLUT(count*4),frames=[]
+  let tan=curve.getTangent(0)
+  let up=V(0,1,0);if(Math.abs(tan.dot(up))>0.99)up=V(0,0,1)
+  let normal=new THREE.Vector3().crossVectors(up,tan).normalize()
+  let binormal=new THREE.Vector3().crossVectors(tan,normal).normalize()
+  frames.push({position:curve.getPoint(0),tangent:tan.clone(),normal:normal.clone(),binormal:binormal.clone()})
+  for(let i=1;i<count;i++){
+    const tParam=curve.getUtoTmapping(i/(count-1),lut)
+    const pos=curve.getPoint(tParam),tan2=curve.getTangent(tParam)
+    const prev=frames[frames.length-1]
+    const v1=pos.clone().sub(prev.position),c1=v1.dot(v1)
+    let rn=prev.normal.clone(),rt=prev.tangent.clone()
+    if(c1>1e-10){const s=2/c1;rn.sub(v1.clone().multiplyScalar(s*v1.dot(rn)));rt.sub(v1.clone().multiplyScalar(s*v1.dot(rt)))}
+    const v2=tan2.clone().sub(rt),c2=v2.dot(v2),sc=c2>1e-10?2/c2:0
+    const nn=rn.clone().sub(v2.clone().multiplyScalar(sc*v2.dot(rn))).normalize()
+    const nb=new THREE.Vector3().crossVectors(tan2,nn).normalize()
+    frames.push({position:pos.clone(),tangent:tan2.clone(),normal:nn,binormal:nb})
+  }
+  return frames
+}
+
+// CurveTube geometry
+function buildTubeGeo(curve, tubeSeg=64, radSeg=12, radius=0.08){
+  const frameCount=tubeSeg+1, frames=computeRMFrames(curve,frameCount)
+  const verts=[], norms=[], uvs=[], idx=[]
+  for(let i=0;i<frameCount;i++){
+    const fr=frames[i], u=i/tubeSeg
+    for(let j=0;j<=radSeg;j++){
+      const a=j/radSeg*Math.PI*2,cos=Math.cos(a),sin=Math.sin(a)
+      const nx=fr.normal.x*cos+fr.binormal.x*sin
+      const ny=fr.normal.y*cos+fr.binormal.y*sin
+      const nz=fr.normal.z*cos+fr.binormal.z*sin
+      verts.push(fr.position.x+nx*radius,fr.position.y+ny*radius,fr.position.z+nz*radius)
+      norms.push(nx,ny,nz); uvs.push(u,j/radSeg)
+    }
+  }
+  for(let i=0;i<tubeSeg;i++) for(let j=0;j<radSeg;j++){
+    const a=(radSeg+1)*i+j,b=(radSeg+1)*(i+1)+j,c=b+1,d=a+1
+    idx.push(a,b,d,b,c,d)
+  }
+  const geo=new THREE.BufferGeometry()
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(verts),3))
+  geo.setAttribute('normal',  new THREE.BufferAttribute(new Float32Array(norms),3))
+  geo.setAttribute('uv',      new THREE.BufferAttribute(new Float32Array(uvs),2))
+  geo.setIndex(idx); return geo
+}
+
+// CurveBevel geometry (custom profile)
+function buildBevelGeo(curve, profile, tubeSeg=64){
+  const frameCount=tubeSeg+1, frames=computeRMFrames(curve,frameCount)
+  const N=profile.length, verts=[], norms=[], uvs=[], idx=[]
+  for(let i=0;i<frameCount;i++){
+    const fr=frames[i], u=i/tubeSeg
+    for(let j=0;j<N;j++){
+      const px=profile[j].x, py=profile[j].y
+      verts.push(fr.position.x+fr.normal.x*px+fr.binormal.x*py,
+                 fr.position.y+fr.normal.y*px+fr.binormal.y*py,
+                 fr.position.z+fr.normal.z*px+fr.binormal.z*py)
+      const nx=profile[(j+1)%N];const ex=nx.x-px,ey=nx.y-py,l=Math.sqrt(ex*ex+ey*ey)||1
+      const npx=ey/l,npy=-ex/l
+      norms.push(fr.normal.x*npx+fr.binormal.x*npy,fr.normal.y*npx+fr.binormal.y*npy,fr.normal.z*npx+fr.binormal.z*npy)
+      uvs.push(u,j/(N-1))
+    }
+  }
+  for(let i=0;i<tubeSeg;i++) for(let j=0;j<N;j++){
+    const a=N*i+j,b=N*(i+1)+j,c=N*(i+1)+(j+1)%N,d=N*i+(j+1)%N
+    idx.push(a,b,d,b,c,d)
+  }
+  const geo=new THREE.BufferGeometry()
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(verts),3))
+  geo.setAttribute('normal',  new THREE.BufferAttribute(new Float32Array(norms),3))
+  geo.setAttribute('uv',      new THREE.BufferAttribute(new Float32Array(uvs),2))
+  geo.setIndex(idx); return geo
+}
+
+// ── Profiles ──────────────────────────────────────────────────────────────────
+const profiles = {
+  Circle: Array.from({length:12},(_,i)=>{const a=i/12*Math.PI*2;return V2(Math.cos(a)*0.08,Math.sin(a)*0.08)}),
+  Square: [V2(-0.07,-0.07),V2(0.07,-0.07),V2(0.07,0.07),V2(-0.07,0.07)],
+  Diamond:[V2(0,-0.1),V2(0.1,0),V2(0,0.1),V2(-0.1,0)],
+  Star:   Array.from({length:10},(_,i)=>{const a=i/10*Math.PI*2-Math.PI/2,r=i%2===0?0.12:0.05;return V2(Math.cos(a)*r,Math.sin(a)*r)}),
+}
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x08080f)
+scene.fog = new THREE.FogExp2(0x08080f, 0.025)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 4, 12)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+// Lights
+scene.add(new THREE.AmbientLight(0x223344, 2))
+const pt1 = new THREE.PointLight(0x3366ff, 60, 30); pt1.position.set(4, 5, 2); scene.add(pt1)
+const pt2 = new THREE.PointLight(0xff3355, 40, 20); pt2.position.set(-4, 2, -2); scene.add(pt2)
+
+// Grid
+const grid = new THREE.GridHelper(20, 20, 0x223355, 0x112233)
+grid.position.y = -2; scene.add(grid)
+
+// ── Curve definitions ─────────────────────────────────────────────────────────
+const catmullPts = [
+  V(-4,0,0),V(-2,2,2),V(0,0,-2),V(2,3,1),V(4,-1,2),V(3,1,-3),V(0,2,0)
+]
+const bezierPts = [
+  V(-4,0,0),V(-3,3,1),V(-1,3,-1),V(0,0,0),  // seg 1
+  V(1,-3,1),V(3,-2,2),V(4,0,0),              // seg 2 needs another handle+anchor
+]
+// extend bezier to 2 segments properly
+const bezierPts2 = [
+  V(-4,0,0),V(-3,3,1),V(-1,2,-1),V(0,0,0),
+  V(1,-2,1),V(3,-3,2),V(4,1,0),
+]
+const nurbs9 = (() => {
+  const w=Math.SQRT1_2
+  return {
+    pts:[V(4,0,0),V(4,4,0),V(0,4,0),V(-4,4,0),V(-4,0,0),V(-4,-4,0),V(0,-4,0),V(4,-4,0),V(4,0,0)],
+    weights:[1,w,1,w,1,w,1,w,1],
+    knots:[0,0,0,1,1,2,2,3,3,4,4,4],
+  }
+})()
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let mode = 'catmull'
+let profile = 'Circle'
+let curveMesh, controlMesh, followMesh
+let currentCurve, pathFollow
+
+const mat = new THREE.MeshStandardMaterial({
+  color: 0x3399ff, roughness: 0.3, metalness: 0.5,
+  side: THREE.DoubleSide,
+})
+const matControl = new THREE.LineBasicMaterial({ color: 0x445566 })
+
+function getCurve() {
+  if (mode === 'catmull') return new CatmullRomCurve(catmullPts)
+  if (mode === 'bezier')  return new BezierCurve(bezierPts2)
+  // NURBS circle (tilted)
+  const pts = nurbs9.pts.map(p => V(p.x*0.6, p.y*0.5+1, p.z+Math.sin(nurbs9.pts.indexOf(p)*0.8)))
+  return new NURBSCurve(pts, { order: 3, weights: nurbs9.weights, knots: nurbs9.knots })
+}
+
+function rebuild() {
+  if (curveMesh)   { scene.remove(curveMesh);   curveMesh.geometry.dispose() }
+  if (controlMesh) { scene.remove(controlMesh); controlMesh.geometry.dispose() }
+
+  currentCurve = getCurve()
+  const len = currentCurve.getLength()
+  document.getElementById('v-len').textContent = len.toFixed(2) + ' u'
+
+  let geo
+  if (profile === 'Circle') {
+    geo = buildTubeGeo(currentCurve, 96, 12, 0.09)
+  } else {
+    geo = buildBevelGeo(currentCurve, profiles[profile], 96)
+  }
+
+  curveMesh = new THREE.Mesh(geo, mat)
+  scene.add(curveMesh)
+
+  // Control point markers
+  const pts = mode === 'catmull' ? catmullPts : mode === 'bezier' ? bezierPts2 : nurbs9.pts.slice(0,8)
+  const lineGeo = new THREE.BufferGeometry().setFromPoints(currentCurve.getSpacedPoints(128))
+  // (curve line already shown via tube, draw control polygon instead)
+  const ctrlGeo = new THREE.BufferGeometry().setFromPoints(pts)
+  controlMesh = new THREE.Line(ctrlGeo, matControl)
+  scene.add(controlMesh)
+
+  // Rebuild path-follow
+  pathFollow = { frames: computeRMFrames(currentCurve, 256), offset: 0 }
+  if (!followMesh) {
+    const fg = new THREE.ConeGeometry(0.15, 0.5, 8)
+    fg.rotateX(Math.PI / 2)
+    followMesh = new THREE.Mesh(fg, new THREE.MeshStandardMaterial({ color: 0xff8822, emissive: 0x441100 }))
+    scene.add(followMesh)
+  }
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+const modeButtons = { catmull: 'btn-catmull', bezier: 'btn-bezier', nurbs: 'btn-nurbs' }
+Object.entries(modeButtons).forEach(([m, id]) => {
+  document.getElementById(id).addEventListener('click', () => {
+    mode = m
+    Object.values(modeButtons).forEach(bid => document.getElementById(bid).classList.remove('active'))
+    document.getElementById(id).classList.add('active')
+    document.getElementById('v-mode').textContent = { catmull:'Catmull-Rom', bezier:'Bezier', nurbs:'NURBS' }[m]
+    rebuild()
+  })
+})
+
+const profileList = Object.keys(profiles)
+let profileIdx = 0
+document.getElementById('btn-profile').addEventListener('click', () => {
+  profileIdx = (profileIdx + 1) % profileList.length
+  profile = profileList[profileIdx]
+  document.getElementById('btn-profile').textContent = `⊕ Profile: ${profile}`
+  rebuild()
+})
+
+document.getElementById('btn-bevel').addEventListener('click', () => {
+  // Toggle tube vs bevel (already handled via profile selection)
+  profileIdx = (profileIdx + 1) % profileList.length
+  profile = profileList[profileIdx]
+  document.getElementById('btn-bevel').textContent = `⬡ Profile: ${profile}`
+  document.getElementById('v-bevel').textContent = profile
+  rebuild()
+})
+
+// ── Animation ────────────────────────────────────────────────────────────────
+rebuild()
+
+const clock = new THREE.Clock()
+let offset = 0
+
+function animate() {
+  requestAnimationFrame(animate)
+  const delta = clock.getDelta()
+  offset = (offset + delta * 0.12) % 1
+
+  // Place follow object using RMF frames
+  if (pathFollow && followMesh) {
+    const fi  = offset * (pathFollow.frames.length - 1)
+    const lo  = Math.floor(fi), hi = Math.min(lo + 1, pathFollow.frames.length - 1)
+    const a   = pathFollow.frames[lo], b = pathFollow.frames[hi]
+    const t   = fi - lo
+    followMesh.position.lerpVectors(a.position, b.position, t)
+
+    // Orient: tangent = forward (Z after cone rotation)
+    const tan = new THREE.Vector3().lerpVectors(a.tangent, b.tangent, t).normalize()
+    const nrm = new THREE.Vector3().lerpVectors(a.normal,  b.normal,  t).normalize()
+    const bin = new THREE.Vector3().lerpVectors(a.binormal,b.binormal,t).normalize()
+    const m = new THREE.Matrix4().set(
+      nrm.x, bin.x, tan.x, 0,
+      nrm.y, bin.y, tan.y, 0,
+      nrm.z, bin.z, tan.z, 0,
+      0, 0, 0, 1
+    )
+    followMesh.quaternion.setFromRotationMatrix(m)
+  }
+
+  document.getElementById('v-offset').textContent = offset.toFixed(2)
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

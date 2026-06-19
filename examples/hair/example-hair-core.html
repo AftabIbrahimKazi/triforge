@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-hair-core — Hair & Fur Strand Rendering</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #ddd; font-family: monospace; overflow: hidden; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px; width: 240px;
+    background: rgba(0,0,0,0.7); border: 1px solid #333; border-radius: 6px;
+    padding: 12px; font-size: 12px; user-select: none;
+  }
+  #ui h2 { font-size: 13px; color: #aef; margin-bottom: 10px; }
+  .group { margin-bottom: 10px; }
+  .group label { display: block; color: #888; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; }
+  .row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .row span { width: 110px; color: #ccc; }
+  .row input[type=range] { flex: 1; accent-color: #6af; }
+  .row .val { width: 36px; text-align: right; color: #aef; }
+  .row select { flex: 1; background: #1a1a2e; color: #ccc; border: 1px solid #444; padding: 2px; }
+  #info { position: fixed; bottom: 12px; left: 16px; font-size: 11px; color: #666; }
+  #rebuild { margin-top: 8px; width: 100%; padding: 5px; background: #1a3a5a; border: 1px solid #4af; color: #aef; cursor: pointer; border-radius: 3px; font-family: monospace; }
+  #rebuild:hover { background: #2a5a8a; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h2>st-hair-core</h2>
+
+  <div class="group">
+    <label>Render Mode</label>
+    <div class="row">
+      <span>Mode</span>
+      <select id="mode">
+        <option value="tube">Tube</option>
+        <option value="ribbon" selected>Ribbon</option>
+        <option value="line">Line</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="group">
+    <label>Strand Generator</label>
+    <div class="row"><span>Count</span><input type="range" id="count" min="50" max="800" step="50" value="300"><span class="val" id="countV">300</span></div>
+    <div class="row"><span>Length</span><input type="range" id="length" min="0.1" max="1.5" step="0.05" value="0.6"><span class="val" id="lengthV">0.60</span></div>
+    <div class="row"><span>Segments</span><input type="range" id="segs" min="3" max="12" step="1" value="6"><span class="val" id="segsV">6</span></div>
+    <div class="row"><span>Gravity</span><input type="range" id="gravity" min="0" max="1" step="0.05" value="0.3"><span class="val" id="gravityV">0.30</span></div>
+    <div class="row"><span>Spread</span><input type="range" id="spread" min="0" max="0.3" step="0.01" value="0.05"><span class="val" id="spreadV">0.05</span></div>
+  </div>
+
+  <div class="group">
+    <label>Kink</label>
+    <div class="row">
+      <span>Type</span>
+      <select id="kinkType">
+        <option value="NOTHING">Nothing</option>
+        <option value="WAVE" selected>Wave</option>
+        <option value="CURL">Curl</option>
+        <option value="RADIAL">Radial</option>
+        <option value="BRAID">Braid</option>
+      </select>
+    </div>
+    <div class="row"><span>Amplitude</span><input type="range" id="kinkAmp" min="0" max="0.2" step="0.005" value="0.04"><span class="val" id="kinkAmpV">0.04</span></div>
+    <div class="row"><span>Frequency</span><input type="range" id="kinkFreq" min="0.5" max="8" step="0.5" value="3"><span class="val" id="kinkFreqV">3.0</span></div>
+  </div>
+
+  <div class="group" id="tubeControls">
+    <label>Tube geometry</label>
+    <div class="row"><span>Radius Root</span><input type="range" id="radiusRoot" min="0.002" max="0.04" step="0.001" value="0.012"><span class="val" id="radiusRootV">0.012</span></div>
+    <div class="row"><span>Radius Tip</span><input type="range" id="radiusTip" min="0.001" max="0.02" step="0.001" value="0.003"><span class="val" id="radiusTipV">0.003</span></div>
+  </div>
+  <div class="group" id="ribbonControls">
+    <label>Ribbon geometry</label>
+    <div class="row"><span>Width Root</span><input type="range" id="widthRoot" min="0.002" max="0.08" step="0.002" value="0.02"><span class="val" id="widthRootV">0.020</span></div>
+    <div class="row"><span>Width Tip</span><input type="range" id="widthTip" min="0.001" max="0.04" step="0.001" value="0.005"><span class="val" id="widthTipV">0.005</span></div>
+  </div>
+
+  <button id="rebuild">Rebuild Hair</button>
+</div>
+<div id="info">Orbit: left-drag · Zoom: scroll</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-hair-core": "../../st-hair-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  StrandGenerator, applyKink,
+  buildTubeGeometry, buildRibbonGeometry, buildLineGeometry,
+} from '@st-hair-core'
+
+// ── Three.js scene ─────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a14)
+scene.fog = new THREE.Fog(0x0a0a14, 4, 10)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.01, 20)
+camera.position.set(0, 1.2, 3)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0.5, 0)
+controls.enableDamping = true
+
+// Lights
+scene.add(new THREE.AmbientLight(0x334466, 2))
+const sun = new THREE.DirectionalLight(0xffeedd, 3)
+sun.position.set(2, 4, 2)
+sun.castShadow = true
+scene.add(sun)
+const fill = new THREE.DirectionalLight(0x224488, 1)
+fill.position.set(-3, 1, -2)
+scene.add(fill)
+
+// Base mesh (UV sphere)
+const sphereGeo = new THREE.SphereGeometry(0.6, 32, 16)
+const sphereMat = new THREE.MeshStandardMaterial({ color: 0x4a3020, roughness: 0.9 })
+const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat)
+sphereMesh.position.y = 0.6
+sphereMesh.castShadow = true
+sphereMesh.receiveShadow = true
+scene.add(sphereMesh)
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(6, 6),
+  new THREE.MeshStandardMaterial({ color: 0x1a1a2a, roughness: 1 })
+)
+ground.rotation.x = -Math.PI/2
+ground.receiveShadow = true
+scene.add(ground)
+
+// Hair materials
+const tubeMat   = new THREE.MeshStandardMaterial({ color: 0xc8a060, roughness: 0.7, metalness: 0.0, side: THREE.DoubleSide })
+const ribbonMat = new THREE.MeshStandardMaterial({ color: 0xd4b070, roughness: 0.6, side: THREE.DoubleSide })
+const lineMat   = new THREE.LineBasicMaterial({ color: 0xe8c880, transparent: true, opacity: 0.85 })
+
+let hairObj = null
+
+function getVal(id) { return parseFloat(document.getElementById(id).value) }
+
+function buildHair() {
+  if (hairObj) {
+    scene.remove(hairObj)
+    if (hairObj.geometry) hairObj.geometry.dispose()
+  }
+
+  const mode       = document.getElementById('mode').value
+  const kinkType   = document.getElementById('kinkType').value
+  const count      = getVal('count')
+  const length     = getVal('length')
+  const segs       = getVal('segs')
+  const gravity    = getVal('gravity')
+  const spread     = getVal('spread')
+  const kinkAmp    = getVal('kinkAmp')
+  const kinkFreq   = getVal('kinkFreq')
+  const radiusRoot = getVal('radiusRoot')
+  const radiusTip  = getVal('radiusTip')
+  const widthRoot  = getVal('widthRoot')
+  const widthTip   = getVal('widthTip')
+
+  // Generate on sphere surface (offset to world)
+  const gen = new StrandGenerator({ count, length, segments: segs, seed: 42, gravity, spread })
+
+  // Use sphere geometry (local space, then offset)
+  let strands = gen.generate(sphereGeo)
+
+  // Offset to world position of sphere
+  strands = strands.map(s => ({
+    ...s,
+    points: s.points.map(([x,y,z]) => [x, y+0.6, z])
+  }))
+
+  // Apply kink
+  if (kinkType !== 'NOTHING' && kinkAmp > 0) {
+    strands = strands.map(s => applyKink(s, { type: kinkType, amplitude: kinkAmp, frequency: kinkFreq }))
+  }
+
+  let geo, mesh
+  if (mode === 'tube') {
+    const steps = Math.max(3, Math.round(segs * 1.5))
+    geo = buildTubeGeometry(strands, steps, 4, radiusRoot, radiusTip)
+    mesh = new THREE.Mesh(geo, tubeMat)
+  } else if (mode === 'ribbon') {
+    const steps = Math.max(3, Math.round(segs * 1.5))
+    geo = buildRibbonGeometry(strands, steps, widthRoot, widthTip)
+    mesh = new THREE.Mesh(geo, ribbonMat)
+  } else {
+    const steps = Math.max(2, segs)
+    geo = buildLineGeometry(strands, steps)
+    mesh = new THREE.LineSegments(geo, lineMat)
+  }
+
+  mesh.castShadow = true
+  scene.add(mesh)
+  hairObj = mesh
+}
+
+// Show only the geometry controls relevant to the current mode
+function updateModeControls() {
+  const mode = document.getElementById('mode').value
+  document.getElementById('tubeControls').style.display   = mode === 'tube'   ? '' : 'none'
+  document.getElementById('ribbonControls').style.display = mode === 'ribbon' ? '' : 'none'
+}
+
+// Wire up sliders — update display value and auto-rebuild
+document.querySelectorAll('input[type=range]').forEach(el => {
+  const valEl = document.getElementById(el.id + 'V')
+  el.addEventListener('input', () => {
+    valEl.textContent = parseFloat(el.value).toFixed(el.step.includes('.') ? (el.step.split('.')[1]?.length??2) : 0)
+    buildHair()
+  })
+})
+document.getElementById('rebuild').addEventListener('click', buildHair)
+document.getElementById('mode').addEventListener('change', () => { updateModeControls(); buildHair() })
+document.getElementById('kinkType').addEventListener('change', buildHair)
+updateModeControls()
+
+// Initial build
+buildHair()
+
+// Animate
+function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Deform Modifiers — @st-modifier-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px; }
+  #labels { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .label { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.6);
+    padding: 2px 7px; border-radius: 3px; font: 10px monospace; color: #eee; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="info">Deform Modifiers — @st-modifier-core<br>TwistModifier · BendModifier · WarpModifier · DisplacementModifier</div>
+<div id="labels"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":      "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core":  "../../st-modifier-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ModifierStack,
+  SubdivisionModifier, NormalRecalculateModifier,
+  TwistModifier, BendModifier, WarpModifier, DisplacementModifier
+} from '@st-modifier-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d0d)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200)
+camera.position.set(0, 3, 18)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 2.5)
+sun.position.set(5, 10, 5)
+sun.castShadow = true
+scene.add(sun)
+
+const mat = new THREE.MeshStandardMaterial({ color: 0x4488cc, roughness: 0.4, metalness: 0.2, wireframe: false })
+
+// Base geometry: cylinder with enough segments for smooth deformation
+const baseGeo = new THREE.CylinderGeometry(0.6, 0.6, 3.5, 24, 32)
+
+function buildMesh(modifiers, xPos) {
+  const stack = new ModifierStack(baseGeo)
+  stack.add(new SubdivisionModifier({ levels: 1 }))
+  for (const m of modifiers) stack.add(m)
+  stack.add(new NormalRecalculateModifier())
+  const geo  = stack.apply()
+  const mesh = new THREE.Mesh(geo, mat.clone())
+  mesh.position.x = xPos
+  mesh.castShadow = true
+  scene.add(mesh)
+  return mesh
+}
+
+const defs = [
+  { name: 'Original',          mesh: buildMesh([], -9) },
+  { name: 'TwistModifier\n(angle: 4)', mesh: buildMesh([new TwistModifier({ angle: 4.0, axis: 'Y' })], -3) },
+  { name: 'BendModifier\n(angle: 1.8)', mesh: buildMesh([new BendModifier({ angle: 1.8, axis: 'Z' })], 3) },
+  {
+    name: 'DisplacementModifier',
+    mesh: buildMesh([
+      new DisplacementModifier({
+        strength: 0.4,
+        noiseFunction: (x, y, z) => (Math.sin(y * 4 + x * 2) * 0.5 + 0.5)
+      })
+    ], 9)
+  }
+]
+
+// WarpModifier shown on a torus
+const torusBase = new THREE.TorusGeometry(1.2, 0.35, 16, 64)
+const warpStack = new ModifierStack(torusBase)
+warpStack.add(new WarpModifier({ fromX: 0, fromY: 1.2, fromZ: 0, toX: 0, toY: -1.2, toZ: 0, radius: 1.5, strength: 0.8 }))
+warpStack.add(new NormalRecalculateModifier())
+const warpMesh = new THREE.Mesh(warpStack.apply(), mat.clone())
+warpMesh.position.set(0, -4, 0)
+warpMesh.castShadow = true
+scene.add(warpMesh)
+defs.push({ name: 'WarpModifier\n(torus)', mesh: warpMesh })
+
+const labels = document.getElementById('labels')
+const labelEls = defs.map(({ name }) => {
+  const el = document.createElement('div')
+  el.className = 'label'
+  el.textContent = name
+  labels.appendChild(el)
+  return el
+})
+
+function projectLabel(mesh, lbl) {
+  const v = mesh.position.clone().project(camera)
+  lbl.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px'
+  lbl.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight + 78) + 'px'
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  defs.forEach(({ mesh }, i) => projectLabel(mesh, labelEls[i]))
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

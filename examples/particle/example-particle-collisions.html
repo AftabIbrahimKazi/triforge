@@ -1,0 +1,315 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Particle Collisions — st-particle-core</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0a; color: #eee; font-family: monospace; overflow: hidden; }
+    #canvas { display: block; }
+    #ui {
+      position: fixed; top: 12px; left: 12px; background: rgba(0,0,0,.7);
+      padding: 12px 16px; border-radius: 8px; min-width: 220px;
+    }
+    label { display: flex; justify-content: space-between; margin: 6px 0; font-size: 13px; }
+    input[type=range] { width: 120px; }
+    span.val { min-width: 36px; text-align: right; }
+  </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="ui">
+  <b>Particle Collisions</b><br><br>
+  <label>damping <input type="range" id="damping" min="0" max="1" step="0.01" value="0.3"> <span class="val" id="vDamping">0.30</span></label>
+  <label>friction <input type="range" id="friction" min="0" max="1" step="0.01" value="0.1"> <span class="val" id="vFriction">0.10</span></label>
+  <label>dieOnHit <input type="range" id="dieOnHit" min="0" max="1" step="1" value="0"> <span class="val" id="vDie">0</span></label>
+  <label>count <input type="range" id="count" min="50" max="500" step="10" value="300"> <span class="val" id="vCount">300</span></label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── renderer / scene / camera ─────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas'), antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight)
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+})
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111118)
+scene.fog        = new THREE.Fog(0x111118, 20, 50)
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 8, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+controls.update()
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8)
+dirLight.position.set(5, 10, 5)
+scene.add(dirLight)
+
+// ── funnel of 4 tilted planes ─────────────────────────────────────────────
+const planeColour = 0x334455
+const planeOpacity = 0.6
+
+function makeTiltedPlane(position, rotation, size = [4, 6]) {
+  const geo  = new THREE.PlaneGeometry(size[0], size[1])
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    color: planeColour, side: THREE.DoubleSide, transparent: true, opacity: planeOpacity,
+  }))
+  mesh.position.copy(position)
+  mesh.rotation.copy(rotation)
+  scene.add(mesh)
+  return geo
+}
+
+// 4 tilted planes forming a funnel — opening at top, converging at bottom
+const tilt  = Math.PI / 5  // ~36 degrees
+const gap   = 1.5
+const height = 3
+
+const planes = [
+  makeTiltedPlane(
+    new THREE.Vector3(  gap, height, 0),
+    new THREE.Euler(0, 0,  tilt),
+  ),
+  makeTiltedPlane(
+    new THREE.Vector3( -gap, height, 0),
+    new THREE.Euler(0, 0, -tilt),
+  ),
+  makeTiltedPlane(
+    new THREE.Vector3(0, height,  gap),
+    new THREE.Euler( tilt, 0, 0),
+  ),
+  makeTiltedPlane(
+    new THREE.Vector3(0, height, -gap),
+    new THREE.Euler(-tilt, 0, 0),
+  ),
+]
+
+// Flat floor catch
+const floorGeo = new THREE.PlaneGeometry(20, 20)
+const floorMesh = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({
+  color: 0x223344, transparent: true, opacity: 0.5,
+}))
+floorMesh.rotation.x = -Math.PI / 2
+floorMesh.position.y = 0
+scene.add(floorMesh)
+
+// Grid
+const grid = new THREE.GridHelper(20, 20, 0x334455, 0x223344)
+scene.add(grid)
+
+// ── particle system ──────────────────────────────────────────────────────
+// We build particle logic manually using THREE.Points to avoid import complexity.
+// In a real project you'd import st-particle-core. Here we demonstrate the physics.
+
+const MAX   = 500
+const pPos  = new Float32Array(MAX * 3)
+const pVel  = new Float32Array(MAX * 3)
+const pAge  = new Float32Array(MAX)
+const pLife = new Float32Array(MAX)
+const pAlive = new Uint8Array(MAX)
+
+const pGeo = new THREE.BufferGeometry()
+const posAttr = new THREE.BufferAttribute(pPos, 3)
+posAttr.setUsage(THREE.DynamicDrawUsage)
+pGeo.setAttribute('position', posAttr)
+pGeo.setDrawRange(0, 0)
+
+const pMat = new THREE.PointsMaterial({
+  color: 0x88bbff, size: 0.12, transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending,
+})
+const points = new THREE.Points(pGeo, pMat)
+scene.add(points)
+
+// ── triangle deflectors (from the four planes geometry) ───────────────────
+// We compute deflector planes from each PlaneGeometry's world transform.
+// Each plane = 2 triangles; we store [ax,ay,az,nx,ny,nz] per triangle.
+const deflectors = []
+
+function extractTriangles(geo, mesh) {
+  const worldGeo = geo.clone()
+  worldGeo.applyMatrix4(mesh.matrixWorld)
+  const pos = worldGeo.getAttribute('position')
+  const idx = worldGeo.getIndex()
+  const tris = []
+  const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3)
+  for (let i = 0; i < triCount; i++) {
+    const a = idx ? idx.getX(i*3)   : i*3
+    const b = idx ? idx.getX(i*3+1) : i*3+1
+    const c = idx ? idx.getX(i*3+2) : i*3+2
+    const vA = new THREE.Vector3().fromBufferAttribute(pos, a)
+    const vB = new THREE.Vector3().fromBufferAttribute(pos, b)
+    const vC = new THREE.Vector3().fromBufferAttribute(pos, c)
+    const e1 = new THREE.Vector3().subVectors(vB, vA)
+    const e2 = new THREE.Vector3().subVectors(vC, vA)
+    const n  = new THREE.Vector3().crossVectors(e1, e2).normalize()
+    tris.push({ ax: vA.x, ay: vA.y, az: vA.z, nx: n.x, ny: n.y, nz: n.z })
+  }
+  return tris
+}
+
+// Defer geometry extraction until after first frame (matrices need update)
+let deflectorsBuilt = false
+function buildDeflectors() {
+  if (deflectorsBuilt) return
+  deflectorsBuilt = true
+  scene.updateMatrixWorld(true)
+
+  const meshes = scene.children.filter(c => c.isMesh && c.geometry instanceof THREE.PlaneGeometry)
+  for (const mesh of meshes) {
+    for (const tri of extractTriangles(mesh.geometry, mesh)) {
+      deflectors.push(tri)
+    }
+  }
+}
+
+// ── UI controls ──────────────────────────────────────────────────────────
+let damping  = 0.3
+let friction = 0.1
+let dieOnHit = 0
+let maxCount = 300
+
+function bind(id, valId, cb) {
+  const el  = document.getElementById(id)
+  const val = document.getElementById(valId)
+  el.addEventListener('input', () => {
+    cb(parseFloat(el.value))
+    val.textContent = parseFloat(el.value).toFixed(2)
+  })
+}
+
+bind('damping',  'vDamping',  v => { damping  = v })
+bind('friction', 'vFriction', v => { friction = v })
+bind('dieOnHit', 'vDie',      v => { dieOnHit = v })
+document.getElementById('count').addEventListener('input', e => {
+  maxCount = parseInt(e.target.value)
+  document.getElementById('vCount').textContent = maxCount
+})
+
+// ── emission ──────────────────────────────────────────────────────────────
+let emitCursor = 0
+let emitAccum  = 0
+const RATE = 60   // particles/sec
+
+function emit() {
+  const i = emitCursor % MAX
+  emitCursor++
+  pPos[i*3]   = (Math.random() - 0.5) * 2
+  pPos[i*3+1] = 7 + Math.random() * 2
+  pPos[i*3+2] = (Math.random() - 0.5) * 2
+  pVel[i*3]   = (Math.random() - 0.5) * 1.5
+  pVel[i*3+1] = -Math.random() * 2
+  pVel[i*3+2] = (Math.random() - 0.5) * 1.5
+  pAge[i]     = 0
+  pLife[i]    = 4 + Math.random() * 3
+  pAlive[i]   = 1
+}
+
+// ── deflector crossing test ───────────────────────────────────────────────
+const _hitNorm = new THREE.Vector3()
+const _hitPt   = new THREE.Vector3()
+
+function checkCrossing(px0, py0, pz0, px1, py1, pz1) {
+  for (const d of deflectors) {
+    const dPrev = (px0-d.ax)*d.nx + (py0-d.ay)*d.ny + (pz0-d.az)*d.nz
+    const dCurr = (px1-d.ax)*d.nx + (py1-d.ay)*d.ny + (pz1-d.az)*d.nz
+    if (dPrev >= 0 && dCurr < 0) {
+      _hitNorm.set(d.nx, d.ny, d.nz)
+      _hitPt.set(px1 - dCurr*d.nx, py1 - dCurr*d.ny, pz1 - dCurr*d.nz)
+      return true
+    }
+  }
+  return false
+}
+
+// ── simulation loop ────────────────────────────────────────────────────────
+let last = performance.now()
+let drawCount = 0
+
+function animate() {
+  requestAnimationFrame(animate)
+  buildDeflectors()
+
+  const now = performance.now()
+  const dt  = Math.min((now - last) / 1000, 0.05)
+  last = now
+
+  emitAccum += RATE * dt
+  const toEmit = Math.min(Math.floor(emitAccum), maxCount - 1)
+  emitAccum -= toEmit
+  for (let i = 0; i < toEmit; i++) emit()
+
+  drawCount = 0
+  for (let i = 0; i < MAX; i++) {
+    if (!pAlive[i]) continue
+
+    pAge[i] += dt
+    if (pAge[i] >= pLife[i]) { pAlive[i] = 0; continue }
+
+    // Gravity
+    pVel[i*3+1] -= 9.81 * dt
+
+    const px0 = pPos[i*3], py0 = pPos[i*3+1], pz0 = pPos[i*3+2]
+    const nx  = pPos[i*3]   + pVel[i*3]   * dt
+    const ny  = pPos[i*3+1] + pVel[i*3+1] * dt
+    const nz  = pPos[i*3+2] + pVel[i*3+2] * dt
+
+    if (checkCrossing(px0, py0, pz0, nx, ny, nz)) {
+      if (dieOnHit >= 0.5) { pAlive[i] = 0; continue }
+
+      const hn = _hitNorm
+      const vDotN = pVel[i*3]*hn.x + pVel[i*3+1]*hn.y + pVel[i*3+2]*hn.z
+      const k = (2 - damping) * vDotN
+      pVel[i*3]   -= k * hn.x
+      pVel[i*3+1] -= k * hn.y
+      pVel[i*3+2] -= k * hn.z
+      if (friction > 0) {
+        const vn2 = pVel[i*3]*hn.x + pVel[i*3+1]*hn.y + pVel[i*3+2]*hn.z
+        pVel[i*3]   = (1-friction)*pVel[i*3]   + friction*vn2*hn.x
+        pVel[i*3+1] = (1-friction)*pVel[i*3+1] + friction*vn2*hn.y
+        pVel[i*3+2] = (1-friction)*pVel[i*3+2] + friction*vn2*hn.z
+      }
+      pPos[i*3]   = _hitPt.x
+      pPos[i*3+1] = _hitPt.y
+      pPos[i*3+2] = _hitPt.z
+    } else {
+      pPos[i*3]   = nx
+      pPos[i*3+1] = ny
+      pPos[i*3+2] = nz
+    }
+
+    pGeo.getAttribute('position').array[drawCount*3]   = pPos[i*3]
+    pGeo.getAttribute('position').array[drawCount*3+1] = pPos[i*3+1]
+    pGeo.getAttribute('position').array[drawCount*3+2] = pPos[i*3+2]
+    drawCount++
+  }
+
+  posAttr.needsUpdate = true
+  pGeo.setDrawRange(0, drawCount)
+  controls.update()
+  renderer.render(scene, camera)
+}
+
+animate()
+</script>
+</body>
+</html>

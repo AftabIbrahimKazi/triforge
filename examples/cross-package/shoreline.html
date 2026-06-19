@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shoreline</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; }
+  canvas { display: block; }
+  #fade {
+    position: fixed; inset: 0; background: #000;
+    pointer-events: none; transition: opacity 2s ease; z-index: 10;
+  }
+  #fade.hidden { opacity: 0; }
+
+  #hud {
+    position: fixed; bottom: 16px; left: 16px; z-index: 20;
+    display: flex; gap: 10px; align-items: center;
+    background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px; padding: 8px 14px;
+    font: 400 11px/1 monospace; color: rgba(255,255,255,0.55);
+    backdrop-filter: blur(8px);
+  }
+  #hud label { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+  #hud input[type=checkbox] { accent-color: #6cd4ff; width: 13px; height: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="fade"></div>
+
+<div id="hud">
+  <label title="Blender: show/hide particle viewport display">
+    <input type="checkbox" id="toggle-helpers" checked>
+    Show particle helpers
+  </label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js",
+    "@st-shader-core":   "../../st-shader-core/dist/index.js",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ModifierStack, OceanModifier }          from '@st-modifier-core';
+import { OceanAttribute, ColorRamp, Emission,
+         PrincipledBSDF, AddShader, MaterialOutput,
+         LayerWeight, MixRGB, Value }            from '@st-shader-core';
+import { ParticleSystem, PointEmitter, EdgeEmitter,
+         GravityForce, WindForce, DragForce, TurbulenceForce,
+         BillboardRenderer, InstanceRenderer }   from '@st-particle-core';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDERER
+// ─────────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping        = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+document.body.appendChild(renderer.domElement);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENE
+// Layout (all world Z):
+//   z = +30 ... +5   dry beach (behind camera)
+//   z = +5  ...  0   wet sand / swash zone
+//   z =  0           waterline — where ocean meets beach
+//   z =  0 ... -160  open ocean (in front of camera)
+// ─────────────────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.fog   = new THREE.FogExp2(0x7aaabf, 0.006);
+
+// Camera: on the beach, low, looking across the waterline into the ocean.
+// This composition shows dry sand in foreground, waterline in mid-ground,
+// open ocean and horizon filling the top 2/3 of frame.
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.3, 2000);
+camera.position.set(0, 2.2, 14);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.2, -6);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.maxPolarAngle = Math.PI * 0.50;
+controls.minDistance   = 3;
+controls.maxDistance   = 150;
+controls.update();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUN
+// ─────────────────────────────────────────────────────────────────────────────
+// Low on the horizon, slightly to one side — classic golden hour beach light.
+const SUN_DIR = new THREE.Vector3(0.5, 0.38, -0.78).normalize();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SKY
+// ─────────────────────────────────────────────────────────────────────────────
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(1500, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: { uSun: { value: SUN_DIR } },
+    vertexShader: `varying vec3 vDir; void main(){vDir=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader: `
+      uniform vec3 uSun; varying vec3 vDir;
+      void main(){
+        vec3 d=normalize(vDir); float up=max(d.y,0.0); float h=pow(1.0-up,5.0);
+        vec3 col=mix(mix(vec3(0.02,0.07,0.22),vec3(0.05,0.22,0.50),smoothstep(0.5,0.0,up)),vec3(0.52,0.62,0.72),h*0.7);
+        float sunH=max(dot(normalize(vec3(uSun.x,0,uSun.z)),normalize(vec3(d.x,0,d.z))),0.0);
+        col=mix(col,vec3(0.95,0.55,0.15),pow(sunH,3.0)*h*1.2);
+        float sd=dot(d,normalize(uSun));
+        col+=vec3(0.92,0.58,0.18)*pow(max(sd,0.0),80.0)*0.7;
+        col+=vec3(0.88,0.42,0.12)*pow(max(sd,0.0),10.0)*h*0.5;
+        col=mix(col,vec3(1.0,0.96,0.82),smoothstep(0.999,0.9998,sd));
+        col=mix(col,vec3(0.03,0.08,0.16),smoothstep(0.0,0.2,-d.y));
+        gl_FragColor=vec4(col,1.0);
+      }`,
+  })
+);
+scene.add(sky);
+
+// Lights
+const sunLight = new THREE.DirectionalLight(0xffeedd, 4.0);
+sunLight.position.copy(SUN_DIR);
+scene.add(sunLight);
+scene.add(new THREE.AmbientLight(0x3355aa, 2.5));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BEACH  — single continuous mesh from z=-8 (under ocean) to z=+35 (dry sand)
+//
+// The key: the beach starts BELOW z=0 so it slides under the ocean mesh,
+// eliminating the hard cliff edge. At z=-8 the beach is at y=-0.3 (below sea),
+// at z=0 it's at y=0 (waterline), at z=35 it's at y=3.5 (dry raised sand).
+//
+// Vertex noise is applied to break up the flat look.
+// ─────────────────────────────────────────────────────────────────────────────
+const beachGeo = new THREE.PlaneGeometry(220, 44, 44, 16);
+beachGeo.rotateX(-Math.PI / 2);
+beachGeo.translate(0, 0, 13.5);  // spans z = -8.5 to z = +35.5
+
+const bPos = beachGeo.getAttribute('position');
+for (let i = 0; i < bPos.count; i++) {
+  const z = bPos.getZ(i);
+
+  // Height profile:
+  //   z < 0  → underwater continuation, slight downward slope so beach slides under ocean
+  //   z = 0  → exactly y=0 (waterline, perfectly flush with ocean surface)
+  //   z > 0  → rises at ~0.1 per unit, plus noise
+  let y;
+  if (z < 0) {
+    y = z * 0.04;   // gentle underwater slope (y=-0.32 at z=-8)
+  } else {
+    y = z / 35 * 3.5;   // 0 at z=0, 3.5 at z=35
+  }
+
+  // Noise: damp at waterline (z≈0) so it's smooth there, add texture further up
+  const noiseMag = Math.min(1, Math.max(0, Math.abs(z) - 2) / 8) * 0.08;
+  y += (Math.random() * 2 - 1) * noiseMag;
+
+  bPos.setY(i, y);
+}
+bPos.needsUpdate = true;
+beachGeo.computeVertexNormals();
+
+// Two-material approach: wet sand near waterline, dry sand further back
+// (single mesh, colour is averaged — approximation)
+scene.add(new THREE.Mesh(beachGeo,
+  new THREE.MeshStandardMaterial({ color: 0xc8a060, roughness: 0.94, metalness: 0.0 })
+));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ROCKS near waterline
+// ─────────────────────────────────────────────────────────────────────────────
+const rockMat = new THREE.MeshStandardMaterial({ color: 0x3a3844, roughness: 0.88 });
+[[-30,-4,2.2,1.0,1.6], [20,-3,1.8,0.9,1.4], [-12,-6,1.2,0.7,1.0],
+ [38,-8,2.6,1.3,2.1],  [-50,-5,1.5,0.8,1.2],[14, 2,0.9,0.5,0.8]].forEach(([x,z,sx,sy,sz]) => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1,7,5), rockMat);
+  m.scale.set(sx, sy, sz);
+  m.position.set(x, sy*0.45, z);
+  m.rotation.y = Math.random() * Math.PI;
+  scene.add(m);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OCEAN MODIFIER
+//
+// windAngle: 90  → waves travel in +Z (directly toward shore)
+// damping:  0.08 → tight directional spread, waves march in shore-normal lanes
+// size: 160, centred at z=-80, so near edge sits exactly at z=0
+//
+// After apply(), we post-process the position buffer:
+//   vertices near the shore edge (local z > 70) get their Y attenuated.
+//   This simulates waves shoaling — flattening as they enter shallow water.
+// ─────────────────────────────────────────────────────────────────────────────
+const OCEAN_SIZE = 160;
+
+const oceanMod = new OceanModifier({
+  resolution:   96,
+  size:         OCEAN_SIZE,
+  scale:        3.2,
+  choppiness:   1.1,
+  windSpeed:    22.0,
+  windAngle:    90.0,
+  damping:      0.08,
+  depth:        200.0,
+  foamCoverage: 0.42,
+  turbulence:   0.10,
+  waveCount:    20,
+  seed:         42,
+});
+
+const stack = new ModifierStack(new THREE.BufferGeometry());
+stack.add(oceanMod);
+
+function buildOceanGeo() {
+  const geo = stack.apply();
+  const pos = geo.getAttribute('position');
+
+  // ── Translate geometry so shore edge sits at world z = 0 ───────────────
+  // OceanModifier generates local z = -80 … +80.
+  // Shore edge is at +80. We shift every vertex by -80 so:
+  //   shore edge → local z = 0  = world z = 0  ✓
+  //   far edge   → local z = -160 = world z = -160
+  // oceanMesh stays at position (0,0,0) — NO offset needed.
+  // EdgeEmitter reads local coords = world coords. Coordinates match.
+  for (let i = 0; i < pos.count; i++) {
+    pos.setZ(i, pos.getZ(i) - OCEAN_SIZE / 2);
+  }
+
+  // ── Shoaling attenuation ────────────────────────────────────────────────
+  // After the shift, shore edge = local z=0, open ocean = local z=-160.
+  // Attenuate wave height for z > -12 (last 12 units before shore)
+  // so waves visibly flatten and break as they enter shallow water.
+  for (let i = 0; i < pos.count; i++) {
+    const lz = pos.getZ(i);
+    if (lz > -12) {
+      const t    = (lz + 12) / 12;        // 0 at z=-12, 1 at z=0
+      const fade = 1 - t * t;             // quadratic: fast falloff near shore
+      pos.setY(i, pos.getY(i) * fade);
+    }
+  }
+
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+let oceanGeo = buildOceanGeo();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OCEAN SHADER  (PrincipledBSDF + OceanAttribute→ColorRamp→Emission)
+// ─────────────────────────────────────────────────────────────────────────────
+const lw       = new LayerWeight(0.35);
+const wColor   = new MixRGB({ mode:'MIX', fac: lw.output('Fresnel'), colorA:'#010f1c', colorB:'#0a3a58' });
+const bsdf     = new PrincipledBSDF({ baseColor: wColor.output('Color'), roughness: new Value(0.09), ior: new Value(1.33) });
+const oa       = new OceanAttribute();
+const ramp     = new ColorRamp({ fac: oa.output('Fac'), stops: ['#000000','#e8f4ff'] });
+const emit     = new Emission({ color: ramp.output('Color'), strength: new Value(2.8) });
+const matOut   = new MaterialOutput({ surface: new AddShader({ shader1: bsdf.output('BSDF'), shader2: emit.output('BSDF') }).output('BSDF') });
+matOut.compile();
+const oceanMat = matOut.material;
+oceanMat.uniforms.uSunDirection = { value: SUN_DIR.clone() };
+oceanMat.uniforms.uSunColor     = { value: new THREE.Vector3(4.0, 3.5, 2.6) };
+oceanMat.uniforms.uAmbientColor = { value: new THREE.Vector3(0.22, 0.34, 0.60) };
+oceanMat.uniforms.time          = { value: 0 };
+
+// No position offset — geometry is already shifted so shore edge = world z=0
+const oceanMesh = new THREE.Mesh(oceanGeo, oceanMat);
+scene.add(oceanMesh);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SWASH — thin animated water sheet that rushes up the wet sand with each wave
+// Very low opacity — reads as a reflective sheen, not a solid shape
+// ─────────────────────────────────────────────────────────────────────────────
+const swashMat = new THREE.MeshBasicMaterial({ color: 0xb8d8ec, transparent: true, opacity: 0, depthWrite: false });
+const swashMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), swashMat);
+swashMesh.rotateX(-Math.PI / 2);
+swashMesh.position.y = 0.018;
+scene.add(swashMesh);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FOAM MATERIAL — compiled shader node graph applied to each foam instance
+// Small flat quad per particle, fully lit via PrincipledBSDF + Emission
+// ─────────────────────────────────────────────────────────────────────────────
+function buildFoamMaterial() {
+  // Foam: bright white base with a slight blue-green tint at edges (Fresnel)
+  const lw      = new LayerWeight(0.55);
+  const baseCol = new MixRGB({ mode: 'MIX', fac: lw.output('Fresnel'),
+                                colorA: '#e8f4ff', colorB: '#acd8e8' });
+  const bsdf    = new PrincipledBSDF({
+    baseColor: baseCol.output('Color'),
+    roughness: new Value(0.85),   // foam is matte, not glossy
+    ior:       new Value(1.33),
+  });
+  // Slight self-emission so foam is visible even in shadow
+  const emit    = new Emission({ color: new Value('#d8eef8'), strength: new Value(0.6) });
+  const out     = new MaterialOutput({
+    surface: new AddShader({
+      shader1: bsdf.output('BSDF'),
+      shader2: emit.output('BSDF'),
+    }).output('BSDF'),
+  });
+  out.compile();
+  const mat = out.material;
+  mat.uniforms.uSunDirection = { value: SUN_DIR.clone() };
+  mat.uniforms.uSunColor     = { value: new THREE.Vector3(4.0, 3.5, 2.6) };
+  mat.uniforms.uAmbientColor = { value: new THREE.Vector3(0.28, 0.40, 0.65) };
+  mat.uniforms.time          = { value: 0 };
+  mat.side = THREE.DoubleSide;   // foam quads visible from both sides
+  return mat;
+}
+const foamMat = buildFoamMaterial();
+
+// Small flat quad — each particle renders as this quad with the foam shader
+const foamGeo = new THREE.PlaneGeometry(1, 1);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARTICLE SYSTEM — Waterline Foam  (@st-particle-core EdgeEmitter)
+//
+// EdgeEmitter scans the live ocean geometry each frame.
+// Filters to edges that are BOTH:
+//   • near y=0 (water surface level — wave crests meeting shore)
+//   • in local z > 70 (the last 10 units before the shore edge)
+//
+// So particles spawn exactly where a wave crest is currently crossing z=0.
+// They then drift onshore with the swash, pulled by wind and wave rhythm.
+// ─────────────────────────────────────────────────────────────────────────────
+const foamSys = new ParticleSystem({
+  count: 2000, start: 0, end: 9999,
+  lifetime: 5.0, lifetimeRandom: 0.4,
+  size: 3.5,  sizeRandom: 0.5,
+  physics: 'newtonian',
+  gravity: 0,   // foam rides the surface — no downward gravity
+  drag:    0,
+  seed: 42,
+  geometry: oceanGeo,
+});
+
+// EdgeEmitter: emit from the shore strip (z=-10…0, y≈0)
+const shoreEdge = new EdgeEmitter({
+  yThreshold:      4.0,   // wide threshold — attenuated waves have small y
+  targetY:         0,
+  zMin:            -10,
+  zMax:            0.5,
+  normalVelocity:  0.2,
+  randomVelocity:  0.4,
+  objectVelocityZ: 0.8,   // initial onshore push
+});
+
+const foamWind = new WindForce({ x: 0.05, y: 0, z: 1, strength: 0.35 });
+// No gravity — foam floats; use drag only to slow it down
+const foamDrag = new DragForce({ linear: 0.8 });
+const foamTurb = new TurbulenceForce({ strength: 0.15, scale: 0.4, speed: 0.2 });
+
+foamSys.addEmitter(shoreEdge)
+       .addForce(foamWind)
+       .addForce(foamDrag)
+       .addForce(foamTurb);
+
+const foamRender = new InstanceRenderer({
+  geometry:    foamGeo,
+  material:    foamMat,
+  maxCount:    2000,
+  billboard:   true,   // quads face camera — reads as flat foam patches
+  fadeOut:     true,   // shrink to 0 as particle ages
+  showHelpers: true,
+});
+foamRender.camera = camera;  // required for billboard alignment
+foamSys.setRenderer(foamRender);
+scene.add(foamRender.object3D);
+
+document.getElementById('toggle-helpers').addEventListener('change', e => {
+  foamRender.visible = e.target.checked;
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE RHYTHM  — single clock drives swash + foam
+// ─────────────────────────────────────────────────────────────────────────────
+const WAVE_PERIOD = 4.0;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESIZE
+// ─────────────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+let elapsed = 0;
+
+requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('fade').classList.add('hidden')));
+
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt;
+
+  // ── Rebuild ocean geometry each frame ─────────────────────────────────
+  oceanMod.parameters.time = elapsed;
+  const prev = oceanGeo;
+  oceanGeo = buildOceanGeo();
+  oceanMesh.geometry = oceanGeo;
+  prev.dispose();
+
+  // ── Update foam emitter geometry (EdgeEmitter reads it on each spawn) ──
+  foamSys.setGeometry(oceanGeo);
+
+  // ── Wave rhythm ────────────────────────────────────────────────────────
+  const phase = (elapsed % WAVE_PERIOD) / WAVE_PERIOD;
+  // Asymmetric: 30% rush in, 70% slow recession
+  const raw  = phase < 0.30 ? phase / 0.30 : 1 - (phase - 0.30) / 0.70;
+  const hit  = Math.pow(raw, 0.5);  // sqrt = fast in, slow out
+
+  // Swash: thin wet sheet rushes up beach then recedes
+  const runUp = hit * 7.0;
+  swashMesh.scale.set(220, 1, Math.max(0.01, runUp));
+  swashMesh.position.z = runUp * 0.5;
+  swashMat.opacity = hit * 0.16;
+
+  // Foam velocity: rushes onshore on hit, pulls back on recession
+  shoreEdge.parameters.objectVelocityZ = hit * 3.5 - 0.5;
+  shoreEdge.parameters.yThreshold      = 0.6 + hit * 1.8;
+  foamWind.parameters.strength         = 0.1 + hit * 0.6;
+
+  // ── Shader + lighting uniforms ─────────────────────────────────────────
+  oceanMat.uniforms.time.value = elapsed;
+  foamMat.uniforms.time.value  = elapsed;
+
+  sky.position.copy(camera.position);
+  controls.update();
+  renderer.render(scene, camera);
+
+  foamSys.update(dt);
+
+  // ── Y-floor: keep foam particles ON the surface, not underground ──────
+  // Real foam slides along the water/sand surface — it never sinks below y=0.
+  // The beach slopes up at z>0 (y ≈ z/30*3), so clamp to beach height too.
+  for (const p of foamSys._pool) {
+    if (!p.alive) continue;
+    // Beach profile: y = z/35*3.5 for z>0, flat at y=0 in ocean
+    const floorY = p.position.z > 0 ? p.position.z / 35 * 3.5 : 0;
+    if (p.position.y < floorY) {
+      p.position.y = floorY;
+      p.velocity.y = Math.max(0, p.velocity.y);
+    }
+  }
+})();
+</script>
+</body>
+</html>

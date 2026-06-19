@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-animation-core — Shape Keys · Armature · NLA</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080810; overflow: hidden; font-family: monospace; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px;
+    color: #ccc; font-size: 12px; line-height: 1.9;
+    background: rgba(0,0,0,0.6); padding: 12px 16px; border-radius: 6px;
+    min-width: 200px;
+  }
+  #ui h3 { color: #fff; margin-bottom: 4px; font-size: 13px; }
+  .sep { border-top: 1px solid #333; margin: 6px 0; }
+  .row { display: flex; justify-content: space-between; gap: 14px; }
+  .val { color: #7df; }
+  #controls {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px;
+  }
+  button {
+    background: #1a1a2e; color: #ccc; border: 1px solid #334;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  button.active { background: #223366; border-color: #4466cc; color: #fff; }
+  button:hover  { background: #2a2a3e; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>Shape Keys</h3>
+  <div class="row"><span>puff</span>    <span class="val" id="v-puff">0.00</span></div>
+  <div class="row"><span>spike</span>   <span class="val" id="v-spike">0.00</span></div>
+  <div class="row"><span>flatten</span> <span class="val" id="v-flat">0.00</span></div>
+  <div class="sep"></div>
+  <h3>Armature</h3>
+  <div class="row"><span>arm swing</span>  <span class="val" id="v-arm">0.00</span></div>
+  <div class="row"><span>wave height</span><span class="val" id="v-wave">0.00</span></div>
+  <div class="sep"></div>
+  <h3>NLA</h3>
+  <div class="row"><span>time</span>   <span class="val" id="v-time">0.00</span></div>
+  <div class="row"><span>active strip</span><span class="val" id="v-strip">—</span></div>
+</div>
+
+<div id="controls">
+  <button id="btn-shape" class="active">Shape Keys</button>
+  <button id="btn-arm">Armature</button>
+  <button id="btn-nla">NLA</button>
+  <button id="btn-pause">⏸ Pause</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Inline st-animation-core ──────────────────────────────────────────────────
+
+// ShapeKeyMesh
+class ShapeKeyMesh extends THREE.Mesh {
+  constructor(geo, mat) {
+    super(geo, mat)
+    this.parameters = {}
+    this._keys  = []
+    const pos   = geo.getAttribute('position')
+    this._basis = new Float32Array(pos.array)
+    this._work  = new Float32Array(pos.array.length)
+  }
+  addShapeKey(key) {
+    if (key.name === 'Basis') { this._basis.set(key.positions); return }
+    const ex = this._keys.findIndex(k=>k.name===key.name)
+    if (ex !== -1) this._keys[ex] = key
+    else { this._keys.push(key); if(!(key.name in this.parameters)) this.parameters[key.name] = 0 }
+  }
+  update() {
+    const n = this._basis.length; this._work.set(this._basis)
+    for (const key of this._keys) {
+      const inf = this.parameters[key.name] ?? 0; if(!inf) continue
+      const kp = key.positions
+      for (let i=0;i<n;i++) this._work[i]+=(kp[i]-this._basis[i])*inf
+    }
+    const attr = this.geometry.getAttribute('position')
+    attr.array.set(this._work); attr.needsUpdate = true
+    this.geometry.computeVertexNormals()
+  }
+}
+
+// Armature (simplified for display)
+class PoseBone {
+  constructor(name) {
+    this.name = name
+    this.parameters = { locationX:0,locationY:0,locationZ:0, rotationX:0,rotationY:0,rotationZ:0, scaleX:1,scaleY:1,scaleZ:1 }
+    this.worldMatrix = new THREE.Matrix4()
+    this.localMatrix = new THREE.Matrix4()
+    this._obj = new THREE.Object3D()
+  }
+  buildLocalMatrix() {
+    const {locationX:lx,locationY:ly,locationZ:lz,rotationX:rx,rotationY:ry,rotationZ:rz,scaleX:sx,scaleY:sy,scaleZ:sz}=this.parameters
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz,'XYZ'))
+    this.localMatrix.compose(new THREE.Vector3(lx,ly,lz),q,new THREE.Vector3(sx,sy,sz))
+  }
+}
+
+class Armature {
+  constructor(defs) {
+    this._defs = defs; this.pose = {}
+    for (const d of defs) this.pose[d.name] = new PoseBone(d.name)
+    this._order = this._topoSort()
+  }
+  _topoSort() {
+    const vis=new Set(),ord=[]
+    const visit = name => {
+      if(vis.has(name))return;vis.add(name)
+      const d=this._defs.find(b=>b.name===name)
+      if(d?.parent)visit(d.parent);ord.push(name)
+    }
+    for(const d of this._defs)visit(d.name);return ord
+  }
+  update() {
+    for(const name of this._order){
+      const def=this._defs.find(b=>b.name===name),bone=this.pose[name]
+      bone.buildLocalMatrix()
+      if(def.parent){
+        bone.worldMatrix.multiplyMatrices(this.pose[def.parent].worldMatrix,bone.localMatrix)
+      } else {
+        bone.worldMatrix.copy(bone.localMatrix)
+      }
+    }
+  }
+  getBoneWorldPosition(name,out=new THREE.Vector3()){ return out.setFromMatrixPosition(this.pose[name].worldMatrix) }
+}
+
+// NLATrack / NLAEditor
+class NLATrack {
+  constructor(name, strips=[]) { this.name=name; this.muted=false; this._strips=[...strips].sort((a,b)=>a.start-b.start) }
+  addStrip(s){ this._strips.push(s); this._strips.sort((a,b)=>a.start-b.start) }
+  evaluate(t) {
+    if(this.muted)return ''
+    for(const strip of this._strips){
+      let lt=null
+      if(t>=strip.start&&t<=strip.end){
+        const dur=strip.end-strip.start,cd=strip.clip.duration
+        const raw=((t-strip.start)/dur)*cd
+        lt=strip.repeat&&cd>0?raw%cd:Math.min(raw,cd)
+      } else if(strip.extrapolation==='hold'){
+        lt=t<strip.start?0:strip.clip.duration
+      }
+      if(lt!==null){ strip.clip.evaluate(lt); return strip.name }
+    }
+    return ''
+  }
+}
+class NLAEditor {
+  constructor(){ this._tracks=[]; this.time=0; this.timeScale=1; this.playing=true }
+  addTrack(t){ this._tracks.push(t) }
+  update(delta){
+    if(this.playing)this.time+=delta*this.timeScale
+    const results=this._tracks.map(t=>t.evaluate(this.time))
+    return results.filter(Boolean).join(', ')
+  }
+}
+
+// ── Scene ─────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x080810)
+scene.fog        = new THREE.FogExp2(0x080810, 0.03)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 3, 10)
+
+const orbit = new OrbitControls(camera, renderer.domElement)
+orbit.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0x223355, 2))
+const pt1 = new THREE.PointLight(0x4488ff, 80, 20); pt1.position.set(3,4,2); scene.add(pt1)
+const pt2 = new THREE.PointLight(0xff3355, 50, 15); pt2.position.set(-3,2,-2); scene.add(pt2)
+const grid = new THREE.GridHelper(20,20,0x223344,0x112233); grid.position.y=-2; scene.add(grid)
+
+// ── Demo 1: Shape Keys ────────────────────────────────────────────────────────
+
+// Sphere with shape keys: puff, spike, flatten
+const sphereGeo = new THREE.SphereGeometry(1.2, 32, 32)
+const sphereMat = new THREE.MeshStandardMaterial({ color:0x3366ff, roughness:0.3, metalness:0.4 })
+const shapeMesh = new ShapeKeyMesh(sphereGeo, sphereMat)
+
+// Puff: scale all verts outward
+const puffPos = new Float32Array(sphereGeo.getAttribute('position').array.length)
+{const p=sphereGeo.getAttribute('position');for(let i=0;i<p.count;i++){const s=1.5;puffPos[i*3]=p.getX(i)*s;puffPos[i*3+1]=p.getY(i)*s;puffPos[i*3+2]=p.getZ(i)*s}}
+shapeMesh.addShapeKey({ name:'puff', positions: puffPos })
+
+// Spike: pull top vertex way up
+const spikePos = new Float32Array(sphereGeo.getAttribute('position').array)
+{const p=sphereGeo.getAttribute('position');for(let i=0;i<p.count;i++){if(p.getY(i)>1){spikePos[i*3+1]=p.getY(i)*3}}}
+shapeMesh.addShapeKey({ name:'spike', positions: spikePos })
+
+// Flatten: squash Y
+const flatPos = new Float32Array(sphereGeo.getAttribute('position').array.length)
+{const p=sphereGeo.getAttribute('position');for(let i=0;i<p.count;i++){flatPos[i*3]=p.getX(i)*1.4;flatPos[i*3+1]=p.getY(i)*0.3;flatPos[i*3+2]=p.getZ(i)*1.4}}
+shapeMesh.addShapeKey({ name:'flatten', positions: flatPos })
+
+scene.add(shapeMesh)
+shapeMesh.visible = true
+
+// ── Demo 2: Armature ──────────────────────────────────────────────────────────
+
+// Simple stick figure armature
+const armDefs = [
+  { name:'hips',   head:new THREE.Vector3(0,0,0),  tail:new THREE.Vector3(0,1,0) },
+  { name:'spine',  head:new THREE.Vector3(0,1,0),  tail:new THREE.Vector3(0,2.2,0), parent:'hips' },
+  { name:'neck',   head:new THREE.Vector3(0,2.2,0),tail:new THREE.Vector3(0,2.8,0), parent:'spine' },
+  { name:'armL',   head:new THREE.Vector3(0,2,0),  tail:new THREE.Vector3(-1.2,1.5,0), parent:'spine' },
+  { name:'foreL',  head:new THREE.Vector3(-1.2,1.5,0),tail:new THREE.Vector3(-2,1,0), parent:'armL' },
+  { name:'armR',   head:new THREE.Vector3(0,2,0),  tail:new THREE.Vector3(1.2,1.5,0), parent:'spine' },
+  { name:'foreR',  head:new THREE.Vector3(1.2,1.5,0),tail:new THREE.Vector3(2,1,0), parent:'armR' },
+  { name:'legL',   head:new THREE.Vector3(-0.3,0,0),tail:new THREE.Vector3(-0.3,-1.2,0), parent:'hips' },
+  { name:'shinL',  head:new THREE.Vector3(-0.3,-1.2,0),tail:new THREE.Vector3(-0.3,-2.4,0), parent:'legL' },
+  { name:'legR',   head:new THREE.Vector3(0.3,0,0), tail:new THREE.Vector3(0.3,-1.2,0), parent:'hips' },
+  { name:'shinR',  head:new THREE.Vector3(0.3,-1.2,0),tail:new THREE.Vector3(0.3,-2.4,0), parent:'legR' },
+]
+const armature = new Armature(armDefs)
+
+// Draw bone sticks
+const boneGroup = new THREE.Group()
+const boneMat   = new THREE.MeshStandardMaterial({ color:0xaaddff, roughness:0.4, metalness:0.3, emissive:0x113355 })
+const boneGeos  = {}
+for (const def of armDefs) {
+  const len = def.tail.distanceTo(def.head)
+  const g   = new THREE.CylinderGeometry(0.05, 0.08, len, 8)
+  g.translate(0, len/2, 0)
+  const m   = new THREE.Mesh(g, boneMat)
+  boneGeos[def.name] = m
+  boneGroup.add(m)
+  // Joint sphere
+  const js = new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8), boneMat)
+  boneGroup.add(js)
+  js.userData.isJoint = true
+  js.userData.boneName = def.name
+}
+boneGroup.position.set(0,-1.2,0)
+scene.add(boneGroup)
+boneGroup.visible = false
+
+// ── Demo 3: NLA ───────────────────────────────────────────────────────────────
+
+// NLA: two clips that each drive a separate shape key influence
+const shapeNLA  = new ShapeKeyMesh(new THREE.SphereGeometry(1.2,32,32), new THREE.MeshStandardMaterial({color:0xff6633,roughness:0.3,metalness:0.4}))
+const nlaPuffPos = new Float32Array(puffPos); // same as above
+shapeNLA.addShapeKey({ name:'puff',    positions: puffPos })
+shapeNLA.addShapeKey({ name:'flatten', positions: flatPos })
+shapeNLA.position.set(0,0,0)
+scene.add(shapeNLA)
+shapeNLA.visible = false
+
+const nla = new NLAEditor()
+// Track 1: puff in, hold, puff out
+const clipPuff = { duration:3, evaluate: t => { shapeNLA.parameters.puff = Math.sin(t/3*Math.PI) } }
+const track1   = new NLATrack('Puff', [{ name:'Puff In/Out', clip:clipPuff, start:0, end:3, influence:1, repeat:true, extrapolation:'hold' }])
+// Track 2: flatten overlapping at the end of puff
+const clipFlat = { duration:2, evaluate: t => { shapeNLA.parameters.flatten = Math.min(t/2, 1) } }
+const track2   = new NLATrack('Flatten', [{ name:'Squash', clip:clipFlat, start:2, end:6, influence:1, repeat:false, extrapolation:'hold' }])
+nla.addTrack(track1)
+nla.addTrack(track2)
+
+// ── Keyframe data ─────────────────────────────────────────────────────────────
+// Simple manual animation (no st-keyframe dep in the example)
+let mode = 'shape'
+
+function lerp(a,b,t){ return a+(b-a)*t }
+function clamp01(t){ return Math.max(0,Math.min(1,t)) }
+
+const clock = new THREE.Clock()
+let paused = false
+
+function animate() {
+  requestAnimationFrame(animate)
+  const delta = paused ? 0 : clock.getDelta()
+  const et    = clock.getElapsedTime()
+
+  if (mode === 'shape') {
+    // Animate shape keys with sine waves
+    shapeMesh.parameters.puff    = clamp01((Math.sin(et * 0.8) + 1) / 2)
+    shapeMesh.parameters.spike   = clamp01((Math.sin(et * 1.2 + 1) + 1) / 2 * 0.7)
+    shapeMesh.parameters.flatten = clamp01((Math.sin(et * 0.5 - 0.5) + 1) / 2 * 0.5)
+    shapeMesh.update()
+    document.getElementById('v-puff').textContent  = shapeMesh.parameters.puff.toFixed(2)
+    document.getElementById('v-spike').textContent  = shapeMesh.parameters.spike.toFixed(2)
+    document.getElementById('v-flat').textContent   = shapeMesh.parameters.flatten.toFixed(2)
+  }
+
+  if (mode === 'armature') {
+    const t = et
+    // Arm swing
+    armature.pose.armL.parameters.rotationZ  =  Math.sin(t * 1.5) * 0.8
+    armature.pose.armR.parameters.rotationZ  = -Math.sin(t * 1.5) * 0.8
+    armature.pose.foreL.parameters.rotationZ = -Math.abs(Math.sin(t * 1.5)) * 0.6
+    armature.pose.foreR.parameters.rotationZ =  Math.abs(Math.sin(t * 1.5)) * 0.6
+    // Leg walk
+    armature.pose.legL.parameters.rotationX  =  Math.sin(t * 1.5 + Math.PI) * 0.5
+    armature.pose.legR.parameters.rotationX  =  Math.sin(t * 1.5) * 0.5
+    armature.pose.shinL.parameters.rotationX = -Math.abs(Math.sin(t * 1.5 + Math.PI)) * 0.6
+    armature.pose.shinR.parameters.rotationX = -Math.abs(Math.sin(t * 1.5)) * 0.6
+    // Head bob
+    armature.pose.spine.parameters.rotationZ = Math.sin(t*3) * 0.04
+    armature.update()
+
+    // Update bone mesh transforms
+    for (const def of armDefs) {
+      const wm   = armature.pose[def.name].worldMatrix
+      const mesh = boneGeos[def.name]
+      if (!mesh) continue
+
+      // Orient mesh: from head to tail direction
+      const head = def.head.clone()
+      const tail = def.tail.clone()
+      const dir  = tail.clone().sub(head).normalize()
+      const len  = tail.distanceTo(head)
+      const q    = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir)
+
+      // Apply armature pose
+      const pos  = new THREE.Vector3().setFromMatrixPosition(wm)
+      const rot  = new THREE.Quaternion().setFromRotationMatrix(wm)
+
+      mesh.position.copy(pos)
+      mesh.quaternion.copy(rot)
+    }
+
+    // Update joint spheres
+    boneGroup.children.forEach(child => {
+      if (child.userData.isJoint) {
+        const name = child.userData.boneName
+        if (name) child.position.copy(armature.getBoneWorldPosition(name))
+      }
+    })
+
+    document.getElementById('v-arm').textContent  = (armature.pose.armL.parameters.rotationZ).toFixed(2)
+    document.getElementById('v-wave').textContent = (armature.pose.spine.parameters.rotationZ * 100).toFixed(2)
+  }
+
+  if (mode === 'nla') {
+    const strip = nla.update(delta)
+    shapeNLA.update()
+    document.getElementById('v-time').textContent  = nla.time.toFixed(2)
+    document.getElementById('v-strip').textContent = strip || '—'
+    document.getElementById('v-puff').textContent  = shapeNLA.parameters.puff.toFixed(2)
+    document.getElementById('v-flat').textContent  = shapeNLA.parameters.flatten.toFixed(2)
+  }
+
+  orbit.update()
+  renderer.render(scene, camera)
+}
+
+animate()
+
+// ── Mode switching ─────────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m
+  shapeMesh.visible   = m === 'shape'
+  boneGroup.visible   = m === 'armature'
+  shapeNLA.visible    = m === 'nla'
+  nla.time = 0
+  document.querySelectorAll('#controls button:not(#btn-pause)').forEach(b => b.classList.remove('active'))
+  document.getElementById(`btn-${m === 'armature' ? 'arm' : m === 'shape' ? 'shape' : 'nla'}`).classList.add('active')
+}
+
+document.getElementById('btn-shape').addEventListener('click', () => setMode('shape'))
+document.getElementById('btn-arm').addEventListener('click',   () => setMode('armature'))
+document.getElementById('btn-nla').addEventListener('click',   () => setMode('nla'))
+document.getElementById('btn-pause').addEventListener('click', () => {
+  paused = !paused
+  document.getElementById('btn-pause').textContent = paused ? '▶ Play' : '⏸ Pause'
+  if (!paused) clock.getDelta()  // drain accumulated delta
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

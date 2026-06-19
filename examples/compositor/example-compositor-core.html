@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-compositor-core — example</title>
+<style>
+  body { margin:0; background:#000; overflow:hidden; font-family:monospace; }
+  #info { position:absolute; top:10px; left:10px; color:#aaa; font-size:12px; line-height:1.8; pointer-events:none; }
+  #controls { position:absolute; top:10px; right:10px; color:#ccc; font-size:12px; }
+  label { display:block; margin:4px 0; }
+  input[type=range] { width:140px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<div id="info">
+  st-compositor-core — post-processing<br>
+  Bloom + ChromaticAberration + Vignette + FilmGrain
+</div>
+<div id="controls">
+  <label>Bloom strength <input id="bloom" type="range" min="0" max="3" step="0.05" value="1.2"></label>
+  <label>Chroma offset  <input id="chroma" type="range" min="0" max="0.02" step="0.001" value="0.005"></label>
+  <label>Vignette       <input id="vig" type="range" min="0" max="1.5" step="0.05" value="0.7"></label>
+  <label>Film grain     <input id="grain" type="range" min="0" max="1" step="0.05" value="0.35"></label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CompositorOutput, Bloom, ChromaticAberration, Vignette, FilmGrain } from '../../st-compositor-core/dist/index.js'
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x020408)
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 2, 6)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+// Bright emissive spheres to show bloom
+const colors = [0xff2200, 0x00aaff, 0x00ff88, 0xffcc00, 0xff00cc]
+for (let i = 0; i < 5; i++) {
+  const mat  = new THREE.MeshStandardMaterial({
+    color: colors[i],
+    emissive: new THREE.Color(colors[i]),
+    emissiveIntensity: 3,
+  })
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.4, 32, 24), mat)
+  mesh.position.set((i-2)*1.8, 0, 0)
+  scene.add(mesh)
+}
+scene.add(new THREE.AmbientLight(0x112233, 1))
+
+// ── Compositor — add passes then call compile() ───────────────────────────────
+const bloom  = new Bloom({ threshold: 0.2, strength: 1.2, radius: 0.4 })
+const chroma = new ChromaticAberration({ offset: 0.005 })
+const vig    = new Vignette({ darkness: 0.7, offset: 0.4 })
+const grain  = new FilmGrain({ intensity: 0.35 })
+
+const comp = new CompositorOutput({ renderer, scene, camera, backend: 'three' })
+comp.add(bloom).add(chroma).add(vig).add(grain)
+comp.compile().then(() => console.log('compositor ready'))
+
+// Live slider bindings (parameters are plain objects — GSAP-compatible)
+document.getElementById('bloom').addEventListener('input', e => { bloom.parameters.strength = +e.target.value })
+document.getElementById('chroma').addEventListener('input', e => { chroma.parameters.offset = +e.target.value })
+document.getElementById('vig').addEventListener('input', e => { vig.parameters.darkness = +e.target.value })
+document.getElementById('grain').addEventListener('input', e => { grain.parameters.intensity = +e.target.value })
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  comp.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  comp.render()
+})()
+</script>
+</body>
+</html>

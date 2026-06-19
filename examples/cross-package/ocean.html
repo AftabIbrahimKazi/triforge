@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ocean</title>
+<style>
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; font-family: system-ui, sans-serif; }
+canvas { display: block; }
+
+/* ── Fade overlay ────────────────────────────────────────────────────────── */
+#fade {
+  position: fixed; inset: 0; background: #000;
+  pointer-events: none; transition: opacity 2.4s ease; z-index: 20;
+}
+#fade.hidden { opacity: 0; }
+
+/* ── Modifiers tab button ────────────────────────────────────────────────── */
+#tab-btn {
+  position: fixed; top: 50%; right: 0;
+  transform: translateY(-50%) rotate(0deg);
+  background: rgba(18,20,28,0.92);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-right: none;
+  color: rgba(255,255,255,0.70);
+  font: 600 11px/1 monospace;
+  letter-spacing: 0.12em;
+  padding: 14px 8px;
+  cursor: pointer;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  border-radius: 6px 0 0 6px;
+  z-index: 15;
+  transition: background 0.2s, color 0.2s, right 0.35s cubic-bezier(.4,0,.2,1);
+  user-select: none;
+}
+#tab-btn:hover { background: rgba(30,34,48,0.98); color: #fff; }
+#tab-btn.open  { right: 280px; }
+
+/* ── Sidebar panel ───────────────────────────────────────────────────────── */
+#sidebar {
+  position: fixed; top: 0; right: -280px; bottom: 0; width: 280px;
+  background: rgba(13,15,22,0.96);
+  border-left: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+  overflow-y: auto; overflow-x: hidden;
+  z-index: 14;
+  transition: right 0.35s cubic-bezier(.4,0,.2,1);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
+}
+#sidebar.open { right: 0; }
+#sidebar::-webkit-scrollbar { width: 4px; }
+#sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+
+/* ── Section headers ─────────────────────────────────────────────────────── */
+.section {
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.section-header:hover { background: rgba(255,255,255,0.04); }
+.section-title {
+  font: 600 10px/1 monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+}
+.section-title span { /* colour dot */
+  display: inline-block; width: 7px; height: 7px;
+  border-radius: 50%; margin-right: 8px; vertical-align: middle;
+}
+.chevron {
+  color: rgba(255,255,255,0.30); font-size: 10px;
+  transition: transform 0.2s;
+}
+.section.collapsed .chevron  { transform: rotate(-90deg); }
+.section-body {
+  padding: 4px 14px 12px;
+  transition: max-height 0.25s ease, opacity 0.2s;
+  max-height: 999px; opacity: 1;
+  overflow: hidden;
+}
+.section.collapsed .section-body { max-height: 0; opacity: 0; padding-bottom: 0; }
+
+/* ── Rows ────────────────────────────────────────────────────────────────── */
+.row {
+  display: grid;
+  grid-template-columns: 104px 1fr 36px;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.row label {
+  font: 400 10px/1 monospace;
+  color: rgba(255,255,255,0.45);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.12);
+  outline: none;
+  cursor: pointer;
+}
+.row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #4a9eff;
+  border: 2px solid rgba(255,255,255,0.6);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+.row input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
+.row input[type=range]::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #4a9eff;
+  border: 2px solid rgba(255,255,255,0.6);
+  cursor: pointer;
+}
+.row .val {
+  font: 500 10px/1 monospace;
+  color: rgba(255,255,255,0.75);
+  text-align: right;
+}
+
+/* colour swatch rows */
+.row input[type=color] {
+  width: 36px; height: 22px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  padding: 1px; cursor: pointer;
+  background: transparent;
+}
+
+/* ── Divider label (sub-group) ───────────────────────────────────────────── */
+.sub-label {
+  font: 600 9px/1 monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.22);
+  margin: 10px 0 4px;
+}
+
+/* ── Toggle button ───────────────────────────────────────────────────────── */
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 6px 0;
+}
+.toggle-row label {
+  font: 400 10px/1 monospace;
+  color: rgba(255,255,255,0.45);
+  letter-spacing: 0.04em;
+}
+.toggle {
+  position: relative; width: 32px; height: 17px; cursor: pointer;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-track {
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.14);
+  border-radius: 17px;
+  transition: background 0.2s;
+}
+.toggle input:checked + .toggle-track { background: #4a9eff; }
+.toggle-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px;
+  background: #fff; border-radius: 50%;
+  transition: transform 0.2s;
+  pointer-events: none;
+}
+.toggle input:checked ~ .toggle-thumb { transform: translateX(15px); }
+
+/* ── Sidebar top label ───────────────────────────────────────────────────── */
+#sidebar-title {
+  font: 600 10px/1 monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.30);
+  padding: 16px 14px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+</style>
+</head>
+<body>
+
+<div id="fade"></div>
+
+<!-- ── Tab button ──────────────────────────────────────────────────────────── -->
+<button id="tab-btn" aria-label="Toggle modifiers panel">MODIFIERS</button>
+
+<!-- ── Sidebar ─────────────────────────────────────────────────────────────── -->
+<div id="sidebar">
+  <div id="sidebar-title">⚙ Properties</div>
+
+  <!-- Ocean Modifier -->
+  <div class="section" id="sec-ocean">
+    <div class="section-header" data-sec="sec-ocean">
+      <div class="section-title"><span style="background:#3a7fd4"></span>Ocean Modifier</div>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="sub-label">Waves</div>
+      <div class="row"><label>Scale</label>       <input type="range" id="s-scale"  min="0.5" max="8"   step="0.1"  value="3.0"> <span class="val" id="v-scale">3.0</span></div>
+      <div class="row"><label>Choppiness</label>  <input type="range" id="s-chop"   min="0"   max="2"   step="0.01" value="1.0"> <span class="val" id="v-chop">1.00</span></div>
+      <div class="row"><label>Wind Speed</label>  <input type="range" id="s-wind"   min="1"   max="50"  step="0.5"  value="30">  <span class="val" id="v-wind">30.0</span></div>
+      <div class="row"><label>Wind Angle</label>  <input type="range" id="s-angle"  min="0"   max="360" step="1"    value="20">  <span class="val" id="v-angle">20°</span></div>
+      <div class="row"><label>Depth</label>       <input type="range" id="s-depth"  min="1"   max="500" step="1"    value="200"> <span class="val" id="v-depth">200</span></div>
+      <div class="sub-label">Wave Crest Foam</div>
+      <div class="row"><label>Coverage</label>    <input type="range" id="s-foam"   min="0"   max="1"   step="0.01" value="0.38"> <span class="val" id="v-foam">0.38</span></div>
+      <div class="row"><label>Turbulence</label>  <input type="range" id="s-turb"   min="0"   max="1"   step="0.01" value="0.12"><span class="val" id="v-turb">0.12</span></div>
+      <div class="sub-label">Simulation</div>
+      <div class="row"><label>Resolution</label>  <input type="range" id="s-res"    min="16"  max="128" step="8"    value="128"> <span class="val" id="v-res">128</span></div>
+      <div class="row"><label>Wave Count</label>  <input type="range" id="s-wcount" min="4"   max="48"  step="2"    value="24">  <span class="val" id="v-wcount">24</span></div>
+      <div class="row"><label>Seed</label>        <input type="range" id="s-seed"   min="0"   max="200" step="1"    value="55">  <span class="val" id="v-seed">55</span></div>
+      <div class="row"><label>Time Speed</label>  <input type="range" id="s-speed"  min="0"   max="4"   step="0.05" value="1.0"> <span class="val" id="v-speed">1.00</span></div>
+    </div>
+  </div>
+
+  <!-- Water Shader -->
+  <div class="section" id="sec-shader">
+    <div class="section-header" data-sec="sec-shader">
+      <div class="section-title"><span style="background:#3a9f6e"></span>Water Shader</div>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="sub-label">Specular · Sun Glare</div>
+      <div class="row"><label>Roughness</label>   <input type="range" id="s-rough"  min="0.01" max="1"  step="0.01" value="0.08"><span class="val" id="v-rough">0.08</span></div>
+      <div class="row"><label>IOR</label>         <input type="range" id="s-ior"    min="1"    max="2"  step="0.01" value="1.33"><span class="val" id="v-ior">1.33</span></div>
+      <div class="row"><label>Fresnel Blend</label><input type="range" id="s-fres"  min="0.01" max="1"  step="0.01" value="0.35"><span class="val" id="v-fres">0.35</span></div>
+      <div class="sub-label">Colour</div>
+      <div class="row"><label>Deep Water</label>  <input type="color" id="c-deep"   value="#010d1b"> <span class="val"></span></div>
+      <div class="row"><label>Surface</label>     <input type="color" id="c-surf"   value="#0b3552"> <span class="val"></span></div>
+      <div class="sub-label">Normal Layers (3-stack)</div>
+      <div class="row"><label>Swell Str.</label>  <input type="range" id="s-rscale" min="0"   max="2"  step="0.01" value="0.55"><span class="val" id="v-rscale">0.55</span></div>
+      <div class="row"><label>Chop Str.</label>   <input type="range" id="s-rstr"   min="0"   max="1"  step="0.01" value="0.22"><span class="val" id="v-rstr">0.22</span></div>
+      <div class="row"><label>Micro Str.</label>  <input type="range" id="s-rspeed" min="0"   max="0.5" step="0.01" value="0.07"><span class="val" id="v-rspeed">0.07</span></div>
+      <div class="sub-label">Wave Crest Foam</div>
+      <div class="row"><label>Strength</label>    <input type="range" id="s-femit"  min="0"   max="8"  step="0.1"  value="4.0"> <span class="val" id="v-femit">4.0</span></div>
+      <div class="row"><label>Foam Colour</label> <input type="color" id="c-foam"   value="#eef6ff"> <span class="val"></span></div>
+    </div>
+  </div>
+
+  <!-- Lighting -->
+  <div class="section" id="sec-light">
+    <div class="section-header" data-sec="sec-light">
+      <div class="section-title"><span style="background:#d4933a"></span>Lighting</div>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="sub-label">Sun</div>
+      <div class="row"><label>Azimuth</label>     <input type="range" id="s-saz"   min="0"   max="360" step="1"    value="154"> <span class="val" id="v-saz">154°</span></div>
+      <div class="row"><label>Elevation</label>   <input type="range" id="s-selv"  min="2"   max="85"  step="1"    value="25">  <span class="val" id="v-selv">25°</span></div>
+      <div class="row"><label>Sun Colour</label>  <input type="color" id="c-sun"   value="#ffdf9e"> <span class="val"></span></div>
+      <div class="row"><label>Intensity</label>   <input type="range" id="s-sint"  min="0"   max="3"   step="0.05" value="1.0"> <span class="val" id="v-sint">1.00</span></div>
+      <div class="sub-label">Ambient</div>
+      <div class="row"><label>Sky Colour</label>  <input type="color" id="c-amb"   value="#0a1733"> <span class="val"></span></div>
+      <div class="row"><label>Intensity</label>   <input type="range" id="s-aint"  min="0"   max="2"   step="0.05" value="1.0"> <span class="val" id="v-aint">1.00</span></div>
+      <div class="sub-label">Tone Mapping</div>
+      <div class="row"><label>Exposure</label>    <input type="range" id="s-exp"   min="0.2" max="3"   step="0.05" value="1.05"><span class="val" id="v-exp">1.05</span></div>
+    </div>
+  </div>
+
+  <!-- Camera -->
+  <div class="section" id="sec-cam">
+    <div class="section-header" data-sec="sec-cam">
+      <div class="section-title"><span style="background:#9a4ad4"></span>Camera</div>
+      <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <div class="toggle-row">
+        <label>Auto Drift</label>
+        <label class="toggle">
+          <input type="checkbox" id="t-drift" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="row"><label>Drift Speed</label> <input type="range" id="s-dspeed" min="0" max="0.08" step="0.002" value="0.018"><span class="val" id="v-dspeed">0.018</span></div>
+      <div class="row"><label>FOV</label>          <input type="range" id="s-fov"    min="30" max="100" step="1"     value="58">   <span class="val" id="v-fov">58°</span></div>
+    </div>
+  </div>
+
+</div><!-- /sidebar -->
+
+
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js",
+    "@st-shader-core":   "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ModifierStack, OceanModifier } from '@st-modifier-core';
+import {
+  OceanAttribute,
+  AnimatedNoiseTexture, Bump,
+  LayerWeight, MixRGB,
+  ColorRamp, Emission,
+  PrincipledBSDF, DiffuseBSDF,
+  MixShader, AddShader, MaterialOutput,
+  MapRange, Value,
+} from '@st-shader-core';
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDERER
+// ─────────────────────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping        = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENE / CAMERA
+// ─────────────────────────────────────────────────────────────────────────────
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.5, 6000);
+camera.position.set(0, 11, 52);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 3, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.04;
+controls.minPolarAngle = 0.12;
+controls.maxPolarAngle = Math.PI * 0.46;
+controls.minDistance   = 6;
+controls.maxDistance   = 400;
+controls.enablePan     = false;
+controls.update();
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LIVE PARAMS  — single source of truth, UI and loop both read/write here
+// ─────────────────────────────────────────────────────────────────────────────
+
+const P = {
+  // Ocean modifier
+  scale: 3.0, choppiness: 1.0, windSpeed: 30.0, windAngle: 20.0,
+  depth: 200.0, foamCoverage: 0.38, turbulence: 0.12,
+  resolution: 128, waveCount: 24, seed: 55, timeSpeed: 1.0,
+
+  // Water shader (uniforms updated each frame)
+  roughness: 0.08, ior: 1.33, fresnelBlend: 0.35,
+  deepColor:    new THREE.Color('#010d1b'),
+  surfColor:    new THREE.Color('#0b3552'),
+  rippleScale:  9.0, rippleStrength: 0.30, rippleSpeed: 0.45,
+  foamEmit:     4.0,
+  foamColor:    new THREE.Color('#eef6ff'),
+
+  // Lighting
+  sunAzimuth: 154, sunElevation: 25,
+  sunColor:   new THREE.Color('#ffdf9e'), sunIntensity:  1.0,
+  ambColor:   new THREE.Color('#0a1733'), ambIntensity:  1.0,
+  exposure:   1.05,
+
+  // Camera
+  autoDrift:  true, driftSpeed: 0.018, fov: 58,
+
+  // Internal
+  needsRebuild: false,   // set true when modifier params change
+};
+
+// Derived sun direction from azimuth + elevation
+function sunDir() {
+  const az = P.sunAzimuth   * Math.PI / 180;
+  const el = P.sunElevation * Math.PI / 180;
+  return new THREE.Vector3(
+    Math.cos(el) * Math.sin(az),
+    Math.sin(el),
+    Math.cos(el) * Math.cos(az),
+  ).normalize();
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SKY DOME
+// ─────────────────────────────────────────────────────────────────────────────
+
+const skyUniforms = { uSun: { value: sunDir() } };
+
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(3000, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: skyUniforms,
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uSun;
+      varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        float up = max(d.y, 0.0);
+        float h  = pow(1.0 - up, 6.0);
+
+        vec3 col = mix(
+          mix(vec3(0.016,0.048,0.160), vec3(0.040,0.130,0.360), smoothstep(0.55,0.0,up)),
+          vec3(0.480,0.560,0.660), h * 0.7
+        );
+        float sunH  = max(dot(normalize(vec3(uSun.x,0,uSun.z)), normalize(vec3(d.x,0,d.z))), 0.0);
+        col = mix(col, vec3(0.900,0.480,0.130), pow(sunH,3.0)*h*1.4);
+
+        float sd     = dot(d, normalize(uSun));
+        float disc   = smoothstep(0.9990,0.9998,sd);
+        col += vec3(0.90,0.55,0.15) * pow(max(sd,0.0),90.0) * 0.70;
+        col += vec3(0.85,0.40,0.10) * pow(max(sd,0.0),14.0) * h * 0.55;
+        col  = mix(col, vec3(1.00,0.96,0.82), disc);
+        col  = mix(col, vec3(0.008,0.030,0.090), smoothstep(0.0,0.30,-d.y));
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  })
+);
+scene.add(sky);
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OCEAN MODIFIER  (@st-modifier-core)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TILE = 240;   // single mesh — no tiling seams
+
+const oceanMod = new OceanModifier({
+  resolution: P.resolution, size: TILE,
+  scale: P.scale, choppiness: P.choppiness,
+  windSpeed: P.windSpeed, windAngle: P.windAngle, depth: P.depth,
+  foamCoverage: P.foamCoverage, turbulence: P.turbulence,
+  waveCount: P.waveCount, seed: P.seed,
+});
+
+const stack = new ModifierStack(new THREE.BufferGeometry());
+stack.add(oceanMod);
+let sharedGeo = stack.apply();
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OCEAN SHADER NODE GRAPH  (@st-shader-core)
+//
+//  THREE-LAYER NORMAL STACK
+//  AnimatedNoise(3.5, 0.12) → Bump(0.55)                → N1  swell
+//  AnimatedNoise(12,  0.50) → Bump(0.22, normal:N1)     → N2  chop
+//  AnimatedNoise(28,  1.40) → Bump(0.07, normal:N2)     → N3  micro-ripple
+//
+//  WATER COLOUR
+//  LayerWeight(Fresnel) → MixRGB(deep:#011520, surface:#0b4a60) → baseColor
+//  OceanAttr.Fac        → MixRGB(baseColor, teal:#0c6e78)       → scatterColor
+//
+//  DYNAMIC ROUGHNESS  (glassy water → matte foam)
+//  OceanAttr.Fac → MapRange(0–1 : 0.06–0.78, SMOOTHSTEP)       → dynRoughness
+//
+//  WATER BSDF  (specular glare + Fresnel)
+//  PrincipledBSDF(scatterColor, dynRoughness, ior:1.33, N3)     → waterBSDF
+//
+//  FOAM
+//  OceanAttr.Fac → ColorRamp(#000→#eef6ff)                      → foamColor
+//  DiffuseBSDF(foamColor, 0.85, N3)                             → foamDiff
+//  MixShader(OceanAttr.Fac, waterBSDF, foamDiff)                → blended
+//  Emission(foamColor, 3.5)                                     → foamGlow
+//  AddShader(blended, foamGlow) → MaterialOutput
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Three-layer normal stack ──────────────────────────────────────────────────
+// Each layer chained into the next — small-scale detail inherits large-scale tilt.
+const swellNoise = new AnimatedNoiseTexture({ scale: 3.5,  speed: 0.12, detail: 2.0 });
+const swellBump  = new Bump({ height: swellNoise.output('Fac'), strength: new Value(0.55), distance: new Value(1.0) });
+
+const chopNoise  = new AnimatedNoiseTexture({ scale: 12.0, speed: 0.50, detail: 4.0 });
+const chopBump   = new Bump({ height: chopNoise.output('Fac'),  strength: new Value(0.22), distance: new Value(0.6), normal: swellBump.output('Normal') });
+
+const microNoise = new AnimatedNoiseTexture({ scale: 28.0, speed: 1.40, detail: 4.0 });
+const microBump  = new Bump({ height: microNoise.output('Fac'), strength: new Value(0.07), distance: new Value(0.3), normal: chopBump.output('Normal') });
+
+// ── Fresnel water colour ──────────────────────────────────────────────────────
+const layerWeight  = new LayerWeight(P.fresnelBlend);
+const baseColor    = new MixRGB({ mode: 'MIX', fac: layerWeight.output('Fresnel'), colorA: '#011520', colorB: '#0b4a60' });
+
+// ── Scatter tint at wave crests ───────────────────────────────────────────────
+// Thin breaking crests transmit teal-cyan light — simulates subsurface scatter
+// without a dedicated SSS node. OceanAttribute drives the blend.
+const oceanAttr    = new OceanAttribute();
+const scatterColor = new MixRGB({ mode: 'MIX', fac: oceanAttr.output('Fac'), colorA: baseColor.output('Color'), colorB: '#0c6e78' });
+
+// ── Dynamic roughness: glassy water (0.06) → matte foam (0.78) ───────────────
+// Foam physically scatters light (matte) while calm water is mirror-like.
+const dynRoughness = new MapRange({ value: oceanAttr.output('Fac'), fromMin: 0, fromMax: 1, toMin: P.roughness, toMax: 0.78, mode: 'SMOOTHSTEP', clamp: true });
+
+// ── Principled BSDF: water specular + Fresnel glare ──────────────────────────
+const bsdf = new PrincipledBSDF({ baseColor: scatterColor.output('Color'), roughness: dynRoughness.output('Result'), ior: new Value(P.ior), normal: microBump.output('Normal') });
+
+// ── Foam colour: black → pale ice-blue at crest ──────────────────────────────
+const foamRamp = new ColorRamp({ fac: oceanAttr.output('Fac'), stops: ['#000000', '#eef6ff'] });
+
+// ── Foam diffuse BSDF: catches directional sunlight, matte white ──────────────
+// DiffuseBSDF is brighter on the sun-facing side of foam — more physical than
+// pure emission which ignores light direction entirely.
+const foamDiff = new DiffuseBSDF({ color: foamRamp.output('Color'), roughness: new Value(0.85), normal: microBump.output('Normal') });
+
+// ── Blend water ↔ foam by foam attribute ─────────────────────────────────────
+const blended = new MixShader({ fac: oceanAttr.output('Fac'), shader1: bsdf.output('BSDF'), shader2: foamDiff.output('BSDF') });
+
+// ── Foam emission: angle-independent brightness for bright crest tips ─────────
+const foamEmit = new Emission({ color: foamRamp.output('Color'), strength: new Value(P.foamEmit) });
+
+const matOutput = new MaterialOutput({
+  surface: new AddShader({ shader1: blended.output('BSDF'), shader2: foamEmit.output('BSDF') }).output('BSDF'),
+});
+matOutput.compile();
+const oceanMat = matOutput.material;
+
+// Lighting and time uniforms — updated every frame
+oceanMat.uniforms.uSunDirection  = { value: sunDir() };
+oceanMat.uniforms.uSunColor      = { value: new THREE.Vector3(1.00, 0.88, 0.65) };
+oceanMat.uniforms.uAmbientColor  = { value: new THREE.Vector3(0.03, 0.07, 0.20) };
+oceanMat.uniforms.time           = { value: 0 };
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OCEAN TILES
+// ─────────────────────────────────────────────────────────────────────────────
+
+const oceanMesh = new THREE.Mesh(sharedGeo, oceanMat);
+scene.add(oceanMesh);
+const tiles = [oceanMesh];   // single mesh, loop still works
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI — sidebar toggle + collapsible sections
+// ─────────────────────────────────────────────────────────────────────────────
+
+const tabBtn  = document.getElementById('tab-btn');
+const sidebar = document.getElementById('sidebar');
+
+tabBtn.addEventListener('click', () => {
+  sidebar.classList.toggle('open');
+  tabBtn.classList.toggle('open');
+});
+
+// Collapsible sections
+document.querySelectorAll('.section-header').forEach(hdr => {
+  hdr.addEventListener('click', () => {
+    hdr.closest('.section').classList.toggle('collapsed');
+  });
+});
+
+// ── Slider / colour helper ────────────────────────────────────────────────────
+function slider(id, valId, fmt, onChange) {
+  const el  = document.getElementById(id);
+  const vel = valId ? document.getElementById(valId) : null;
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    if (vel) vel.textContent = fmt(v);
+    onChange(v);
+  });
+}
+function color(id, onChange) {
+  document.getElementById(id).addEventListener('input', e => onChange(e.target.value));
+}
+
+// ── Ocean Modifier sliders ────────────────────────────────────────────────────
+slider('s-scale',  'v-scale',  v => v.toFixed(1),  v => { P.scale        = v; P.needsRebuild = true; });
+slider('s-chop',   'v-chop',   v => v.toFixed(2),  v => { P.choppiness   = v; P.needsRebuild = true; });
+slider('s-wind',   'v-wind',   v => v.toFixed(1),  v => { P.windSpeed    = v; P.needsRebuild = true; });
+slider('s-angle',  'v-angle',  v => v.toFixed(0)+'°', v => { P.windAngle = v; P.needsRebuild = true; });
+slider('s-depth',  'v-depth',  v => v.toFixed(0),  v => { P.depth        = v; P.needsRebuild = true; });
+slider('s-foam',   'v-foam',   v => v.toFixed(2),  v => { P.foamCoverage = v; P.needsRebuild = true; });
+slider('s-turb',   'v-turb',   v => v.toFixed(2),  v => { P.turbulence   = v; P.needsRebuild = true; });
+slider('s-res',    'v-res',    v => v.toFixed(0),  v => { P.resolution   = v; P.needsRebuild = true; });
+slider('s-wcount', 'v-wcount', v => v.toFixed(0),  v => { P.waveCount    = v; P.needsRebuild = true; });
+slider('s-seed',   'v-seed',   v => v.toFixed(0),  v => { P.seed         = v; P.needsRebuild = true; });
+slider('s-speed',  'v-speed',  v => v.toFixed(2),  v => { P.timeSpeed    = v; });
+
+// ── Water Shader sliders (uniforms only — no geo rebuild needed) ──────────────
+slider('s-rough',  'v-rough',  v => v.toFixed(2),  v => P.roughness      = v);
+slider('s-ior',    'v-ior',    v => v.toFixed(2),  v => P.ior            = v);
+slider('s-fres',   'v-fres',   v => v.toFixed(2),  v => P.fresnelBlend  = v);
+color('c-deep',  hex => P.deepColor.set(hex));
+color('c-surf',  hex => P.surfColor.set(hex));
+// Normal layer strengths drive uniforms injected via InputSocket uniformNames —
+// the compiled GLSL reads them as uniform floats so changes are live.
+slider('s-rscale', 'v-rscale', v => v.toFixed(2),  v => { if (oceanMat.uniforms.uSwellStr)  oceanMat.uniforms.uSwellStr.value  = v; });
+slider('s-rstr',   'v-rstr',   v => v.toFixed(2),  v => { if (oceanMat.uniforms.uChopStr)   oceanMat.uniforms.uChopStr.value   = v; });
+slider('s-rspeed', 'v-rspeed', v => v.toFixed(2),  v => { if (oceanMat.uniforms.uMicroStr)  oceanMat.uniforms.uMicroStr.value  = v; });
+slider('s-femit',  'v-femit',  v => v.toFixed(1),  v => P.foamEmit      = v);
+color('c-foam',  hex => P.foamColor.set(hex));
+
+// ── Lighting sliders ──────────────────────────────────────────────────────────
+slider('s-saz',   'v-saz',   v => v.toFixed(0)+'°', v => { P.sunAzimuth   = v; });
+slider('s-selv',  'v-selv',  v => v.toFixed(0)+'°', v => { P.sunElevation = v; });
+color('c-sun', hex => P.sunColor.set(hex));
+slider('s-sint',  'v-sint',  v => v.toFixed(2),      v => { P.sunIntensity = v; });
+color('c-amb', hex => P.ambColor.set(hex));
+slider('s-aint',  'v-aint',  v => v.toFixed(2),      v => { P.ambIntensity = v; });
+slider('s-exp',   'v-exp',   v => v.toFixed(2),      v => { P.exposure     = v; });
+
+// ── Camera controls ───────────────────────────────────────────────────────────
+document.getElementById('t-drift').addEventListener('change', e => { P.autoDrift = e.target.checked; });
+slider('s-dspeed', 'v-dspeed', v => v.toFixed(3),  v => { P.driftSpeed  = v; });
+slider('s-fov',    'v-fov',    v => v.toFixed(0)+'°', v => {
+  P.fov = v;
+  camera.fov = v;
+  camera.updateProjectionMatrix();
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESIZE
+// ─────────────────────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FADE IN
+// ─────────────────────────────────────────────────────────────────────────────
+
+const fade = document.getElementById('fade');
+requestAnimationFrame(() => requestAnimationFrame(() => fade.classList.add('hidden')));
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+
+const clock = new THREE.Clock();
+let elapsed = 0;
+let dragging = false;
+renderer.domElement.addEventListener('pointerdown', () => { dragging = true; });
+renderer.domElement.addEventListener('pointerup',   () => { dragging = false; });
+
+(function loop() {
+  requestAnimationFrame(loop);
+
+  const dt = clock.getDelta();
+  elapsed += dt * P.timeSpeed;
+
+  // ── Camera drift ──────────────────────────────────────────────────────────
+  if (P.autoDrift && !dragging) {
+    const d = elapsed * P.driftSpeed;
+    camera.position.x = Math.sin(d * 0.7) * 18;
+    camera.position.y = 10 + Math.sin(d * 0.5) * 2.5;
+    camera.position.z = 50 + Math.sin(d * 0.4) * 10;
+    controls.target.y = 2  + Math.sin(d * 0.6) * 0.8;
+    controls.target.x = Math.sin(d * 0.3) * 6;
+  }
+
+  // ── OceanModifier rebuild (write P values → modifier parameters) ──────────
+  if (P.needsRebuild) {
+    oceanMod.parameters.scale        = P.scale;
+    oceanMod.parameters.choppiness   = P.choppiness;
+    oceanMod.parameters.windSpeed    = P.windSpeed;
+    oceanMod.parameters.windAngle    = P.windAngle;
+    oceanMod.parameters.depth        = P.depth;
+    oceanMod.parameters.foamCoverage = P.foamCoverage;
+    oceanMod.parameters.turbulence   = P.turbulence;
+    oceanMod.parameters.resolution   = P.resolution;
+    oceanMod.parameters.waveCount    = P.waveCount;
+    oceanMod.parameters.seed         = P.seed;
+    P.needsRebuild = false;
+  }
+
+  oceanMod.parameters.time = elapsed;
+  const prev = sharedGeo;
+  sharedGeo  = stack.apply();
+  for (const t of tiles) t.geometry = sharedGeo;
+  prev.dispose();
+
+  // ── Shader uniforms (water surface, lighting) — updated every frame ───────
+  const sd = sunDir();
+  skyUniforms.uSun.value.copy(sd);
+  oceanMat.uniforms.uSunDirection.value.copy(sd);
+  oceanMat.uniforms.uSunColor.value.set(
+    P.sunColor.r * P.sunIntensity,
+    P.sunColor.g * P.sunIntensity,
+    P.sunColor.b * P.sunIntensity,
+  );
+  oceanMat.uniforms.uAmbientColor.value.set(
+    P.ambColor.r * P.ambIntensity,
+    P.ambColor.g * P.ambIntensity,
+    P.ambColor.b * P.ambIntensity,
+  );
+  oceanMat.uniforms.time.value = elapsed;
+
+  renderer.toneMappingExposure = P.exposure;
+
+  sky.position.copy(camera.position);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

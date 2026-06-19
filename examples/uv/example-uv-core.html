@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-uv-core — example</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:monospace; }
+  #info { position:absolute; top:10px; left:10px; color:#aaa; font-size:12px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div id="info">
+  st-uv-core — UV Unwrappers<br>
+  Left: CubeProjection | Centre: SmartUVProject | Right: ConformalLSCM
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CubeProjection, SmartUVProject, ConformalLSCM } from '../../st-uv-core/dist/index.js'
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 3, 9)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5))
+const sun = new THREE.DirectionalLight(0xffffff, 1.2)
+sun.position.set(4, 8, 5)
+scene.add(sun)
+
+// Checkerboard texture to make UV layout visible
+function makeChecker(n = 8) {
+  const size = n * 16
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      ctx.fillStyle = (x+y)%2 === 0 ? '#ffffff' : '#444444'
+      ctx.fillRect(x*16, y*16, 16, 16)
+    }
+  }
+  return new THREE.CanvasTexture(canvas)
+}
+const checker = makeChecker()
+
+// ── CubeProjection on a box ───────────────────────────────────────────────────
+// apply() returns a new cloned geometry with UVs set
+const geo1 = new CubeProjection({ scale: 0.5 }).apply(new THREE.BoxGeometry(2,2,2,2,2,2))
+const mesh1 = new THREE.Mesh(geo1, new THREE.MeshStandardMaterial({ map: checker.clone() }))
+mesh1.position.set(-4, 0, 0)
+scene.add(mesh1)
+
+// ── SmartUVProject on a box ──────────────────────────────────────────────────
+const geo2 = new SmartUVProject({ angleLimit: 66, islandMargin: 0.02 }).apply(new THREE.BoxGeometry(2,2,2,2,2,2))
+const mesh2 = new THREE.Mesh(geo2, new THREE.MeshStandardMaterial({ map: checker.clone() }))
+mesh2.position.set(0, 0, 0)
+scene.add(mesh2)
+
+// ── ConformalLSCM on a sphere ────────────────────────────────────────────────
+const geo3 = new ConformalLSCM().apply(new THREE.SphereGeometry(1, 16, 12))
+const mesh3 = new THREE.Mesh(geo3, new THREE.MeshStandardMaterial({ map: checker.clone() }))
+mesh3.position.set(4, 0, 0)
+scene.add(mesh3)
+
+// ── Loop ──────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+;(function animate() {
+  requestAnimationFrame(animate)
+  mesh1.rotation.y += 0.003
+  mesh2.rotation.y += 0.003
+  mesh3.rotation.y += 0.003
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

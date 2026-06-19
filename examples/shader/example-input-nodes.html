@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Input Nodes — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px; }
+  #labels { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .label { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.6);
+    padding: 2px 7px; border-radius: 3px; font: 10px monospace; color: #eee; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="info">Input Nodes — @st-shader-core<br>LayerWeight · CameraData · Wireframe · Tangent · ColorAttribute</div>
+<div id="labels"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  MaterialOutput, PrincipledBSDF, DiffuseBSDF, Emission, MixShader,
+  LayerWeight, CameraData, Wireframe, Tangent, ColorAttribute,
+  ColorRamp, RGB, Value, MapRange
+} from '@st-shader-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d0d)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 2.5)
+sun.position.set(5, 8, 4)
+scene.add(sun)
+
+// Helper: sphere with optional vertex colours
+function makeSphere(withColors = false) {
+  const geo = new THREE.SphereGeometry(0.9, 48, 32)
+  if (withColors) {
+    const pos    = geo.getAttribute('position')
+    const colors = new Float32Array(pos.count * 3)
+    for (let i = 0; i < pos.count; i++) {
+      const ny = pos.getY(i)   // -1..1
+      colors[i * 3 + 0] = (ny + 1) / 2          // R
+      colors[i * 3 + 1] = 1.0 - (ny + 1) / 2   // G
+      colors[i * 3 + 2] = 0.5                    // B
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  }
+  return geo
+}
+
+const defs = [
+  {
+    name: 'LayerWeight\n(Fresnel)',
+    geo: makeSphere(),
+    build: () => {
+      const lw   = new LayerWeight({ blend: 1.45 })
+      const ramp = new ColorRamp({ fac: lw.output('Fresnel'), stops: ['#001133', '#0066ff', '#ffffff'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.1 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'LayerWeight\n(Facing)',
+    geo: makeSphere(),
+    build: () => {
+      const lw   = new LayerWeight({ blend: 0.5 })
+      const diff = new DiffuseBSDF({ color: new RGB('#222222') })
+      const emit = new Emission({ color: new RGB('#ff6600'), strength: 2.0 })
+      const mix  = new MixShader({ fac: lw.output('Facing'), shader1: diff.output('BSDF'), shader2: emit.output('BSDF') })
+      const mat  = new MaterialOutput({ surface: mix.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'CameraData\n(ViewDistance)',
+    geo: makeSphere(),
+    build: () => {
+      const cd   = new CameraData()
+      const mr   = new MapRange({ value: cd.output('ViewDistance'), fromMin: 2.0, fromMax: 20.0, toMin: 0.0, toMax: 1.0, clamp: true })
+      const ramp = new ColorRamp({ fac: mr.output('Result'), stops: ['#ff0000', '#ffff00', '#00ff00'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.5 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'Wireframe',
+    geo: makeSphere(),
+    build: () => {
+      const wf   = new Wireframe({ thickness: 0.015 })
+      const ramp = new ColorRamp({ fac: wf.output('Fac'), stops: ['#001122', '#00aaff'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.3 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'ColorAttribute\n(vertex colours)',
+    geo: makeSphere(true),
+    build: () => {
+      const ca   = new ColorAttribute()
+      const bsdf = new PrincipledBSDF({ baseColor: ca.output('Color'), roughness: 0.5 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  }
+]
+
+const span   = (defs.length - 1) * 2.4
+const labels = document.getElementById('labels')
+
+const spheres = defs.map((def, i) => {
+  const mat  = def.build()
+  const mesh = new THREE.Mesh(def.geo, mat)
+  mesh.position.x = -span / 2 + i * 2.4
+  scene.add(mesh)
+  const lbl = document.createElement('div')
+  lbl.className = 'label'
+  lbl.textContent = def.name
+  labels.appendChild(lbl)
+  return { mesh, lbl }
+})
+
+function projectLabel(mesh, lbl) {
+  const v = mesh.position.clone().project(camera)
+  lbl.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px'
+  lbl.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight + 78) + 'px'
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  spheres.forEach(({ mesh, lbl }) => projectLabel(mesh, lbl))
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

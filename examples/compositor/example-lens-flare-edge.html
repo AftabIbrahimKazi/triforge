@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LensFlare + EdgeDetect — @st-compositor-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 8px 12px; border-radius: 4px;
+  }
+  #panel {
+    position: absolute; top: 12px; right: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 210px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 110px; }
+  .section { color: #888; font-size: 10px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div id="info">LensFlare + EdgeDetect — @st-compositor-core<br>Orbit controls to move camera</div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":                  "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":          "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-compositor-core":    "../../st-compositor-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CompositorOutput, Bloom, LensFlare, EdgeDetect } from '@st-compositor-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.toneMapping = THREE.ReinhardToneMapping
+renderer.toneMappingExposure = 1.5
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x030308)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 7)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0.5, 0)
+
+// ── Scene: bright emissive sources + geometry ────────────────────────────────
+const sources = [
+  { pos: [-2.5,  1.5, 0], color: 0xffffff, intensity: 4, r: 0.25 },
+  { pos: [ 2.5,  0.8, 0], color: 0xff8822, intensity: 3, r: 0.35 },
+  { pos: [ 0.0,  2.2, -1], color: 0x88ccff, intensity: 2.5, r: 0.2 },
+]
+for (const s of sources) {
+  const m = new THREE.MeshStandardMaterial({ color: s.color, emissive: s.color, emissiveIntensity: s.intensity })
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(s.r, 16, 16), m)
+  mesh.position.set(...s.pos)
+  scene.add(mesh)
+  const light = new THREE.PointLight(s.color, s.intensity * 0.5, 8)
+  light.position.set(...s.pos)
+  scene.add(light)
+}
+
+// Structural objects for edge detection
+const mats = [
+  new THREE.MeshStandardMaterial({ color: 0x3366cc, roughness: 0.3, metalness: 0.5 }),
+  new THREE.MeshStandardMaterial({ color: 0x229966, roughness: 0.4 }),
+  new THREE.MeshStandardMaterial({ color: 0x993322, roughness: 0.2, metalness: 0.8 }),
+]
+scene.add(Object.assign(new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.25, 16, 64), mats[0])))
+const box = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), mats[1])
+box.position.set(-2, 0, 0); scene.add(box)
+const icosa = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6), mats[2])
+icosa.position.set(2, 0, 0); scene.add(icosa)
+
+scene.add(new THREE.AmbientLight(0x223344, 0.5))
+scene.add(new THREE.GridHelper(10, 10, 0x111122, 0x111122))
+
+// ── Compositor ───────────────────────────────────────────────────────────────
+const bloom  = new Bloom({ threshold: 0.6, strength: 1.4, radius: 0.5 })
+const flare  = new LensFlare({ ghosts: 6, strength: 0.7, threshold: 0.8, haloWidth: 0.45, chromatic: 0.6 })
+const edges  = new EdgeDetect({ strength: 1.2, color: '#1144aa', mix: 0.82 })
+
+const comp = new CompositorOutput({ renderer, scene, camera, width: innerWidth, height: innerHeight })
+comp.add(bloom).add(flare).add(edges)
+await comp.compile()
+
+// ── Live controls ────────────────────────────────────────────────────────────
+const panel = document.getElementById('panel')
+const knobs = [
+  { section: 'Bloom' },
+  { label: 'strength',   obj: bloom.parameters,  key: 'strength',  min: 0, max: 3,   step: 0.05, def: 1.4  },
+  { label: 'threshold',  obj: bloom.parameters,  key: 'threshold', min: 0, max: 1,   step: 0.05, def: 0.6  },
+  { section: 'LensFlare' },
+  { label: 'strength',   obj: flare.parameters,  key: 'strength',  min: 0, max: 2,   step: 0.05, def: 0.7  },
+  { label: 'ghosts',     obj: flare.parameters,  key: 'ghosts',    min: 1, max: 12,  step: 1,    def: 6    },
+  { label: 'chromatic',  obj: flare.parameters,  key: 'chromatic', min: 0, max: 1,   step: 0.05, def: 0.6  },
+  { section: 'EdgeDetect' },
+  { label: 'strength',   obj: edges.parameters,  key: 'strength',  min: 0, max: 3,   step: 0.1,  def: 1.2  },
+  { label: 'mix',        obj: edges.parameters,  key: 'mix',       min: 0, max: 1,   step: 0.05, def: 0.82 },
+]
+
+for (const k of knobs) {
+  if (k.section) {
+    const s = document.createElement('div'); s.className = 'section'; s.textContent = k.section
+    panel.appendChild(s); continue
+  }
+  const row = document.createElement('label')
+  const val = document.createElement('span'); val.textContent = k.def.toFixed(2)
+  const input = document.createElement('input')
+  input.type = 'range'; input.min = k.min; input.max = k.max; input.step = k.step; input.value = k.def
+  input.addEventListener('input', () => { k.obj[k.key] = +input.value; val.textContent = (+input.value).toFixed(2) })
+  row.innerHTML = `<span>${k.label}</span>`; row.appendChild(input); row.appendChild(val)
+  panel.appendChild(row)
+}
+
+// ── Render loop ──────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime()
+  box.rotation.y   = t * 0.6
+  icosa.rotation.x = t * 0.5
+  icosa.rotation.z = t * 0.3
+  controls.update()
+  comp.render()
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bevel · Wireframe · Shrinkwrap — st-modifier-core</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: system-ui, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+    #canvas { flex: 1; }
+    #panel {
+      width: 280px; background: #1a1a1a; border-left: 1px solid #333;
+      overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px;
+    }
+    h2 { font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    label { font-size: 12px; color: #ccc; white-space: nowrap; }
+    input[type=range] { flex: 1; accent-color: #7af; }
+    span.val { font-size: 11px; color: #7af; min-width: 38px; text-align: right; }
+    button {
+      padding: 5px 10px; background: #2a3a4a; border: 1px solid #3a5a7a;
+      color: #7af; border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+    button.active { background: #1a4a6a; border-color: #7af; }
+    .group { display: flex; flex-direction: column; gap: 6px; }
+    select { background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="panel">
+    <div>
+      <div style="font-size:15px; font-weight:bold; margin-bottom:4px;">Modifier Demo</div>
+      <div style="font-size:11px; color:#888;">Bevel · Wireframe · Shrinkwrap</div>
+    </div>
+
+    <!-- Mode selector -->
+    <div class="group">
+      <h2>Active Modifier</h2>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button id="btn-bevel"      class="active" onclick="setMode('bevel')">Bevel</button>
+        <button id="btn-wireframe"  onclick="setMode('wireframe')">Wireframe</button>
+        <button id="btn-shrinkwrap" onclick="setMode('shrinkwrap')">Shrinkwrap</button>
+      </div>
+    </div>
+
+    <!-- Source shape -->
+    <div class="group">
+      <h2>Source Mesh</h2>
+      <select id="sel-shape" onchange="rebuild()">
+        <option value="box">Box</option>
+        <option value="sphere">Sphere</option>
+        <option value="torus">Torus-like (subdivided box)</option>
+        <option value="cylinder">Cylinder</option>
+      </select>
+    </div>
+
+    <!-- Bevel controls -->
+    <div id="ctrl-bevel" class="group">
+      <h2>Bevel Parameters</h2>
+      <div class="row"><label>Width</label><input type="range" id="bevel-width" min="0" max="0.5" step="0.005" value="0.1" oninput="rebuild()"><span class="val" id="bevel-width-v">0.1</span></div>
+      <div class="row"><label>Segments</label><input type="range" id="bevel-segs" min="1" max="4" step="1" value="1" oninput="rebuild()"><span class="val" id="bevel-segs-v">1</span></div>
+      <div class="row"><label>Angle threshold (°)</label><input type="range" id="bevel-angle" min="0" max="180" step="1" value="30" oninput="rebuild()"><span class="val" id="bevel-angle-v">30</span></div>
+    </div>
+
+    <!-- Wireframe controls -->
+    <div id="ctrl-wireframe" class="group" style="display:none">
+      <h2>Wireframe Parameters</h2>
+      <div class="row"><label>Thickness</label><input type="range" id="wf-thick" min="0.001" max="0.15" step="0.001" value="0.02" oninput="rebuild()"><span class="val" id="wf-thick-v">0.02</span></div>
+      <div class="row"><label>Sides</label><input type="range" id="wf-sides" min="3" max="8" step="1" value="4" oninput="rebuild()"><span class="val" id="wf-sides-v">4</span></div>
+    </div>
+
+    <!-- Shrinkwrap controls -->
+    <div id="ctrl-shrinkwrap" class="group" style="display:none">
+      <h2>Shrinkwrap Parameters</h2>
+      <div style="font-size:11px; color:#888; margin-bottom:4px;">Target: unit sphere (orange wireframe)</div>
+      <div class="row"><label>Factor</label><input type="range" id="sw-factor" min="0" max="1" step="0.01" value="1" oninput="rebuild()"><span class="val" id="sw-factor-v">1.0</span></div>
+      <div class="row"><label>Offset</label><input type="range" id="sw-offset" min="-0.3" max="0.5" step="0.005" value="0" oninput="rebuild()"><span class="val" id="sw-offset-v">0.0</span></div>
+    </div>
+
+    <!-- Display options -->
+    <div class="group">
+      <h2>Display</h2>
+      <div class="row"><label>Wireframe overlay</label><input type="checkbox" id="chk-wire" onchange="updateDisplay()"></div>
+      <div class="row"><label>Show original</label><input type="checkbox" id="chk-orig" onchange="updateDisplay()"></div>
+    </div>
+
+    <div id="info" style="font-size:11px; color:#666; line-height:1.6;"></div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.176.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.176.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three'
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+    // ── Three.js setup ─────────────────────────────────────────────────────────
+
+    const canvas   = document.getElementById('canvas')
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+    renderer.setPixelRatio(devicePixelRatio)
+    renderer.shadowMap.enabled = true
+
+    const scene  = new THREE.Scene()
+    scene.background = new THREE.Color(0x111111)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2)
+    dirLight.position.set(3, 5, 4)
+    dirLight.castShadow = true
+    scene.add(dirLight)
+    scene.add(new THREE.HemisphereLight(0x334466, 0x221100, 0.5))
+
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100)
+    camera.position.set(2.5, 1.8, 2.5)
+    const controls = new OrbitControls(camera, canvas)
+    controls.enableDamping = true
+
+    // ── Grid ──────────────────────────────────────────────────────────────────
+    scene.add(new THREE.GridHelper(6, 12, 0x333333, 0x222222))
+
+    // ── Modifier state ────────────────────────────────────────────────────────
+
+    let mode = 'bevel'
+
+    // Meshes managed in scene
+    let resultMesh = null
+    let origMesh   = null
+    let targetMesh = null   // sphere target for shrinkwrap
+
+    const matResult = new THREE.MeshStandardMaterial({ color: 0x4488cc, roughness: 0.4, metalness: 0.2 })
+    const matOrig   = new THREE.MeshStandardMaterial({ color: 0x886622, roughness: 0.8, wireframe: true, transparent: true, opacity: 0.4 })
+    const matTarget = new THREE.MeshBasicMaterial({ color: 0xff8833, wireframe: true, transparent: true, opacity: 0.3 })
+    const matWire   = new THREE.MeshBasicMaterial({ color: 0x88ccff, wireframe: true })
+
+    // Build target sphere geometry (for shrinkwrap)
+    const targetSphereGeo = new THREE.SphereGeometry(1, 16, 12)
+
+    // ── Inline modifier implementations ───────────────────────────────────────
+    // (No npm dist available at CDN — implement inline for the browser demo)
+
+    // ---- WireframeModifier ---------------------------------------------------
+    function applyWireframe(geometry, { thickness = 0.02, sides = 4 } = {}) {
+      sides = Math.round(Math.max(3, Math.min(8, sides)))
+      const srcPos = geometry.getAttribute('position')
+      const srcIdx = geometry.getIndex()
+      const vCount = srcPos.count
+      const edgeSet = new Set()
+      const edges = []
+      const addEdge = (a, b) => {
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`
+        if (!edgeSet.has(key)) { edgeSet.add(key); edges.push(a < b ? [a,b] : [b,a]) }
+      }
+      if (srcIdx) {
+        const ia = srcIdx.array
+        for (let i = 0; i < ia.length; i += 3) { addEdge(ia[i],ia[i+1]); addEdge(ia[i+1],ia[i+2]); addEdge(ia[i+2],ia[i]) }
+      } else {
+        for (let i = 0; i < vCount; i += 3) { addEdge(i,i+1); addEdge(i+1,i+2); addEdge(i+2,i) }
+      }
+      const outPos = [], outNorm = [], outIdx = []
+      for (const [ai, bi] of edges) {
+        const ax=srcPos.getX(ai),ay=srcPos.getY(ai),az=srcPos.getZ(ai)
+        const bx=srcPos.getX(bi),by=srcPos.getY(bi),bz=srcPos.getZ(bi)
+        let dx=bx-ax,dy=by-ay,dz=bz-az
+        const len=Math.sqrt(dx*dx+dy*dy+dz*dz)
+        if(len<1e-10) continue
+        dx/=len;dy/=len;dz/=len
+        let ux,uy,uz
+        if(Math.abs(dx)<=Math.abs(dy)&&Math.abs(dx)<=Math.abs(dz)){ux=0;uy=-dz;uz=dy}
+        else if(Math.abs(dy)<=Math.abs(dz)){ux=dz;uy=0;uz=-dx}
+        else{ux=-dy;uy=dx;uz=0}
+        const uL=Math.sqrt(ux*ux+uy*uy+uz*uz);ux/=uL;uy/=uL;uz/=uL
+        const vx=dy*uz-dz*uy,vy=dz*ux-dx*uz,vz=dx*uy-dy*ux
+        const ringBase=outPos.length/3
+        for(let end=0;end<2;end++){
+          const ox=end===0?ax:bx,oy=end===0?ay:by,oz=end===0?az:bz
+          for(let s=0;s<sides;s++){
+            const angle=(s/sides)*Math.PI*2,cos=Math.cos(angle),sin=Math.sin(angle)
+            const nx=cos*ux+sin*vx,ny=cos*uy+sin*vy,nz=cos*uz+sin*vz
+            outPos.push(ox+nx*thickness,oy+ny*thickness,oz+nz*thickness)
+            outNorm.push(nx,ny,nz)
+          }
+        }
+        for(let s=0;s<sides;s++){
+          const s1=(s+1)%sides
+          const a0=ringBase+s,a1=ringBase+s1,b0=ringBase+sides+s,b1=ringBase+sides+s1
+          outIdx.push(a0,b0,a1,a1,b0,b1)
+        }
+        for(let end=0;end<2;end++){
+          const rs=ringBase+end*sides,flip=end===0
+          for(let s=1;s<sides-1;s++){
+            if(flip) outIdx.push(rs,rs+s+1,rs+s)
+            else     outIdx.push(rs,rs+s,rs+s+1)
+          }
+        }
+      }
+      const result = new THREE.BufferGeometry()
+      result.setAttribute('position', new THREE.BufferAttribute(new Float32Array(outPos),3))
+      result.setAttribute('normal',   new THREE.BufferAttribute(new Float32Array(outNorm),3))
+      result.setIndex(new THREE.BufferAttribute(new Uint32Array(outIdx),1))
+      return result
+    }
+
+    // ---- ShrinkwrapModifier -------------------------------------------------
+    function applyShrinkwrap(geometry, target, { offset=0, factor=1 }={}) {
+      factor=Math.max(0,Math.min(1,factor))
+      const srcPos=geometry.getAttribute('position')
+      const tgtPos=target.getAttribute('position')
+      const tgtIdx=target.getIndex()
+      const tgtVCount=tgtPos.count
+      const tris=[]
+      if(tgtIdx){const ia=tgtIdx.array;for(let i=0;i<ia.length;i+=3)tris.push([ia[i],ia[i+1],ia[i+2]])}
+      else{for(let i=0;i<tgtVCount;i+=3)tris.push([i,i+1,i+2])}
+      const tA=new THREE.Vector3(),tB=new THREE.Vector3(),tC=new THREE.Vector3()
+      const tri=new THREE.Triangle(),closest=new THREE.Vector3(),best=new THREE.Vector3()
+      const triNorm=new THREE.Vector3(),origPt=new THREE.Vector3(),projected=new THREE.Vector3()
+      const vCount=srcPos.count
+      const outPos=[]
+      for(let v=0;v<vCount;v++){
+        origPt.set(srcPos.getX(v),srcPos.getY(v),srcPos.getZ(v))
+        let bestDist=Infinity,bestNorm=null
+        for(const[ai,bi,ci] of tris){
+          tA.set(tgtPos.getX(ai),tgtPos.getY(ai),tgtPos.getZ(ai))
+          tB.set(tgtPos.getX(bi),tgtPos.getY(bi),tgtPos.getZ(bi))
+          tC.set(tgtPos.getX(ci),tgtPos.getY(ci),tgtPos.getZ(ci))
+          tri.set(tA,tB,tC);tri.closestPointToPoint(origPt,closest)
+          const d=origPt.distanceToSquared(closest)
+          if(d<bestDist){bestDist=d;best.copy(closest);tri.getNormal(triNorm);bestNorm=triNorm.clone()}
+        }
+        if(bestNorm) projected.copy(best).addScaledVector(bestNorm,offset)
+        else projected.copy(best)
+        outPos.push(
+          origPt.x+(projected.x-origPt.x)*factor,
+          origPt.y+(projected.y-origPt.y)*factor,
+          origPt.z+(projected.z-origPt.z)*factor
+        )
+      }
+      const result=geometry.clone()
+      result.setAttribute('position',new THREE.BufferAttribute(new Float32Array(outPos),3))
+      result.computeVertexNormals()
+      return result
+    }
+
+    // ---- BevelModifier ------------------------------------------------------
+    function applyBevel(geometry, { width=0.1, segments=1, angleThreshold=30 }={}) {
+      segments=Math.round(Math.max(1,Math.min(4,segments)))
+      const threshold=angleThreshold*Math.PI/180
+      const srcPos=geometry.getAttribute('position')
+      const srcUv=geometry.getAttribute('uv')
+      const srcIdx=geometry.getIndex()
+      const vCount=srcPos.count
+      const tris=[]
+      if(srcIdx){const ia=srcIdx.array;for(let i=0;i<ia.length;i+=3)tris.push([ia[i],ia[i+1],ia[i+2]])}
+      else{for(let i=0;i<vCount;i+=3)tris.push([i,i+1,i+2])}
+      const getP=(i)=>new THREE.Vector3(srcPos.getX(i),srcPos.getY(i),srcPos.getZ(i))
+      const faceNormals=tris.map(([a,b,c])=>{const ab=getP(b).sub(getP(a));const ac=getP(c).sub(getP(a));return ab.cross(ac).normalize()})
+      const edgeFaces=new Map()
+      const edgeKey=(a,b)=>a<b?`${a}_${b}`:`${b}_${a}`
+      for(let fi=0;fi<tris.length;fi++){
+        const[a,b,c]=tris[fi]
+        for(const[e0,e1] of[[a,b],[b,c],[c,a]]){
+          const key=edgeKey(e0,e1)
+          if(!edgeFaces.has(key))edgeFaces.set(key,[])
+          edgeFaces.get(key).push(fi)
+        }
+      }
+      const hardEdges=new Set()
+      for(const[key,faces] of edgeFaces.entries()){
+        if(faces.length<2)continue
+        const n0=faceNormals[faces[0]],n1=faceNormals[faces[1]]
+        const dot=Math.max(-1,Math.min(1,n0.dot(n1)))
+        if(Math.acos(dot)>threshold)hardEdges.add(key)
+      }
+      if(hardEdges.size===0) return geometry.clone()
+      const displaced=tris.map(()=>[new THREE.Vector3(),new THREE.Vector3(),new THREE.Vector3()])
+      for(const key of hardEdges){
+        const[va,vb]=key.split('_').map(Number)
+        const pa=getP(va),pb=getP(vb)
+        const edgeDir=pb.clone().sub(pa).normalize()
+        const faces=edgeFaces.get(key)
+        for(const fi of faces){
+          const[ta,tb,tc]=tris[fi]
+          for(const[ei,ej] of[[ta,tb],[tb,tc],[tc,ta]]){
+            if(edgeKey(ei,ej)!==key)continue
+            const localEiIdx=tris[fi].indexOf(ei)
+            const localEjIdx=tris[fi].indexOf(ej)
+            const dirItoJ=edgeDir.clone()
+            displaced[fi][localEiIdx].addScaledVector(dirItoJ,width)
+            displaced[fi][localEjIdx].addScaledVector(dirItoJ,-width)
+          }
+        }
+      }
+      const outPos=[],outUv=[],outIdx=[]
+      const faceVertices=[]
+      for(let fi=0;fi<tris.length;fi++){
+        const[a,b,c]=tris[fi],verts=[a,b,c],faceVerts=[]
+        for(let lv=0;lv<3;lv++){
+          const vi=verts[lv],base=getP(vi)
+          base.add(displaced[fi][lv])
+          const idx=outPos.length/3
+          outPos.push(base.x,base.y,base.z)
+          if(srcUv)outUv.push(srcUv.getX(vi),srcUv.getY(vi));else outUv.push(0,0)
+          faceVerts.push(idx)
+        }
+        faceVertices.push(faceVerts)
+        outIdx.push(faceVerts[0],faceVerts[1],faceVerts[2])
+      }
+      for(const key of hardEdges){
+        const faces=edgeFaces.get(key)
+        if(faces.length<2)continue
+        const[va,vb]=key.split('_').map(Number)
+        const getLocalIdx=(fi,v)=>tris[fi].indexOf(v)
+        const fi0=faces[0],fi1=faces[1]
+        const li0a=getLocalIdx(fi0,va),li0b=getLocalIdx(fi0,vb)
+        const li1a=getLocalIdx(fi1,va),li1b=getLocalIdx(fi1,vb)
+        const p0a=faceVertices[fi0][li0a],p0b=faceVertices[fi0][li0b]
+        const p1a=faceVertices[fi1][li1a],p1b=faceVertices[fi1][li1b]
+        if(segments===1){
+          outIdx.push(p0a,p1a,p0b,p1a,p1b,p0b)
+        } else {
+          const getVec=(idx)=>new THREE.Vector3(outPos[idx*3],outPos[idx*3+1],outPos[idx*3+2])
+          const grid=[]
+          for(let r=0;r<=segments;r++){
+            const t=r/segments,rowVerts=[]
+            for(let side=0;side<2;side++){
+              const from=side===0?getVec(p0a):getVec(p0b)
+              const to=side===0?getVec(p1a):getVec(p1b)
+              const vIdx=outPos.length/3
+              outPos.push(from.x+(to.x-from.x)*t,from.y+(to.y-from.y)*t,from.z+(to.z-from.z)*t)
+              outUv.push(side===0?0:1,r/segments)
+              rowVerts.push(vIdx)
+            }
+            grid.push(rowVerts)
+          }
+          for(let r=0;r<segments;r++){
+            const va0=grid[r][0],vb0=grid[r][1],va1=grid[r+1][0],vb1=grid[r+1][1]
+            outIdx.push(va0,va1,vb0,va1,vb1,vb0)
+          }
+        }
+      }
+      const result=new THREE.BufferGeometry()
+      result.setAttribute('position',new THREE.BufferAttribute(new Float32Array(outPos),3))
+      result.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(outUv),2))
+      result.setIndex(new THREE.BufferAttribute(new Uint32Array(outIdx),1))
+      result.computeVertexNormals()
+      return result
+    }
+
+    // ── Source geometry builders ───────────────────────────────────────────────
+
+    function buildSource() {
+      const shape = document.getElementById('sel-shape').value
+      if (shape === 'box')      return new THREE.BoxGeometry(1.5, 1.5, 1.5)
+      if (shape === 'sphere')   return new THREE.SphereGeometry(1, 8, 6)
+      if (shape === 'cylinder') return new THREE.CylinderGeometry(0.7, 0.7, 1.5, 8)
+      // 'torus' — a subdivided box for visible hard edges
+      return new THREE.BoxGeometry(1.2, 1.2, 1.2, 2, 2, 2)
+    }
+
+    // ── Rebuild scene ──────────────────────────────────────────────────────────
+
+    function rebuild() {
+      updateLabels()
+      // Clear old meshes
+      if (resultMesh) { scene.remove(resultMesh); resultMesh.geometry.dispose() }
+      if (origMesh)   { scene.remove(origMesh);   origMesh.geometry.dispose() }
+      if (targetMesh) { scene.remove(targetMesh); targetMesh.geometry.dispose() }
+
+      const srcGeo = buildSource()
+      const startTime = performance.now()
+
+      let resultGeo
+      if (mode === 'wireframe') {
+        const thickness = parseFloat(document.getElementById('wf-thick').value)
+        const sides     = parseInt(document.getElementById('wf-sides').value)
+        resultGeo = applyWireframe(srcGeo, { thickness, sides })
+      } else if (mode === 'shrinkwrap') {
+        const factor = parseFloat(document.getElementById('sw-factor').value)
+        const offset = parseFloat(document.getElementById('sw-offset').value)
+        resultGeo = applyShrinkwrap(srcGeo, targetSphereGeo, { factor, offset })
+        // Show target sphere
+        targetMesh = new THREE.Mesh(targetSphereGeo, matTarget)
+        scene.add(targetMesh)
+      } else {
+        const width    = parseFloat(document.getElementById('bevel-width').value)
+        const segments = parseInt(document.getElementById('bevel-segs').value)
+        const angle    = parseFloat(document.getElementById('bevel-angle').value)
+        resultGeo = applyBevel(srcGeo, { width, segments, angleThreshold: angle })
+      }
+
+      const ms = (performance.now() - startTime).toFixed(2)
+
+      const mat = mode === 'wireframe'
+        ? new THREE.MeshStandardMaterial({ color: 0x44aacc, roughness: 0.3, metalness: 0.1 })
+        : matResult.clone()
+
+      resultMesh = new THREE.Mesh(resultGeo, mat)
+      scene.add(resultMesh)
+
+      if (document.getElementById('chk-orig').checked) {
+        origMesh = new THREE.Mesh(srcGeo, matOrig)
+        scene.add(origMesh)
+      }
+
+      if (document.getElementById('chk-wire').checked) {
+        resultMesh.material.wireframe = true
+      }
+
+      const tris = resultGeo.getIndex()
+        ? resultGeo.getIndex().count / 3
+        : resultGeo.getAttribute('position').count / 3
+      document.getElementById('info').innerHTML =
+        `Triangles: <b style="color:#7af">${tris}</b><br>` +
+        `Source verts: <b style="color:#fa8">${srcGeo.getAttribute('position').count}</b><br>` +
+        `Apply time: <b style="color:#af7">${ms} ms</b>`
+    }
+
+    window.rebuild = rebuild
+
+    // ── Mode switching ─────────────────────────────────────────────────────────
+
+    window.setMode = function(m) {
+      mode = m
+      ;['bevel','wireframe','shrinkwrap'].forEach(id => {
+        document.getElementById(`btn-${id}`).classList.toggle('active', id === m)
+        document.getElementById(`ctrl-${id}`).style.display = id === m ? 'flex' : 'none'
+      })
+      rebuild()
+    }
+
+    // ── Label updater ──────────────────────────────────────────────────────────
+
+    function updateLabels() {
+      const get  = (id) => document.getElementById(id)
+      const show = (id, val) => { const el = get(id+'-v'); if (el) el.textContent = parseFloat(val).toFixed(val % 1 === 0 ? 0 : 3) }
+      show('bevel-width',  get('bevel-width')?.value)
+      show('bevel-segs',   get('bevel-segs')?.value)
+      show('bevel-angle',  get('bevel-angle')?.value)
+      show('wf-thick',     get('wf-thick')?.value)
+      show('wf-sides',     get('wf-sides')?.value)
+      show('sw-factor',    get('sw-factor')?.value)
+      show('sw-offset',    get('sw-offset')?.value)
+    }
+
+    window.updateDisplay = function() {
+      if (resultMesh) resultMesh.material.wireframe = document.getElementById('chk-wire').checked
+      if (origMesh)   { scene.remove(origMesh); origMesh = null }
+      if (document.getElementById('chk-orig').checked) {
+        origMesh = new THREE.Mesh(buildSource(), matOrig)
+        scene.add(origMesh)
+      }
+    }
+
+    // ── Resize ────────────────────────────────────────────────────────────────
+
+    function resize() {
+      const w = canvas.clientWidth, h = canvas.clientHeight
+      renderer.setSize(w, h, false)
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+    }
+    new ResizeObserver(resize).observe(canvas)
+
+    // ── Animation loop ────────────────────────────────────────────────────────
+
+    renderer.setAnimationLoop(() => {
+      controls.update()
+      renderer.render(scene, camera)
+    })
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    resize()
+    rebuild()
+  </script>
+</body>
+</html>

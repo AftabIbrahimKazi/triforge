@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Three.js Ecosystem</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #080810; overflow: hidden; }
+    canvas { display: block; }
+    #info {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      line-height: 2;
+      color: #556;
+      background: rgba(8, 8, 16, 0.8);
+      padding: 10px 16px;
+      border-radius: 6px;
+      border: 1px solid #1a1a2e;
+      pointer-events: none;
+    }
+    #info b  { color: #4af; }
+    #info em { color: #444; font-style: normal; }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <b>@three-radius-parametric</b> ✓<br>
+    <b>@st-shader-core</b> ✓<br>
+    <em>Drag to orbit · Scroll to zoom</em>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/",
+        "@three-radius-parametric": "../../radius-parametric-geometry/dist/index.js",
+        "@st-shader-core":          "../../st-shader-core/dist/bundle.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three'
+    import { OrbitControls }         from 'three/addons/controls/OrbitControls.js'
+    import { RadiusParametricGeometry } from '@three-radius-parametric'
+    import {
+      ShaderConfig,
+      NoiseTexture,
+      ColorRamp,
+      PrincipledBSDF,
+      MaterialOutput,
+    } from '@st-shader-core'
+
+    ShaderConfig.errorLevel = 'verbose'
+
+    // ── Renderer ──────────────────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+    renderer.setSize(innerWidth, innerHeight)
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    document.body.appendChild(renderer.domElement)
+
+    // ── Scene / Camera ────────────────────────────────────────────────────────
+    const scene  = new THREE.Scene()
+    scene.background = new THREE.Color(0x080810)
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100)
+    camera.position.set(0, 1.2, 5.5)
+
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping  = true
+    controls.dampingFactor  = 0.06
+
+    // ── Lights ────────────────────────────────────────────────────────────────
+    scene.add(new THREE.AmbientLight(0xffffff, 0.2))
+    const key  = new THREE.PointLight(0x88aaff, 80, 20)
+    key.position.set(3, 5, 3)
+    scene.add(key)
+    const fill = new THREE.PointLight(0xff6644, 40, 20)
+    fill.position.set(-3, -2, 2)
+    scene.add(fill)
+
+    // ── Material classes — defined once, assigned to any mesh ────────────────
+    // Each class is a self-contained node graph, just like a named material in Blender.
+
+    // [NoiseTexture] --Fac--> [ColorRamp] --Color--> [PrincipledBSDF] --BSDF--> [MaterialOutput]
+    class BlueCyan {
+      constructor() {
+        const noise  = new NoiseTexture({ scale: 3.0, detail: 3.0 })
+        const ramp   = new ColorRamp({ fac: noise.output('Fac'), stops: ['#001133', '#0055ff', '#00ffcc'] })
+        const bsdf   = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.4 })
+        this._output = new MaterialOutput({ surface: bsdf.output('BSDF') })
+        this._output.compile()
+      }
+      get material() { return this._output.material }
+    }
+
+    // [NoiseTexture] --Fac--> [ColorRamp] --Color--> [PrincipledBSDF] --BSDF--> [MaterialOutput]
+    //       (distortion: 0.3)                         (metallic: 0.4)
+    class PinkGold {
+      constructor() {
+        const noise  = new NoiseTexture({ scale: 5.0, detail: 4.0, distortion: 0.3 })
+        const ramp   = new ColorRamp({ fac: noise.output('Fac'), stops: ['#220011', '#ff2266', '#ffcc00'] })
+        const bsdf   = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.3, metallic: 0.4 })
+        this._output = new MaterialOutput({ surface: bsdf.output('BSDF') })
+        this._output.compile()
+      }
+      get material() { return this._output.material }
+    }
+
+    // [NoiseTexture A] --Fac--> [ColorRamp] --Color--> [PrincipledBSDF] --BSDF--> [MaterialOutput]
+    // [NoiseTexture B] --Fac-----------------------------^roughness
+    class GreenMoss {
+      constructor() {
+        const colorNoise = new NoiseTexture({ scale: 4.0, detail: 3.0 })
+        const roughNoise = new NoiseTexture({ scale: 8.0, detail: 2.0 })
+        const ramp       = new ColorRamp({ fac: colorNoise.output('Fac'), stops: ['#001100', '#00aa44', '#ccffcc'] })
+        const bsdf       = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: roughNoise.output('Fac') })
+        this._output     = new MaterialOutput({ surface: bsdf.output('BSDF') })
+        this._output.compile()
+      }
+      get material() { return this._output.material }
+    }
+
+    // instantiate — compile happens once inside the constructor
+    const blueCyan = new BlueCyan()
+    const pinkGold = new PinkGold()
+    const greenMoss = new GreenMoss()
+
+    // ── Meshes — geometry + material slot, just like Blender ─────────────────
+
+    const torus = new THREE.Mesh(
+      new RadiusParametricGeometry(
+        (u, v) => 1.0 + 0.45 * Math.cos(v * Math.PI * 2),
+        (u, v) => 0.45 * Math.sin(v * Math.PI * 2),
+        { radiusSegments: 64, heightSegments: 32 }
+      ),
+      blueCyan.material
+    )
+    torus.position.set(-2.2, 0, 0)
+    scene.add(torus)
+
+    const wavy = new THREE.Mesh(
+      new RadiusParametricGeometry(
+        (u, v) => 0.6 + 0.25 * Math.sin(u * Math.PI * 6) * Math.sin(v * Math.PI * 3),
+        (u, v) => v * 2.0 - 1.0,
+        { radiusSegments: 64, heightSegments: 48 }
+      ),
+      pinkGold.material
+    )
+    wavy.position.set(2.2, 0, 0)
+    scene.add(wavy)
+
+    const sphere = new THREE.Mesh(
+      new RadiusParametricGeometry(
+        (u, v) => Math.sin(v * Math.PI) + 0.1 * Math.sin(u * Math.PI * 8),
+        (u, v) => Math.cos(v * Math.PI),
+        { radiusSegments: 64, heightSegments: 32 }
+      ),
+      greenMoss.material
+    )
+    sphere.position.set(0, 0, 0)
+    scene.add(sphere)
+
+    // ── Resize ────────────────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight
+      camera.updateProjectionMatrix()
+      renderer.setSize(innerWidth, innerHeight)
+    })
+
+    // ── Render loop ───────────────────────────────────────────────────────────
+    const clock = new THREE.Clock()
+    function animate() {
+      requestAnimationFrame(animate)
+      const t = clock.getElapsedTime()
+      torus.rotation.y  =  t * 0.40
+      torus.rotation.x  =  t * 0.15
+      wavy.rotation.y   = -t * 0.35
+      sphere.rotation.y =  t * 0.20
+      controls.update()
+      renderer.render(scene, camera)
+    }
+    animate()
+  </script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>st-particle-core — Boids Flocking (B1)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body { background: #080c14; color: #eee; font-family: monospace; overflow: hidden }
+    canvas { display: block }
+    #ui {
+      position: fixed; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.65); padding: 12px 16px; border-radius: 6px;
+      display: flex; flex-direction: column; gap: 8px; min-width: 260px;
+    }
+    h2 { font-size: 13px; color: #adf; margin-bottom: 2px }
+    .row { display: flex; align-items: center; gap: 8px }
+    .row label { width: 130px; font-size: 11px; color: #ccc; flex-shrink: 0 }
+    input[type=range] { flex: 1 }
+    .val { font-size: 11px; color: #fa8; width: 38px; text-align: right }
+    #info { font-size: 10px; color: #666; margin-top: 4px }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h2>Boids Flocking — Phase B1</h2>
+
+  <div class="row">
+    <label>Separation strength</label>
+    <input type="range" id="sep" min="0" max="6" step="0.1" value="2">
+    <span class="val" id="sepV">2.0</span>
+  </div>
+  <div class="row">
+    <label>Alignment strength</label>
+    <input type="range" id="ali" min="0" max="4" step="0.1" value="1">
+    <span class="val" id="aliV">1.0</span>
+  </div>
+  <div class="row">
+    <label>Cohesion strength</label>
+    <input type="range" id="coh" min="0" max="4" step="0.1" value="0.8">
+    <span class="val" id="cohV">0.8</span>
+  </div>
+  <div class="row">
+    <label>Max speed</label>
+    <input type="range" id="spd" min="0.5" max="12" step="0.1" value="5">
+    <span class="val" id="spdV">5.0</span>
+  </div>
+  <div id="info">200 particles · sphere emitter · orbit controls</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { Particle, SeededRandom, BoidForce } from '@st-particle-core'
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+
+const COUNT    = 200
+const rng      = new SeededRandom(7)
+const pool     = Array.from({length: COUNT}, () => new Particle())
+const boidForce = new BoidForce(pool)
+
+// Sphere emitter — spawn all particles immediately
+const EMIT_RADIUS = 5
+for (const p of pool) {
+  p.alive = true
+  const theta = rng.next() * Math.PI * 2
+  const phi   = Math.acos(1 - 2 * rng.next())
+  const r     = EMIT_RADIUS * Math.cbrt(rng.next())
+  p.position.set(
+    r * Math.sin(phi) * Math.cos(theta),
+    r * Math.sin(phi) * Math.sin(theta),
+    r * Math.cos(phi),
+  )
+  const speed = 1.5 + rng.next() * 2
+  const vTheta = rng.next() * Math.PI * 2
+  p.velocity.set(Math.cos(vTheta) * speed, (rng.signed()) * speed * 0.3, Math.sin(vTheta) * speed)
+  p.lifetime = 9999
+  p.size = 0.08
+}
+
+// ── Three.js scene ────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x080c14)
+scene.fog = new THREE.FogExp2(0x080c14, 0.04)
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 200)
+camera.position.set(0, 8, 20)
+camera.lookAt(0, 0, 0)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+scene.add(new THREE.GridHelper(40, 40, 0x112233, 0x0d1a28))
+
+// Points geometry
+const geo = new THREE.BufferGeometry()
+const pos = new Float32Array(COUNT * 3)
+geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+geo.setDrawRange(0, COUNT)
+
+const mat = new THREE.PointsMaterial({
+  size: 0.15, color: 0x88ddff,
+  transparent: true, opacity: 0.85, depthWrite: false,
+})
+scene.add(new THREE.Points(geo, mat))
+
+// Velocity lines (trail effect using LineSegments)
+const trailGeo = new THREE.BufferGeometry()
+const trailPos = new Float32Array(COUNT * 6)
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3))
+trailGeo.setDrawRange(0, COUNT * 2)
+const trailMat = new THREE.LineBasicMaterial({ color: 0x336699, transparent: true, opacity: 0.35 })
+scene.add(new THREE.LineSegments(trailGeo, trailMat))
+
+// ── UI live bindings ──────────────────────────────────────────────────────────
+
+function bind(id, valId, paramKey) {
+  const el = document.getElementById(id)
+  const vl = document.getElementById(valId)
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value)
+    boidForce.parameters[paramKey] = v
+    vl.textContent = v.toFixed(1)
+  })
+}
+bind('sep', 'sepV', 'separationStrength')
+bind('ali', 'aliV', 'alignmentStrength')
+bind('coh', 'cohV', 'cohesionStrength')
+bind('spd', 'spdV', 'maxSpeed')
+
+// Soft boundary — gentle push back toward origin
+function boundaryForce(p, dt) {
+  const limit = 8
+  const r = p.position.length()
+  if (r > limit) {
+    const strength = (r - limit) * 1.5
+    p.velocity.addScaledVector(p.position, -strength * dt / r)
+  }
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+
+let lastTime = performance.now() / 1000
+
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now() / 1000
+  const dt  = Math.min(now - lastTime, 0.05)
+  lastTime  = now
+
+  // Step simulation
+  for (const p of pool) {
+    boidForce.apply(p, dt)
+    boundaryForce(p, dt)
+    p.position.addScaledVector(p.velocity, dt)
+  }
+
+  // Update buffers
+  for (let i = 0; i < COUNT; i++) {
+    const p = pool[i]
+    pos[i*3]=p.position.x; pos[i*3+1]=p.position.y; pos[i*3+2]=p.position.z
+    // Trail: from current pos - velocity*0.3 to current pos
+    const tBase = i * 6
+    trailPos[tBase]  =p.position.x - p.velocity.x*0.2
+    trailPos[tBase+1]=p.position.y - p.velocity.y*0.2
+    trailPos[tBase+2]=p.position.z - p.velocity.z*0.2
+    trailPos[tBase+3]=p.position.x
+    trailPos[tBase+4]=p.position.y
+    trailPos[tBase+5]=p.position.z
+  }
+  geo.attributes.position.needsUpdate = true
+  trailGeo.attributes.position.needsUpdate = true
+
+  controls.update()
+
+  if (innerWidth !== renderer.domElement.width || innerHeight !== renderer.domElement.height) {
+    renderer.setSize(innerWidth, innerHeight)
+    camera.aspect = innerWidth / innerHeight
+    camera.updateProjectionMatrix()
+  }
+
+  renderer.render(scene, camera)
+}
+
+animate()
+</script>
+</body>
+</html>

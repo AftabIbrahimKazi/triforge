@@ -1,0 +1,175 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>st-modifier-core — modifier stack demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.75); padding: 16px; border-radius: 8px;
+      min-width: 280px; font-size: 13px; line-height: 2.2;
+    }
+    #ui h3 { margin-bottom: 4px; color: #adf; font-size: 13px; }
+    label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    input[type=range] { width: 130px; }
+    span.val { color: #ffa; min-width: 40px; text-align: right; }
+    #info { position: fixed; bottom: 16px; left: 16px; font-size: 11px; color: #888; line-height: 1.6; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h3>SubdivisionModifier</h3>
+  <label>levels <input type="range" id="levels" min="0" max="3" step="1" value="2"><span class="val" id="levels-val">2</span></label>
+
+  <h3 style="margin-top:8px">DisplacementModifier</h3>
+  <label>strength  <input type="range" id="strength"  min="0"    max="1"   step="0.01" value="0.3"><span class="val" id="strength-val">0.30</span></label>
+  <label>midlevel  <input type="range" id="midlevel"  min="0"    max="1"   step="0.01" value="0.5"><span class="val" id="midlevel-val">0.50</span></label>
+  <label>noiseScale<input type="range" id="nscale"    min="0.5"  max="10"  step="0.1"  value="3"><span class="val" id="nscale-val">3.0</span></label>
+
+  <h3 style="margin-top:8px">TwistModifier</h3>
+  <label>angle <input type="range" id="twist" min="-6.28" max="6.28" step="0.05" value="0"><span class="val" id="twist-val">0.00</span></label>
+</div>
+<div id="info">
+  orbit: left-drag · zoom: scroll<br>
+  subdivision + displacement rebuild geometry on change<br>
+  twist/strength/midlevel update parameters live
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ModifierStack,
+  SubdivisionModifier,
+  DisplacementModifier,
+  TwistModifier,
+  NormalRecalculateModifier,
+} from '@st-modifier-core'
+import {
+  NoiseTexture, ColorRamp, Bump, PrincipledBSDF, MaterialOutput, RGBtoBW, ShaderConfig
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+// ── Scene ──────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 0.5, 4)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(4, 6, 4)
+scene.add(sun)
+
+// ── Noise function for DisplacementModifier ────────────────────────────────────
+// Simple CPU Perlin-style noise — completely independent of st-shader-core
+let noiseScale = 3.0
+
+function hash(n) {
+  return Math.abs(Math.sin(n * 127.1 + 311.7) * 43758.5453 % 1)
+}
+function lerp(a, b, t) { return a + (b - a) * (t * t * (3 - 2 * t)) }
+function cpuNoise(x, y, z) {
+  const s = noiseScale
+  const px = x * s, py = y * s, pz = z * s
+  const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz)
+  const fx = px - ix, fy = py - iy, fz = pz - iz
+  const v000 = hash(ix + iy * 57 + iz * 131)
+  const v100 = hash(ix+1 + iy * 57 + iz * 131)
+  const v010 = hash(ix + (iy+1)*57 + iz * 131)
+  const v110 = hash(ix+1 + (iy+1)*57 + iz * 131)
+  const v001 = hash(ix + iy*57 + (iz+1)*131)
+  const v101 = hash(ix+1 + iy*57 + (iz+1)*131)
+  const v011 = hash(ix + (iy+1)*57 + (iz+1)*131)
+  const v111 = hash(ix+1 + (iy+1)*57 + (iz+1)*131)
+  return lerp(lerp(lerp(v000, v100, fx), lerp(v010, v110, fx), fy),
+              lerp(lerp(v001, v101, fx), lerp(v011, v111, fx), fy), fz)
+}
+
+// ── Modifier setup ─────────────────────────────────────────────────────────────
+const subdivMod = new SubdivisionModifier({ levels: 2 })
+const dispMod   = new DisplacementModifier({ strength: 0.3, midlevel: 0.5, noiseFunction: cpuNoise })
+const twistMod  = new TwistModifier({ angle: 0 })
+const normMod   = new NormalRecalculateModifier()
+
+// Base sphere geometry — stays untouched
+const baseGeo = new THREE.SphereGeometry(1, 16, 8)
+
+// ── Material (st-shader-core) ──────────────────────────────────────────────────
+const noise = new NoiseTexture({ scale: 3.0, detail: 4.0 })
+const ramp  = new ColorRamp({ fac: noise.output('Fac'), stops: ['#1a0500', '#6b2800', '#c85000', '#f0a030'] })
+const bump  = new Bump({ height: new RGBtoBW({ color: noise.output('Color') }).output('Val'), strength: 2.0 })
+const bsdf  = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.7, normal: bump.output('Normal') })
+const mat   = new MaterialOutput({ surface: bsdf.output('BSDF') })
+mat.compile()
+
+// ── Mesh ───────────────────────────────────────────────────────────────────────
+let mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat.material)
+scene.add(mesh)
+
+function rebuild() {
+  const stack  = new ModifierStack(baseGeo)
+  stack.add(subdivMod)
+  stack.add(dispMod)
+  stack.add(twistMod)
+  stack.add(normMod)
+  const old = mesh.geometry
+  mesh.geometry = stack.apply()
+  if (old && old !== baseGeo) old.dispose()
+}
+
+rebuild()
+
+// ── UI ─────────────────────────────────────────────────────────────────────────
+function slider(id, onChange) {
+  const el  = document.getElementById(id)
+  const val = document.getElementById(id + '-val')
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value)
+    val.textContent = v.toFixed(2)
+    onChange(v)
+  })
+}
+
+slider('levels',   v => { subdivMod.parameters.levels = Math.round(v); rebuild() })
+slider('strength', v => { dispMod.parameters.strength = v; rebuild() })
+slider('midlevel', v => { dispMod.parameters.midlevel = v; rebuild() })
+slider('nscale',   v => { noiseScale = v; rebuild() })
+slider('twist',    v => { twistMod.parameters.angle = v; rebuild() })
+
+// ── Render ─────────────────────────────────────────────────────────────────────
+renderer.setAnimationLoop(() => {
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,230 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TextureForce — st-particle-core</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box }
+    body { background: #111; overflow: hidden; font-family: monospace }
+    canvas { display: block }
+    #ui {
+      position: fixed; top: 16px; left: 16px; color: #eee;
+      display: flex; flex-direction: column; gap: 10px; width: 260px;
+    }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 13px }
+    input[type=range] { width: 200px }
+    .val { color: #0f9 }
+    .info { font-size: 11px; color: #888 }
+    #preview {
+      width: 80px; height: 80px; image-rendering: pixelated;
+      border: 1px solid #444; margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <div style="font-size:14px;font-weight:bold;margin-bottom:4px">TextureForce</div>
+  <label>Strength: <span id="strVal" class="val">3.0</span>
+    <input type="range" id="strSlider" min="0" max="10" step="0.1" value="3">
+  </label>
+  <label>Scale (world units): <span id="scaleVal" class="val">8.0</span>
+    <input type="range" id="scaleSlider" min="2" max="20" step="0.5" value="8">
+  </label>
+  <div class="info">
+    Flowfield texture (R→X, G→Y, B→Z force).<br>
+    Preview below — red=+X, green=+Y, blue=+Z.
+  </div>
+  <canvas id="preview" width="64" height="64"></canvas>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.176.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Three.js setup ──────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200)
+camera.position.set(0, 8, 20)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 3, 0)
+
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight)
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+})
+
+scene.add(new THREE.GridHelper(20, 20, 0x333333, 0x222222))
+
+// ── Build flowfield DataTexture (Uint8, RGBA) ─────────────────────────────
+// 32×32 texture encoding a gentle curl / vortex in the XZ plane.
+// R channel → X force (east), G channel → Y force (up), B channel → Z force (south)
+const TEX_W = 32, TEX_H = 32
+const texData = new Uint8Array(TEX_W * TEX_H * 4)
+
+function encodeChannel(v) {
+  // v in [-1..1] → [0..255]
+  return Math.max(0, Math.min(255, Math.round((v + 1) * 127.5)))
+}
+
+for (let y = 0; y < TEX_H; y++) {
+  for (let x = 0; x < TEX_W; x++) {
+    // UV in [-1..1]
+    const u = (x / TEX_W) * 2 - 1
+    const v = (y / TEX_H) * 2 - 1
+    // Curl field: tangent to radius = (-v, 0, u) normalised
+    const len = Math.sqrt(u * u + v * v) || 1
+    const fx = -v / len       // X
+    const fy = 0.3            // slight upward push always
+    const fz = u / len        // Z
+    const idx = (y * TEX_W + x) * 4
+    texData[idx]     = encodeChannel(fx)
+    texData[idx + 1] = encodeChannel(fy)
+    texData[idx + 2] = encodeChannel(fz)
+    texData[idx + 3] = 255
+  }
+}
+
+// Minimal DataTexture-like object for our TextureForce implementation
+const flowTexture = { image: { data: texData, width: TEX_W, height: TEX_H } }
+
+// Draw preview to canvas
+const preview = document.getElementById('preview')
+const ctx = preview.getContext('2d')
+const imgData = ctx.createImageData(TEX_W, TEX_H)
+imgData.data.set(texData)
+ctx.putImageData(imgData, 0, 0)
+
+// ── Particle simulation ───────────────────────────────────────────────────────
+const COUNT = 600
+const LIFETIME = 5.0
+
+function lcg(seed) {
+  let s = seed | 0
+  return () => { s = (Math.imul(1664525, s) + 1013904223) | 0; return (s >>> 0) / 0xFFFFFFFF }
+}
+const rng = lcg(99)
+
+const px   = new Float32Array(COUNT)
+const py   = new Float32Array(COUNT)
+const pz   = new Float32Array(COUNT)
+const vx   = new Float32Array(COUNT)
+const vy   = new Float32Array(COUNT)
+const vz   = new Float32Array(COUNT)
+const ages = new Float32Array(COUNT)
+const lts  = new Float32Array(COUNT)
+
+function respawn(i) {
+  px[i] = (rng() - 0.5) * 6
+  py[i] = rng() * 1
+  pz[i] = (rng() - 0.5) * 6
+  vx[i] = 0; vy[i] = 0; vz[i] = 0
+  ages[i] = rng() * LIFETIME  // stagger
+  lts[i]  = LIFETIME * (0.5 + rng())
+}
+for (let i = 0; i < COUNT; i++) respawn(i)
+
+// THREE.Points
+const positions = new Float32Array(COUNT * 3)
+const geo = new THREE.BufferGeometry()
+const posAttr = new THREE.BufferAttribute(positions, 3).setUsage(35048)
+geo.setAttribute('position', posAttr)
+geo.setDrawRange(0, COUNT)
+
+const mat = new THREE.PointsMaterial({
+  color: 0xffcc44, size: 0.15, sizeAttenuation: true,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+})
+const pts = new THREE.Points(geo, mat)
+pts.frustumCulled = false
+scene.add(pts)
+
+// ── TextureForce inline (same algorithm as TextureForce.ts) ─────────────────
+function sampleTexture(worldX, worldZ, scale, offsetX, offsetZ) {
+  const invScale = 1 / Math.max(scale, 1e-6)
+  const u  = (((worldX - offsetX) * invScale % 1) + 1) % 1
+  const v  = (((worldZ - offsetZ) * invScale % 1) + 1) % 1
+  const px  = Math.floor(u * TEX_W) % TEX_W
+  const py  = Math.floor(v * TEX_H) % TEX_H
+  const idx = (py * TEX_W + px) * 4
+  return {
+    fx: texData[idx]     / 127.5 - 1,
+    fy: texData[idx + 1] / 127.5 - 1,
+    fz: texData[idx + 2] / 127.5 - 1,
+  }
+}
+
+// ── UI ──────────────────────────────────────────────────────────────────────
+let strength = 3.0
+let scale    = 8.0
+
+document.getElementById('strSlider').addEventListener('input', e => {
+  strength = parseFloat(e.target.value)
+  document.getElementById('strVal').textContent = strength.toFixed(1)
+})
+document.getElementById('scaleSlider').addEventListener('input', e => {
+  scale = parseFloat(e.target.value)
+  document.getElementById('scaleVal').textContent = scale.toFixed(1)
+})
+
+// ── Animation loop ────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+
+function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  for (let i = 0; i < COUNT; i++) {
+    ages[i] += dt
+    if (ages[i] >= lts[i]) { respawn(i); continue }
+
+    // Apply texture force
+    const f = sampleTexture(px[i], pz[i], scale, 0, 0)
+    vx[i] += f.fx * strength * dt
+    vy[i] += f.fy * strength * dt
+    vz[i] += f.fz * strength * dt
+
+    // Gentle gravity + drag
+    vy[i] -= 0.5 * dt
+    vx[i] *= 0.99
+    vy[i] *= 0.99
+    vz[i] *= 0.99
+
+    px[i] += vx[i] * dt
+    py[i] += vy[i] * dt
+    pz[i] += vz[i] * dt
+
+    // Wrap XZ
+    const H = scale * 0.5
+    if (px[i] >  H) px[i] -= scale * 2
+    if (px[i] < -H) px[i] += scale * 2
+    if (pz[i] >  H) pz[i] -= scale * 2
+    if (pz[i] < -H) pz[i] += scale * 2
+    if (py[i] < 0)  { py[i] = 0; vy[i] = Math.abs(vy[i]) * 0.5 }
+
+    positions[i * 3]     = px[i]
+    positions[i * 3 + 1] = py[i]
+    positions[i * 3 + 2] = pz[i]
+  }
+
+  posAttr.needsUpdate = true
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+</script>
+</body>
+</html>

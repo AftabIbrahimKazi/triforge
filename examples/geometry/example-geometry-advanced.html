@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BoundingBox · ConvexHull · ExtrudeMesh · RealizeInstances — @st-geometry-nodes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 310px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #tabs {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; gap: 6px; flex-wrap: wrap; max-width: 300px; justify-content: flex-end;
+  }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 220px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>Advanced Geometry Nodes</h3>
+  <span class="code">BoundingBox</span> — AABB of any geometry<br>
+  <span class="code">ConvexHull</span> — convex hull mesh<br>
+  <span class="code">ExtrudeMesh</span> — face extrusion along normals<br>
+  <span class="code">RealizeInstances</span> — flatten to single mesh
+</div>
+<div id="tabs"></div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":               "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":       "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-geometry-nodes":  "../../st-geometry-nodes/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  UVSphere, IcoSphere, Grid,
+  BoundingBox, ConvexHull, ExtrudeMesh, RealizeInstances,
+  DistributePointsOnFaces, InstanceOnPoints,
+} from '@st-geometry-nodes'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x060810)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2.5, 7)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xfff0cc, 1.5)
+sun.position.set(4, 6, 3); scene.add(sun)
+scene.add(new THREE.GridHelper(10, 10, 0x111122, 0x0a0a18))
+
+let meshes = []
+
+function clearScene() {
+  meshes.forEach(m => { scene.remove(m); m.geometry?.dispose(); m.material?.dispose() })
+  meshes = []
+}
+
+const wireMat  = (hex) => new THREE.MeshStandardMaterial({ color: hex, wireframe: false, roughness: 0.5 })
+const wMat     = (hex) => new THREE.MeshBasicMaterial({ color: hex, wireframe: true, opacity: 0.5, transparent: true })
+
+function addMesh(geo, mat, x=0, y=0, z=0) {
+  const m = new THREE.Mesh(geo, mat)
+  m.position.set(x, y, z)
+  scene.add(m); meshes.push(m); return m
+}
+
+// ── Demo builders ─────────────────────────────────────────────────────────────
+
+function demoBoundingBox() {
+  clearScene()
+  const sphere = new IcoSphere({ subdivisions: 2 })
+  const geo    = sphere.output('Geometry').evaluate()
+
+  // Show original
+  addMesh(geo, wireMat(0x4488ff), -2, 0, 0)
+
+  // Bounding box
+  const bb   = new BoundingBox({ geometry: geo })
+  const bbGeo = bb.output('Bounding Box').evaluate()
+  addMesh(bbGeo, wMat(0xff8844), -2, 0, 0)
+
+  // Torus example
+  const tGeo = new THREE.TorusGeometry(1, 0.3, 8, 24)
+  addMesh(tGeo, wireMat(0x44ffaa), 2, 0, 0)
+  const bb2   = new BoundingBox({ geometry: tGeo })
+  const bbGeo2 = bb2.output('Bounding Box').evaluate()
+  addMesh(bbGeo2, wMat(0xff8844), 2, 0, 0)
+}
+
+function demoConvexHull() {
+  clearScene()
+  // Random point cloud → convex hull
+  const count = 40
+  const pos   = new Float32Array(count * 3)
+  for (let i = 0; i < count; i++) {
+    pos[i*3]   = (Math.random() - 0.5) * 3
+    pos[i*3+1] = (Math.random() - 0.5) * 3
+    pos[i*3+2] = (Math.random() - 0.5) * 3
+  }
+  const ptGeo = new THREE.BufferGeometry()
+  ptGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+
+  // Points cloud
+  const pts = new THREE.Points(ptGeo, new THREE.PointsMaterial({ color: 0xffff44, size: 0.08 }))
+  scene.add(pts); meshes.push(pts)
+
+  const hull = new ConvexHull({ geometry: ptGeo })
+  const hGeo  = hull.output('Geometry').evaluate()
+  if (hGeo) addMesh(hGeo, new THREE.MeshStandardMaterial({ color: 0x4488ff, transparent: true, opacity: 0.4, side: THREE.DoubleSide }))
+}
+
+function demoExtrudeMesh(offsetVal = 0.3) {
+  clearScene()
+  const sphere = new IcoSphere({ subdivisions: 1 })
+  const ext    = new ExtrudeMesh({ geometry: sphere.output('Geometry'), offset: offsetVal, offsetScale: 1 })
+  const geo    = ext.output('Geometry').evaluate()
+  addMesh(geo, wireMat(0x55cc88))
+}
+
+function demoRealizeInstances() {
+  clearScene()
+  const grid = new Grid({ vertsX: 3, vertsY: 3, size: 3 })
+  const pts  = new DistributePointsOnFaces({ geometry: grid.output('Geometry'), count: 20, seed: 42 })
+  const inst = new InstanceOnPoints({
+    points:   pts.output('Points'),
+    geometry: new THREE.SphereGeometry(0.2),
+    scale:    (i, n) => 0.5 + (i / n) * 1.5,
+  })
+  const real = new RealizeInstances({ geometry: inst.output('Instances') })
+  const geo  = real.output('Geometry').evaluate()
+  if (geo) addMesh(geo, wireMat(0xee8844))
+}
+
+// ── Presets / tabs ─────────────────────────────────────────────────────────────
+const presets = [
+  {
+    name: 'BoundingBox',
+    knobs: [],
+    fn: () => demoBoundingBox(),
+  },
+  {
+    name: 'ConvexHull',
+    knobs: [],
+    fn: () => demoConvexHull(),
+  },
+  {
+    name: 'ExtrudeMesh',
+    knobs: [
+      { label: 'offset', key: 'offset', min: 0, max: 1, step: 0.02, def: 0.3 },
+    ],
+    fn: (v) => demoExtrudeMesh(v.offset ?? 0.3),
+  },
+  {
+    name: 'RealizeInstances',
+    knobs: [],
+    fn: () => demoRealizeInstances(),
+  },
+]
+
+const panelEl = document.getElementById('panel')
+const tabsEl  = document.getElementById('tabs')
+let activeKnobs = {}
+
+function activatePreset(i) {
+  document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  const preset = presets[i]
+  activeKnobs = {}
+  preset.knobs.forEach(k => { activeKnobs[k.key] = k.def })
+
+  panelEl.innerHTML = ''
+  for (const k of preset.knobs) {
+    const row = document.createElement('label')
+    const val = document.createElement('span')
+    const inp = document.createElement('input')
+    inp.type='range'; inp.min=k.min; inp.max=k.max; inp.step=k.step; inp.value=k.def
+    val.textContent = (+inp.value).toFixed(2)
+    inp.addEventListener('input', () => {
+      activeKnobs[k.key] = +inp.value
+      val.textContent = (+inp.value).toFixed(2)
+      preset.fn(activeKnobs)
+    })
+    row.innerHTML=`<span>${k.label}</span>`; row.appendChild(inp); row.appendChild(val)
+    panelEl.appendChild(row)
+  }
+  preset.fn(activeKnobs)
+}
+
+presets.forEach((p, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = p.name
+  btn.addEventListener('click', () => activatePreset(i))
+  tabsEl.appendChild(btn)
+})
+activatePreset(0)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  meshes.forEach(m => { m.rotation.y = clock.getElapsedTime() * 0.2 })
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

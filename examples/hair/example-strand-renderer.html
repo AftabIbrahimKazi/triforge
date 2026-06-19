@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-particle-core — Strand Renderer (Hair/Grass)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px; width: 250px;
+    background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 8px;
+    padding: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 13px;
+  }
+  h2 { font-size: 13px; color: #aaa; border-bottom: 1px solid #333; padding-bottom: 6px; }
+  label { display: flex; justify-content: space-between; align-items: center; }
+  input[type=range] { width: 120px; accent-color: #7af; }
+  select { background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 2px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h2>Strand Renderer — st-particle-core</h2>
+  <label>Count <input type="range" id="count" min="10" max="500" step="10" value="200"></label>
+  <label>Segments <input type="range" id="segs" min="2" max="20" step="1" value="8"></label>
+  <label>Wave Amp <input type="range" id="amp" min="0" max="0.3" step="0.01" value="0.05"></label>
+  <label>Wave Freq <input type="range" id="freq" min="0.5" max="10" step="0.5" value="3"></label>
+  <label>Mode <select id="mode"><option value="line">line</option><option value="tube">tube</option></select></label>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.167/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem, PointEmitter, GravityForce, StrandRenderer,
+} from '../../st-particle-core/dist/index.js'
+
+// ── Scene setup ──────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a1a0a)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 3, 8)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 1.5, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.8))
+scene.add(new THREE.DirectionalLight(0xffffff, 1))
+scene.getObjectByName || Object.assign(scene, {})
+
+// Ground plane
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(10, 10),
+  new THREE.MeshStandardMaterial({ color: 0x1a3a1a })
+)
+ground.rotation.x = -Math.PI / 2
+scene.add(ground)
+scene.add(new THREE.GridHelper(10, 20, 0x2a4a2a, 0x1a3a1a))
+
+// ── Particle system + strand renderer ────────────────────────────────────────
+let sys, strandRenderer
+
+function build() {
+  if (strandRenderer) scene.remove(strandRenderer.object3D)
+
+  const count  = parseInt(document.getElementById('count').value)
+  const segs   = parseInt(document.getElementById('segs').value)
+  const mode   = document.getElementById('mode').value
+  const amp    = parseFloat(document.getElementById('amp').value)
+  const freq   = parseFloat(document.getElementById('freq').value)
+
+  // Grass-like curve: grows upward with a gentle lateral wave
+  const strandCurve = (p, t) => ({
+    x: p.position.x + Math.sin(t * Math.PI * freq + p.position.x * 3) * amp * t,
+    y: p.position.y + t * (p.size * 4 + 0.3),
+    z: p.position.z + Math.cos(t * Math.PI * freq + p.position.z * 3) * amp * t * 0.5,
+  })
+
+  strandRenderer = new StrandRenderer({
+    maxCount:    count,
+    segments:    segs,
+    mode,
+    strandCurve,
+    material: mode === 'tube'
+      ? new THREE.MeshStandardMaterial({ color: 0x44aa44, roughness: 0.8, side: THREE.DoubleSide })
+      : new THREE.LineBasicMaterial({ color: 0x55cc55 }),
+  })
+
+  sys = new ParticleSystem({ count })
+  const emitter = new PointEmitter({
+    spreadX: 2.5, spreadZ: 2.5,
+    startSize: 0.06, endSize: 0.04,
+    lifetime: 99999,
+  })
+  sys.addEmitter(emitter)
+  sys.setRenderer(strandRenderer)
+
+  // Emit all at once
+  for (let i = 0; i < count; i++) sys.update(0.001)
+
+  scene.add(strandRenderer.object3D)
+}
+
+build()
+
+document.getElementById('count').addEventListener('change', build)
+document.getElementById('segs').addEventListener('change', build)
+document.getElementById('mode').addEventListener('change', build)
+document.getElementById('amp').addEventListener('input', () => {
+  // Rebuild so new amp is captured in the closure
+  build()
+})
+document.getElementById('freq').addEventListener('input', () => {
+  build()
+})
+
+// ── Animate ──────────────────────────────────────────────────────────────────
+let last = performance.now()
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - last) / 1000, 0.033)
+  last = now
+
+  sys.update(dt)
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

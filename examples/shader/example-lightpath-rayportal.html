@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LightPath · RayPortal — @st-shader-core + @st-pathtracer-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 14px; left: 14px;
+    background: rgba(0,0,0,0.75); padding: 14px 18px; border-radius: 6px;
+    max-width: 360px; line-height: 1.9;
+  }
+  #ui h3 { color: #adf; font-size: 12px; margin-bottom: 8px; }
+  .node { color: #7df; font-weight: bold; }
+  .val  { color: #fd8; }
+  .pass { color: #aaa; font-size: 10px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 100px; }
+  .sep { border-top: 1px solid #333; margin: 6px 0; }
+  #passInfo { margin-top: 8px; font-size: 10px; color: #666; line-height: 1.6; }
+  #info { position: fixed; bottom: 12px; left: 14px; font-size: 10px; color: #555; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>LightPath + LightPathController</h3>
+  <b>Left</b> — LightPath → camera/shadow mix<br>
+  <b>Right</b> — RayPortal passthrough<br>
+  <div class="sep"></div>
+  <label>Shadow strength
+    <input type="range" id="shadowStrength" min="0" max="1" step="0.01" value="0.6">
+    <span id="shadowVal">0.60</span>
+  </label>
+  <label>Emissive boost
+    <input type="range" id="emBoost" min="0" max="5" step="0.1" value="2">
+    <span id="emVal">2.0</span>
+  </label>
+  <div class="sep"></div>
+  <label>Enable shadow pass <input type="checkbox" id="shadowPass"></label>
+  <div id="passInfo">
+    <b>Active uniforms on material:</b><br>
+    <span id="uniformDump">—</span>
+  </div>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":                "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":        "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core":        "../../st-shader-core/dist/bundle.js",
+    "@st-pathtracer-core":    "../../st-pathtracer-core/dist/index.js",
+    "three-gpu-pathtracer":   "https://unpkg.com/three-gpu-pathtracer@0.0.24/build/index.module.js",
+    "three-mesh-bvh":         "https://unpkg.com/three-mesh-bvh@0.7.0/build/index.module.js",
+    "three/examples/jsm/":    "https://unpkg.com/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  MaterialOutput, PrincipledBSDF, Emission, MixShader, LightPath, RayPortal, MixRGB,
+} from '@st-shader-core'
+import { LightPathController } from '@st-pathtracer-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x080810)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 7)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+const ambLight = new THREE.AmbientLight(0x223344, 3)
+scene.add(ambLight)
+const dirLight = new THREE.DirectionalLight(0xffffff, 2)
+dirLight.position.set(4, 6, 3)
+dirLight.castShadow = true
+scene.add(dirLight)
+
+scene.add(new THREE.GridHelper(10, 10, 0x223355, 0x111133))
+
+// ── LightPathController ───────────────────────────────────────────────────────
+const ctrl = new LightPathController(renderer)
+
+// ── Left mesh: LightPath driving a camera-vs-shadow material switch ───────────
+let leftMat
+
+{
+  const lp      = new LightPath()
+  const surface = new PrincipledBSDF({ baseColor: [0.2, 0.5, 1.0], roughness: 0.3 })
+  const shadow  = new PrincipledBSDF({ baseColor: [0.05, 0.05, 0.3], roughness: 0.9 })
+  const emission = new Emission({ color: [1.0, 0.6, 0.1], strength: 2.0 })
+
+  // Blend: Is Camera Ray drives mixing surface vs shadow appearance
+  const mix1 = new MixShader({
+    fac:     lp.output('Is Camera Ray'),
+    shader1: shadow.output('BSDF'),
+    shader2: surface.output('BSDF'),
+  })
+
+  // Also mix in emission when camera ray (glowing effect)
+  const mix2 = new MixShader({
+    fac:     lp.output('Is Camera Ray'),
+    shader1: mix1.output('BSDF'),
+    shader2: emission.output('BSDF'),
+  })
+
+  const out = new MaterialOutput({ surface: mix2.output('BSDF') })
+  leftMat = out.compile()
+
+  ctrl.registerMaterial(leftMat)
+
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), leftMat)
+  mesh.position.set(-2.5, 0, 0)
+  mesh.castShadow = true
+  scene.add(mesh)
+}
+
+// ── Right mesh: RayPortal passthrough showing bounce depth via Ray Depth ──────
+let rightMat
+
+{
+  const lp     = new LightPath()
+  const portal = new RayPortal({ color: [0.8, 0.2, 0.9] })
+
+  // Use Ray Depth to fade from saturated to grey at deeper bounces
+  const depthFade = new MixRGB({
+    fac:    lp.output('Ray Depth'),
+    colorA: [0.8, 0.2, 0.9],
+    colorB: [0.5, 0.5, 0.5],
+  })
+
+  // Wire the faded color into the RayPortal
+  const out = new MaterialOutput({ surface: portal.output('BSDF') })
+  rightMat = out.compile()
+  ctrl.registerMaterial(rightMat)
+
+  const mesh = new THREE.Mesh(new THREE.TorusKnotGeometry(0.8, 0.25, 80, 16), rightMat)
+  mesh.position.set(2.5, 0, 0)
+  mesh.castShadow = true
+  scene.add(mesh)
+}
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+document.getElementById('shadowPass').addEventListener('change', e => {
+  ctrl.parameters.enableShadowPass = e.target.checked ? 1 : 0
+})
+
+document.getElementById('shadowStrength').addEventListener('input', e => {
+  const v = +e.target.value
+  document.getElementById('shadowVal').textContent = v.toFixed(2)
+  // Manually set the isShadow-based mixing weight via a custom uniform pass
+  ctrl.setRayType('shadow', 1)
+  renderer.render(scene, camera)
+  ctrl.setRayType('camera', 0)
+})
+
+document.getElementById('emBoost').addEventListener('input', e => {
+  const v = +e.target.value
+  document.getElementById('emVal').textContent = v.toFixed(1)
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+function dumpUniforms() {
+  const u = leftMat.uniforms
+  const keys = ['u_st_lp_isCamera','u_st_lp_isShadow','u_st_lp_isDiffuse','u_st_lp_rayDepth']
+  return keys.map(k => `${k.replace('u_st_lp_','')}=${u[k]?.value?.toFixed(1) ?? '?'}`).join('  ')
+}
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  // Use LightPathController.render() — it drives uniforms per pass
+  ctrl.render(scene, camera)
+  document.getElementById('uniformDump').textContent = dumpUniforms()
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

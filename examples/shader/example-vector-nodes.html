@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vector Nodes — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px; }
+  #labels { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .label { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.6);
+    padding: 2px 7px; border-radius: 3px; font: 10px monospace; color: #eee; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="info">Vector Nodes — @st-shader-core<br>Bump · NormalMap · Mapping · VectorRotate · VectorTransform · VectorMath</div>
+<div id="labels"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  MaterialOutput, PrincipledBSDF,
+  NoiseTexture, WaveTexture, ColorRamp, RGBtoBW,
+  Bump, NormalMap, Mapping, VectorRotate, VectorTransform, VectorMath,
+  TextureCoordinate, Geometry, RGB, Value
+} from '@st-shader-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d0d)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.3))
+const sun = new THREE.DirectionalLight(0xffffff, 3)
+sun.position.set(5, 8, 4)
+scene.add(sun)
+const fill = new THREE.DirectionalLight(0x4466ff, 0.6)
+fill.position.set(-4, 2, -3)
+scene.add(fill)
+
+const defs = [
+  {
+    name: 'No normal\n(flat reference)',
+    build: () => {
+      const bsdf = new PrincipledBSDF({ roughness: 0.2, metallic: 0.8 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'Bump',
+    build: () => {
+      const noise = new NoiseTexture({ scale: 6.0, detail: 4.0 })
+      const bw    = new RGBtoBW({ color: noise.output('Color') })
+      const bump  = new Bump({ height: bw.output('Val'), strength: 3.0, distance: 0.05 })
+      const bsdf  = new PrincipledBSDF({ roughness: 0.2, metallic: 0.8, normal: bump.output('Normal') })
+      const mat   = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'NormalMap',
+    build: () => {
+      const wave = new WaveTexture({ scale: 5.0, distortion: 1.5 })
+      const nm   = new NormalMap({ fac: wave.output('Fac'), strength: 2.0 })
+      const bsdf = new PrincipledBSDF({ roughness: 0.15, metallic: 0.9, normal: nm.output('Normal') })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'Mapping\n(UV scale)',
+    build: () => {
+      const tc   = new TextureCoordinate()
+      const map  = new Mapping({ vector: tc.output('Normal'), scale: [3, 3, 3] })
+      const noise = new NoiseTexture({ scale: 1.0, vector: map.output('Vector') })
+      const ramp  = new ColorRamp({ fac: noise.output('Fac'), stops: ['#001133', '#0088ff'] })
+      const bsdf  = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.3 })
+      const mat   = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'VectorRotate\n(Z axis)',
+    build: () => {
+      const tc   = new TextureCoordinate()
+      const rot  = new VectorRotate({ mode: 'AXIS_ANGLE', vector: tc.output('Normal'), angle: 0.785 })
+      const noise = new NoiseTexture({ scale: 3.0, vector: rot.output('Vector') })
+      const ramp  = new ColorRamp({ fac: noise.output('Fac'), stops: ['#220011', '#ff0055', '#ffaacc'] })
+      const bsdf  = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.5 })
+      const mat   = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'VectorMath\n(NORMALIZE)',
+    build: () => {
+      const geo  = new Geometry()
+      const vm   = new VectorMath({ mode: 'NORMALIZE', vector: geo.output('Position') })
+      const noise = new NoiseTexture({ scale: 4.0, vector: vm.output('Vector') })
+      const ramp  = new ColorRamp({ fac: noise.output('Fac'), stops: ['#002211', '#00cc88', '#aaffee'] })
+      const bsdf  = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.3 })
+      const mat   = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  }
+]
+
+const geo    = new THREE.SphereGeometry(0.9, 64, 48)
+const span   = (defs.length - 1) * 2.4
+const labels = document.getElementById('labels')
+
+const spheres = defs.map((def, i) => {
+  const mat  = def.build()
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.position.x = -span / 2 + i * 2.4
+  scene.add(mesh)
+  const lbl = document.createElement('div')
+  lbl.className = 'label'
+  lbl.textContent = def.name
+  labels.appendChild(lbl)
+  return { mesh, lbl }
+})
+
+function projectLabel(mesh, lbl) {
+  const v = mesh.position.clone().project(camera)
+  lbl.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px'
+  lbl.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight + 78) + 'px'
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  spheres.forEach(({ mesh, lbl }) => projectLabel(mesh, lbl))
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SPH Fluid — @st-particle-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #030a12; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 280px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 220px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>SPH Fluid Physics</h3>
+  <span class="code">SPHPhysics</span> — Müller 2003 kernels<br>
+  Poly6 density · Spiky pressure · Viscosity<br><br>
+  Particles fall under gravity and<br>
+  interact via fluid pressure forces.
+</div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ParticleSystem, PointEmitter, BillboardRenderer, GravityForce, SPHPhysics } from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x030a12)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 3, 10)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 1, 0)
+
+scene.add(new THREE.GridHelper(10, 10, 0x112233, 0x0a1520))
+scene.add(new THREE.AmbientLight(0x334455, 0.8))
+const sun = new THREE.DirectionalLight(0x88ccff, 1.5)
+sun.position.set(3, 8, 4); scene.add(sun)
+
+// ── SPH particle system ───────────────────────────────────────────────────────
+const sph = new SPHPhysics({ stiffness: 0.8, viscosity: 0.15, h: 0.7, restDensity: 0.8 })
+
+const sys = new ParticleSystem({
+  count: 200,
+  start: 0, end: 2,
+  lifetime: 8,
+  size: 0.12, sizeRandom: 0.04,
+  physics: 'none', gravity: 0,
+})
+
+const emitter = new PointEmitter({ normalVelocity: 0.3, randomVelocity: 0.4 })
+sys.addEmitter(emitter)
+
+sys.addForce(new GravityForce({ strength: 3 }))
+
+const bill = new BillboardRenderer({
+  maxCount: 200,
+  material: new THREE.MeshBasicMaterial({
+    color: 0x44aaff, transparent: true, opacity: 0.75,
+    depthWrite: false,
+  }),
+})
+sys.setRenderer(bill)
+scene.add(bill.object3D)
+
+// ── Parameter panel ───────────────────────────────────────────────────────────
+const panelEl = document.getElementById('panel')
+const knobs = [
+  { label: 'stiffness',  obj: sph.parameters, key: 'stiffness',  min: 0, max: 3,   step: 0.05, def: 0.8 },
+  { label: 'viscosity',  obj: sph.parameters, key: 'viscosity',  min: 0, max: 1,   step: 0.02, def: 0.15 },
+  { label: 'gravity',    obj: null,            key: null,         min: 0, max: 10,  step: 0.5,  def: 3 },
+]
+
+for (const k of knobs) {
+  const row   = document.createElement('label')
+  const val   = document.createElement('span')
+  const input = document.createElement('input')
+  input.type = 'range'; input.min = k.min; input.max = k.max; input.step = k.step; input.value = k.def
+  val.textContent = (+input.value).toFixed(2)
+  input.addEventListener('input', () => {
+    val.textContent = (+input.value).toFixed(2)
+    if (k.obj) k.obj[k.key] = +input.value
+  })
+  row.innerHTML = `<span>${k.label}</span>`; row.appendChild(input); row.appendChild(val)
+  panelEl.appendChild(row)
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05)
+  sys.update(dt)
+
+  // Apply SPH after standard physics
+  sph.apply(sys.pool, dt)
+
+  // Simple floor bounce
+  for (const p of sys.pool) {
+    if (!p.alive) continue
+    if (p.position.y < 0) { p.position.y = 0; p.velocity.y = Math.abs(p.velocity.y) * 0.3 }
+  }
+
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

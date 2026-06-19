@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Shoreline — Option A vs Option B</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; }
+  canvas { display: block; }
+
+  /* Centre divider line */
+  #divider {
+    position: fixed; left: 50%; top: 0; bottom: 0;
+    width: 2px; background: rgba(255,255,255,0.25);
+    pointer-events: none; z-index: 10;
+  }
+
+  /* Labels */
+  .label {
+    position: fixed; top: 18px;
+    background: rgba(0,0,0,0.65);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px; padding: 10px 18px;
+    font: 600 12px/1.6 monospace; letter-spacing: .06em;
+    color: #fff; pointer-events: none; z-index: 10;
+  }
+  #label-a { left: 18px; border-color: rgba(100,200,255,0.4); }
+  #label-b { right: 18px; border-color: rgba(255,180,80,0.4); }
+  .label .title { font-size: 14px; letter-spacing: .04em; margin-bottom: 4px; }
+  .label .desc  { font-size: 10px; color: rgba(255,255,255,0.55); font-weight: 400; }
+  #label-a .title { color: #6cd4ff; }
+  #label-b .title { color: #ffb84a; }
+
+  /* ── Control panels ───────────────────────────────────────────────────── */
+  .panel {
+    position: fixed; bottom: 18px;
+    background: rgba(8,10,16,0.88);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px; padding: 12px 16px;
+    font: 400 10px/1 monospace;
+    z-index: 20; min-width: 210px;
+    backdrop-filter: blur(10px);
+  }
+  #panel-shared { left: 50%; transform: translateX(-50%); border-color: rgba(255,255,255,0.18); }
+  #panel-a      { left: 18px;  border-color: rgba(100,200,255,0.3); }
+  #panel-b      { right: 18px; border-color: rgba(255,180,80,0.3); }
+
+  .panel-title {
+    font: 600 9px/1 monospace; letter-spacing: .14em; text-transform: uppercase;
+    margin-bottom: 10px; padding-bottom: 7px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  #panel-a .panel-title      { color: #6cd4ff; }
+  #panel-b .panel-title      { color: #ffb84a; }
+  #panel-shared .panel-title { color: rgba(255,255,255,0.5); }
+
+  .row {
+    display: grid; grid-template-columns: 88px 1fr 34px;
+    align-items: center; gap: 6px; margin: 6px 0;
+  }
+  .row label { color: rgba(255,255,255,0.42); letter-spacing: .03em; }
+  .row input[type=range] {
+    -webkit-appearance: none; width: 100%; height: 2px;
+    background: rgba(255,255,255,0.18); border-radius: 1px; outline: none; cursor: pointer;
+  }
+  .row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%;
+    background: #4a9eff; border: 2px solid rgba(255,255,255,0.5); cursor: pointer;
+  }
+  #panel-a .row input[type=range]::-webkit-slider-thumb { background: #6cd4ff; }
+  #panel-b .row input[type=range]::-webkit-slider-thumb { background: #ffb84a; }
+  .row .v { color: rgba(255,255,255,0.75); text-align: right; font-size: 9px; }
+
+  #hint {
+    position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+    font: 400 9px/1 monospace; letter-spacing: .08em;
+    color: rgba(255,255,255,0.20); pointer-events: none; z-index: 5;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div id="divider"></div>
+
+<div class="label" id="label-a">
+  <div class="title">OPTION A</div>
+  <div class="desc">Ocean mesh extends onto beach<br>Vertices clamped to sand surface<br>Water physically washes up slope</div>
+</div>
+
+<div class="label" id="label-b">
+  <div class="title">OPTION B</div>
+  <div class="desc">Ocean stops at waterline (z=0)<br>Separate animated swash plane<br>Two distinct meshes, blended edge</div>
+</div>
+
+<div id="hint">DRAG TO ORBIT EACH SIDE INDEPENDENTLY &nbsp;·&nbsp; SAME WAVES, DIFFERENT MEETING APPROACH</div>
+
+<!-- ── SHARED WAVE CONTROLS ────────────────────────────────────────────── -->
+<div class="panel" id="panel-shared">
+  <div class="panel-title">Wave Settings (Both)</div>
+  <div class="row"><label>Scale</label>      <input type="range" id="s-scale"      min="0.5" max="8"   step="0.1" value="3.2"><span class="v" id="v-s-scale">3.2</span></div>
+  <div class="row"><label>Choppiness</label> <input type="range" id="s-chop"       min="0"   max="3"   step="0.05" value="1.1"><span class="v" id="v-s-chop">1.1</span></div>
+  <div class="row"><label>Wind Speed</label> <input type="range" id="s-wind"       min="2"   max="60"  step="1"   value="22"><span class="v" id="v-s-wind">22</span></div>
+  <div class="row"><label>Time Speed</label> <input type="range" id="s-timescale"  min="0.1" max="4"   step="0.05" value="1"><span class="v" id="v-s-timescale">1.0</span></div>
+  <div class="row"><label>Wave Period</label><input type="range" id="s-period"     min="1"   max="12"  step="0.5"  value="4"><span class="v" id="v-s-period">4.0</span></div>
+</div>
+
+<!-- ── OPTION A CONTROLS ──────────────────────────────────────────────── -->
+<div class="panel" id="panel-a">
+  <div class="panel-title">Option A — Beach Runup</div>
+  <div class="row"><label>Beach Slope</label> <input type="range" id="a-slope"   min="0.5" max="8"   step="0.1" value="3.5"><span class="v" id="v-a-slope">3.5</span></div>
+  <div class="row"><label>Runup Dist</label>  <input type="range" id="a-runup"   min="0"   max="35"  step="1"   value="35"><span class="v" id="v-a-runup">35</span></div>
+  <div class="row"><label>Foam Opacity</label><input type="range" id="a-foam"    min="0"   max="1"   step="0.01" value="0"><span class="v" id="v-a-foam">0.00</span></div>
+</div>
+
+<!-- ── OPTION B CONTROLS ──────────────────────────────────────────────── -->
+<div class="panel" id="panel-b">
+  <div class="panel-title">Option B — Swash Plane</div>
+  <div class="row"><label>Shoaling</label>    <input type="range" id="b-shoal"   min="0"   max="20"  step="1"   value="12"><span class="v" id="v-b-shoal">12</span></div>
+  <div class="row"><label>Swash Dist</label>  <input type="range" id="b-swash"   min="1"   max="20"  step="0.5" value="8"><span class="v" id="v-b-swash">8.0</span></div>
+  <div class="row"><label>Swash Opacity</label><input type="range" id="b-opacity" min="0"   max="0.8" step="0.01" value="0.22"><span class="v" id="v-b-opacity">0.22</span></div>
+  <div class="row"><label>Swash Color</label> <input type="range" id="b-color"   min="0"   max="1"   step="0.01" value="0.5"><span class="v" id="v-b-color">0.50</span></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core": "../../st-modifier-core/dist/index.js",
+    "@st-shader-core":   "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ModifierStack, OceanModifier } from '@st-modifier-core';
+import { OceanAttribute, ColorRamp, Emission,
+         PrincipledBSDF, AddShader, MaterialOutput,
+         LayerWeight, MixRGB, Value } from '@st-shader-core';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SINGLE RENDERER — scissor test splits screen into two viewports
+// ─────────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping        = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+renderer.setScissorTest(true);
+document.body.appendChild(renderer.domElement);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED: sun, wave settings, ocean shader
+// ─────────────────────────────────────────────────────────────────────────────
+const SUN_DIR = new THREE.Vector3(0.5, 0.38, -0.78).normalize();
+const OCEAN_SIZE = 160;
+const BEACH_DEPTH = 35;
+
+// ── Live parameters — sliders write here, render loop reads here ──────────────
+const P = {
+  timeScale:   1.0,
+  wavePeriod:  4.0,
+  // Option A
+  aBeachSlope: 3.5,
+  aRunupDist:  35,
+  aFoamOpacity: 0,
+  // Option B
+  bShoaling:   12,
+  bSwashDist:  8.0,
+  bSwashOpacity: 0.22,
+  bSwashColor: 0.5,
+};
+
+// Slider helper — bind a range input, display value, and write to P
+function sl(id, key, fmt) {
+  const inp = document.getElementById(id);
+  const val = document.getElementById('v-' + id);
+  if (!inp || !val) return;
+  const upd = () => { P[key] = parseFloat(inp.value); val.textContent = fmt(P[key]); };
+  inp.addEventListener('input', upd);
+  upd();
+}
+function f1(v) { return v.toFixed(1); }
+function f2(v) { return v.toFixed(2); }
+function fi(v) { return Math.round(v).toString(); }
+
+// Shared — scale/chop/wind write to oceanMod directly via applyWaveParams
+sl('s-timescale', 'timeScale',   f1);
+sl('s-period',    'wavePeriod',  f1);
+// Option A
+sl('a-slope',     'aBeachSlope', f1);
+sl('a-runup',     'aRunupDist',  fi);
+sl('a-foam',      'aFoamOpacity',f2);
+// Option B
+sl('b-shoal',     'bShoaling',   fi);
+sl('b-swash',     'bSwashDist',  f1);
+sl('b-opacity',   'bSwashOpacity',f2);
+sl('b-color',     'bSwashColor', f2);
+
+// Apply wave-param sliders to modifier and update display
+function applyWaveParams() {
+  const sv = (id, decimals) => {
+    const v = parseFloat(document.getElementById(id).value);
+    document.getElementById('v-' + id).textContent = v.toFixed(decimals);
+    return v;
+  };
+  oceanMod.parameters.scale      = sv('s-scale', 1);
+  oceanMod.parameters.choppiness = sv('s-chop',  2);
+  oceanMod.parameters.windSpeed  = sv('s-wind',  0);
+}
+['s-scale','s-chop','s-wind'].forEach(id =>
+  document.getElementById(id).addEventListener('input', applyWaveParams)
+);
+
+// Sprite for foam particles
+function makeSprite() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const ctx = c.getContext('2d'), r = 32;
+  const g = ctx.createRadialGradient(r,r,0,r,r,r);
+  g.addColorStop(0,'rgba(255,255,255,1)');
+  g.addColorStop(0.5,'rgba(255,255,255,0.6)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const sprite = makeSprite();
+
+// Ocean material (compiled once, used in both scenes)
+function buildOceanMaterial() {
+  const lw   = new LayerWeight(0.35);
+  const wc   = new MixRGB({ mode:'MIX', fac:lw.output('Fresnel'), colorA:'#010f1c', colorB:'#0a3a58' });
+  const bsdf = new PrincipledBSDF({ baseColor:wc.output('Color'), roughness:new Value(0.09), ior:new Value(1.33) });
+  const oa   = new OceanAttribute();
+  const ramp = new ColorRamp({ fac:oa.output('Fac'), stops:['#000000','#e8f4ff'] });
+  const emit = new Emission({ color:ramp.output('Color'), strength:new Value(2.8) });
+  const mo   = new MaterialOutput({ surface:new AddShader({ shader1:bsdf.output('BSDF'), shader2:emit.output('BSDF') }).output('BSDF') });
+  mo.compile();
+  const mat = mo.material;
+  mat.uniforms.uSunDirection = { value: SUN_DIR.clone() };
+  mat.uniforms.uSunColor     = { value: new THREE.Vector3(4.0,3.5,2.6) };
+  mat.uniforms.uAmbientColor = { value: new THREE.Vector3(0.22,0.34,0.60) };
+  mat.uniforms.time          = { value: 0 };
+  return mat;
+}
+
+// Shared OceanModifier — same simulation for both sides
+const oceanMod = new OceanModifier({
+  resolution: 96, size: OCEAN_SIZE,
+  scale: 3.2, choppiness: 1.1,
+  windSpeed: 22.0, windAngle: 90.0,
+  damping: 0.08, depth: 200.0,
+  foamCoverage: 0.42, turbulence: 0.10,
+  waveCount: 20, seed: 42,
+});
+const stack = new ModifierStack(new THREE.BufferGeometry());
+stack.add(oceanMod);
+applyWaveParams(); // sync sliders → modifier initial values
+
+// Build geometry with Z-translation so shore edge = world z=0
+function buildBaseGeo() {
+  const geo = stack.apply();
+  const pos = geo.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    pos.setZ(i, pos.getZ(i) - OCEAN_SIZE / 2);
+  }
+  pos.needsUpdate = true;
+  return geo;
+}
+
+// Beach height at a given world z
+function beachY(z) {
+  if (z <= 0) return z * 0.04;           // slight underwater slope
+  return (z / BEACH_DEPTH) * 3.5;        // rises 3.5 units over 35 units
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BUILD A SCENE  (shared helper used for both A and B)
+// ─────────────────────────────────────────────────────────────────────────────
+function buildScene() {
+  const scene = new THREE.Scene();
+  scene.fog   = new THREE.FogExp2(0x7aaabf, 0.006);
+
+  // Sky
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(1500,32,16),
+    new THREE.ShaderMaterial({
+      side:THREE.BackSide, depthWrite:false,
+      uniforms:{ uSun:{ value:SUN_DIR } },
+      vertexShader:`varying vec3 vDir;void main(){vDir=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+      fragmentShader:`
+        uniform vec3 uSun;varying vec3 vDir;
+        void main(){
+          vec3 d=normalize(vDir);float up=max(d.y,0.0);float h=pow(1.0-up,5.0);
+          vec3 col=mix(mix(vec3(0.02,0.07,0.22),vec3(0.05,0.22,0.50),smoothstep(0.5,0.0,up)),vec3(0.52,0.62,0.72),h*0.7);
+          float sunH=max(dot(normalize(vec3(uSun.x,0,uSun.z)),normalize(vec3(d.x,0,d.z))),0.0);
+          col=mix(col,vec3(0.95,0.55,0.15),pow(sunH,3.0)*h*1.2);
+          float sd=dot(d,normalize(uSun));
+          col+=vec3(0.92,0.58,0.18)*pow(max(sd,0.0),80.0)*0.7;
+          col+=vec3(0.88,0.42,0.12)*pow(max(sd,0.0),10.0)*h*0.5;
+          col=mix(col,vec3(1.0,0.96,0.82),smoothstep(0.999,0.9998,sd));
+          col=mix(col,vec3(0.03,0.08,0.16),smoothstep(0.0,0.2,-d.y));
+          gl_FragColor=vec4(col,1.0);
+        }`,
+    })
+  );
+  scene.add(sky);
+
+  // Lights
+  const sun = new THREE.DirectionalLight(0xffeedd, 4.0);
+  sun.position.copy(SUN_DIR);
+  scene.add(sun);
+  scene.add(new THREE.AmbientLight(0x3355aa, 2.5));
+
+  // Beach mesh (same profile for both — what differs is how the ocean meets it)
+  const bGeo = new THREE.PlaneGeometry(220, BEACH_DEPTH + 8, 44, 12);
+  bGeo.rotateX(-Math.PI / 2);
+  bGeo.translate(0, 0, (BEACH_DEPTH - 8) / 2);
+  const bPos = bGeo.getAttribute('position');
+  for (let i = 0; i < bPos.count; i++) {
+    const z = bPos.getZ(i);
+    bPos.setY(i, beachY(z) + (Math.abs(z) > 1 ? (Math.random()-0.5)*0.06 : 0));
+  }
+  bPos.needsUpdate = true;
+  bGeo.computeVertexNormals();
+  scene.add(new THREE.Mesh(bGeo,
+    new THREE.MeshStandardMaterial({ color:0xc8a060, roughness:0.94 })
+  ));
+
+  // Rocks
+  const rMat = new THREE.MeshStandardMaterial({ color:0x3a3844, roughness:0.88 });
+  [[-28,-5,1.8,0.9,1.5],[18,-4,1.4,0.8,1.2],[-10,-7,1.1,0.6,0.9],[32,-9,2.2,1.1,1.8]].forEach(([x,z,sx,sy,sz])=>{
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1,7,5),rMat);
+    m.scale.set(sx,sy,sz); m.position.set(x,sy*0.4,z); scene.add(m);
+  });
+
+  return { scene, sky };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPTION A — Ocean mesh extends onto beach
+// The ocean vertex positions are clamped to the beach surface.
+// When y_wave > beachY(z): water is above sand → water is visible (wave rushes up).
+// When y_wave < beachY(z): water is below sand → clamp to sand → sand exposed.
+// Result: the ocean surface physically washes up the slope with each wave.
+// ─────────────────────────────────────────────────────────────────────────────
+const scA = buildScene();
+const matA = buildOceanMaterial();
+let geoA = buildBaseGeo();
+const meshA = new THREE.Mesh(geoA, matA);
+scA.scene.add(meshA);
+
+function updateGeoA() {
+  const geo = buildBaseGeo();
+  const pos = geo.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    const z  = pos.getZ(i);
+    // Beach slope driven by slider
+    const by = z <= 0 ? z * 0.04 : (z / P.aRunupDist) * P.aBeachSlope;
+    if (pos.getY(i) < by) pos.setY(i, by);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Camera A — left viewport
+const camA = new THREE.PerspectiveCamera(65, 0.5, 0.3, 2000);
+camA.position.set(0, 2.5, 14);
+const ctrlA = new OrbitControls(camA, renderer.domElement);
+ctrlA.target.set(0, 0.3, -5);
+ctrlA.enableDamping = true; ctrlA.dampingFactor = 0.05;
+ctrlA.maxPolarAngle = Math.PI * 0.5;
+ctrlA.update();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPTION B — Ocean stops at z=0, separate animated swash plane
+// The ocean mesh ends cleanly at z=0 with no extension onto the beach.
+// A separate semi-transparent plane animates up the beach slope each wave.
+// The boundary between water and sand is always at z=0.
+// ─────────────────────────────────────────────────────────────────────────────
+const scB = buildScene();
+const matB = buildOceanMaterial();
+let geoB = buildBaseGeo();
+
+// For Option B: clip ocean to z ≤ 0 (don't extend onto beach)
+function updateGeoB() {
+  const geo = buildBaseGeo();
+  const pos = geo.getAttribute('position');
+  const shoalDist = Math.max(P.bShoaling, 1);
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    if (z > 0) {
+      pos.setY(i, 0);
+    }
+    // Shoaling: attenuate near shore — distance controlled by slider
+    if (z > -shoalDist) {
+      const t = (z + shoalDist) / shoalDist;
+      pos.setY(i, pos.getY(i) * (1 - t * t));
+    }
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const meshB = new THREE.Mesh(geoB, matB);
+scB.scene.add(meshB);
+
+// Swash plane — the animated wave runup on the beach
+const swashGeo = new THREE.PlaneGeometry(1, 1);
+swashGeo.rotateX(-Math.PI / 2);
+const swashMat = new THREE.MeshBasicMaterial({
+  color: 0xb8ddf0, transparent: true, opacity: 0, depthWrite: false,
+});
+const swashMesh = new THREE.Mesh(swashGeo, swashMat);
+swashMesh.position.y = 0.025;
+scB.scene.add(swashMesh);
+
+// Camera B — right viewport
+const camB = new THREE.PerspectiveCamera(65, 0.5, 0.3, 2000);
+camB.position.set(0, 2.5, 14);
+const ctrlB = new OrbitControls(camB, renderer.domElement);
+ctrlB.target.set(0, 0.3, -5);
+ctrlB.enableDamping = true; ctrlB.dampingFactor = 0.05;
+ctrlB.maxPolarAngle = Math.PI * 0.5;
+ctrlB.update();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORBIT CONTROLS — left half drives ctrlA, right half drives ctrlB
+// ─────────────────────────────────────────────────────────────────────────────
+renderer.domElement.addEventListener('pointerdown', e => {
+  const onLeft = e.clientX < innerWidth / 2;
+  ctrlA.enabled = onLeft;
+  ctrlB.enabled = !onLeft;
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESIZE
+// ─────────────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camA.aspect = (innerWidth / 2) / innerHeight;  camA.updateProjectionMatrix();
+  camB.aspect = (innerWidth / 2) / innerHeight;  camB.updateProjectionMatrix();
+});
+camA.aspect = (innerWidth / 2) / innerHeight; camA.updateProjectionMatrix();
+camB.aspect = (innerWidth / 2) / innerHeight; camB.updateProjectionMatrix();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+let elapsed = 0;
+
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt * P.timeScale;
+
+  // Advance ocean time
+  oceanMod.parameters.time = elapsed;
+
+  // Wave rhythm (period controlled by slider)
+  const phase = (elapsed % P.wavePeriod) / P.wavePeriod;
+  const raw   = phase < 0.30 ? phase / 0.30 : 1 - (phase - 0.30) / 0.70;
+  const hit   = Math.pow(raw, 0.5);
+
+  // ── Update Option A geometry ─────────────────────────────────────────────
+  const prevA = geoA;
+  geoA = updateGeoA();
+  meshA.geometry = geoA;
+  prevA.dispose();
+  matA.uniforms.time.value = elapsed;
+  scA.sky.position.copy(camA.position);
+
+  // ── Update Option B geometry ─────────────────────────────────────────────
+  const prevB = geoB;
+  geoB = updateGeoB();
+  meshB.geometry = geoB;
+  prevB.dispose();
+  matB.uniforms.time.value = elapsed;
+  scB.sky.position.copy(camB.position);
+
+  // Swash plane for Option B — all parameters slider-controlled
+  const runUp = hit * P.bSwashDist;
+  swashMesh.scale.set(220, 1, Math.max(0.01, runUp));
+  swashMesh.position.z = runUp * 0.5;
+  swashMesh.rotation.x = -Math.atan(P.aBeachSlope / BEACH_DEPTH);
+  swashMat.opacity = hit * P.bSwashOpacity;
+  // Swash color tint — 0=white, 1=deep blue
+  const sc = P.bSwashColor;
+  swashMat.color.setRGB(1 - sc * 0.28, 1 - sc * 0.13, 1);
+
+  ctrlA.update(); ctrlB.update();
+
+  // ── Render left half (Option A) ──────────────────────────────────────────
+  const hw = Math.floor(innerWidth / 2);
+  renderer.setScissor(0, 0, hw, innerHeight);
+  renderer.setViewport(0, 0, hw, innerHeight);
+  renderer.setClearColor(0x000000);
+  renderer.clear();
+  renderer.render(scA.scene, camA);
+
+  // ── Render right half (Option B) ─────────────────────────────────────────
+  renderer.setScissor(hw, 0, hw, innerHeight);
+  renderer.setViewport(hw, 0, hw, innerHeight);
+  renderer.clear();
+  renderer.render(scB.scene, camB);
+
+})();
+</script>
+</body>
+</html>

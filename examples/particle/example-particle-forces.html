@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Particle Forces — @st-particle-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #06080f; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.65); padding: 8px 12px; border-radius: 4px; }
+  #tabs { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .tab { background: rgba(0,0,0,0.6); border: 1px solid #333; padding: 5px 12px;
+    border-radius: 4px; cursor: pointer; color: #aaa; font: 11px monospace; }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+</style>
+</head>
+<body>
+<div id="info">Particle Forces — @st-particle-core<br>HarmonicForce · LennardJonesForce · ChargeForce · MagneticForce</div>
+<div id="tabs"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem, PointEmitter, BillboardRenderer,
+  GravityForce, DragForce,
+  HarmonicForce, LennardJonesForce, ChargeForce, MagneticForce
+} from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene   = new THREE.Scene()
+scene.background = new THREE.Color(0x06080f)
+const camera  = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500)
+camera.position.set(0, 4, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+
+const clock = new THREE.Clock()
+
+let activeSystem   = null
+let activeRenderer = null
+
+function clearActive() {
+  if (activeSystem)   { activeSystem.dispose?.();                      activeSystem = null }
+  if (activeRenderer) { scene.remove(activeRenderer.object3D); activeRenderer.dispose(); activeRenderer = null }
+}
+
+function makeSystem(extraForces) {
+  clearActive()
+
+  const bill = new BillboardRenderer({ maxCount: 600, opacity: 0.9, additive: true, fadeOut: true })
+  scene.add(bill.object3D)
+
+  const sys = new ParticleSystem({
+    count: 600, start: 0, end: 999,
+    lifetime: 3.0, lifetimeRandom: 0.5,
+    size: 0.15, sizeRandom: 0.1,
+    physics: 'newtonian', gravity: 0, drag: 0,
+  })
+
+  const emitter = new PointEmitter({ position: { x: 0, y: 0, z: 0 }, normalVelocity: 2.5, randomVelocity: 2.0 })
+
+  sys.addEmitter(emitter)
+  sys.addForce(new DragForce({ linear: 0.3 }))
+  for (const f of extraForces) sys.addForce(f)
+  sys.setRenderer(bill)
+
+  activeSystem   = sys
+  activeRenderer = bill
+}
+
+const defs = [
+  {
+    name: 'HarmonicForce\n(spring to origin)',
+    make: () => makeSystem([new HarmonicForce({ strength: 3.0, damping: 0.4 })])
+  },
+  {
+    name: 'LennardJonesForce\n(repel/attract)',
+    make: () => makeSystem([new LennardJonesForce({ strength: 2.0, equilibrium: 2.0 })])
+  },
+  {
+    name: 'ChargeForce\n(repulsion)',
+    make: () => makeSystem([new ChargeForce({ strength: 4.0, falloff: 2.0 })])
+  },
+  {
+    name: 'MagneticForce\n(spiral)',
+    make: () => makeSystem([new MagneticForce({ strength: 3.0, axisX: 0, axisY: 1, axisZ: 0 })])
+  }
+]
+
+const tabsEl = document.getElementById('tabs')
+
+function activateTab(i) {
+  tabsEl.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  defs[i].make()
+}
+
+defs.forEach((d, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = d.name
+  btn.addEventListener('click', () => activateTab(i))
+  tabsEl.appendChild(btn)
+})
+
+activateTab(0)
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+  if (activeSystem) activeSystem.update(dt)
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

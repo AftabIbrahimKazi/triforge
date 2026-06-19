@@ -1,0 +1,180 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CollectionRenderer Weights — st-particle-core</title>
+<style>
+body{margin:0;background:#111;overflow:hidden;font-family:monospace;}
+#ui{position:fixed;top:16px;left:16px;color:#eee;background:rgba(0,0,0,.6);padding:12px 16px;border-radius:8px;line-height:1.9;min-width:260px;}
+label{display:flex;align-items:center;gap:8px;}
+input[type=range]{width:140px;}
+.swatch{display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:4px;vertical-align:middle;}
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>CollectionRenderer Weights (E4)</b><br>
+  <label><span class="swatch" style="background:#f44"></span>Cubes weight:
+    <input type="range" id="r0" min="0" max="10" step="0.1" value="1"> <span id="l0">1</span>
+  </label>
+  <label><span class="swatch" style="background:#4f4"></span>Spheres weight:
+    <input type="range" id="r1" min="0" max="10" step="0.1" value="1"> <span id="l1">1</span>
+  </label>
+  <label><span class="swatch" style="background:#44f"></span>Cones weight:
+    <input type="range" id="r2" min="0" max="10" step="0.1" value="1"> <span id="l2">1</span>
+  </label>
+  <div id="counts">—</div>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 200)
+camera.position.set(0, 8, 20)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+scene.add(new THREE.GridHelper(30, 30, 0x333333, 0x222222))
+scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+const dir = new THREE.DirectionalLight(0xffffff, 1.2)
+dir.position.set(5, 10, 5)
+scene.add(dir)
+
+// ── Three mesh types with distinct colours ─────────────────────────────────
+const N = 3
+const geos = [
+  new THREE.BoxGeometry(0.4, 0.4, 0.4),
+  new THREE.SphereGeometry(0.25, 8, 6),
+  new THREE.ConeGeometry(0.2, 0.5, 6),
+]
+const mats = [
+  new THREE.MeshLambertMaterial({ color: 0xff4444 }),
+  new THREE.MeshLambertMaterial({ color: 0x44ff44 }),
+  new THREE.MeshLambertMaterial({ color: 0x4444ff }),
+]
+
+// ── Particles ─────────────────────────────────────────────────────────────
+const COUNT    = 300
+const MAX      = COUNT
+let weights    = [1, 1, 1]
+let cdf        = buildCDF(weights)
+
+const positions = Array.from({ length: COUNT }, () => new THREE.Vector3(
+  (Math.random() - 0.5) * 20, Math.random() * 4, (Math.random() - 0.5) * 20,
+))
+// Stable mesh assignment per particle: hash poolIdx
+const assignment = new Int32Array(COUNT)
+assignMeshes()
+
+// ── InstancedMesh pool per shape ──────────────────────────────────────────
+const iMeshes = geos.map((g, i) => {
+  const m = new THREE.InstancedMesh(g, mats[i], MAX)
+  m.frustumCulled = false
+  m.count = 0
+  scene.add(m)
+  return m
+})
+
+const _mat   = new THREE.Matrix4()
+const _pos   = new THREE.Vector3()
+const _quat  = new THREE.Quaternion()
+const _scale = new THREE.Vector3(1, 1, 1)
+const _zero  = new THREE.Matrix4().makeScale(0, 0, 0)
+
+function buildCDF(w) {
+  let sum = 0
+  const c = new Float64Array(N)
+  for (let i = 0; i < N; i++) { sum += Math.max(0, w[i]); c[i] = sum }
+  if (sum > 0) for (let i = 0; i < N; i++) c[i] /= sum
+  else for (let i = 0; i < N; i++) c[i] = (i + 1) / N
+  return c
+}
+
+function sampleCDF(r) {
+  for (let i = 0; i < N; i++) if (r < cdf[i]) return i
+  return N - 1
+}
+
+function assignMeshes() {
+  for (let i = 0; i < COUNT; i++) {
+    const hash = ((i * 2654435761) >>> 0) & 0xFFFF
+    const r    = hash / 65536
+    assignment[i] = sampleCDF(r)
+  }
+}
+
+function updateInstances() {
+  const counts = [0, 0, 0]
+  for (let i = 0; i < COUNT; i++) {
+    const mi = assignment[i]
+    const slot = counts[mi]
+    _pos.copy(positions[i])
+    _mat.compose(_pos, _quat, _scale)
+    iMeshes[mi].setMatrixAt(slot, _mat)
+    counts[mi]++
+  }
+  for (let i = 0; i < N; i++) {
+    // Zero unused slots
+    for (let j = counts[i]; j < iMeshes[i].count; j++) {
+      iMeshes[i].setMatrixAt(j, _zero)
+    }
+    iMeshes[i].count = counts[i]
+    iMeshes[i].instanceMatrix.needsUpdate = true
+  }
+  document.getElementById('counts').textContent =
+    `Cubes: ${counts[0]}  Spheres: ${counts[1]}  Cones: ${counts[2]}`
+}
+
+// ── Bind sliders ──────────────────────────────────────────────────────────
+function bindSlider(id, lblId, idx) {
+  document.getElementById(id).addEventListener('input', e => {
+    weights[idx] = +e.target.value
+    document.getElementById(lblId).textContent = e.target.value
+    cdf = buildCDF(weights)
+    assignMeshes()
+  })
+}
+bindSlider('r0', 'l0', 0)
+bindSlider('r1', 'l1', 1)
+bindSlider('r2', 'l2', 2)
+
+// Slow drift
+const driftSpeed = 0.3
+let lastT = performance.now()
+;(function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - lastT) / 1000, 0.05)
+  lastT = now
+
+  for (let i = 0; i < COUNT; i++) {
+    positions[i].x += Math.sin(now * 0.0005 + i * 0.7) * driftSpeed * dt
+    positions[i].z += Math.cos(now * 0.0004 + i * 0.9) * driftSpeed * dt
+    if (Math.abs(positions[i].x) > 12) positions[i].x *= -0.95
+    if (Math.abs(positions[i].z) > 12) positions[i].z *= -0.95
+  }
+  updateInstances()
+  controls.update()
+  renderer.render(scene, camera)
+})()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>UVProjectionModifier — @st-modifier-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px; }
+  #labels { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .label { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.6);
+    padding: 2px 7px; border-radius: 3px; font: 10px monospace; color: #eee; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="info">UVProjectionModifier — @st-modifier-core<br>Box · Sphere · Triplanar projection modes</div>
+<div id="labels"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":      "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core":  "../../st-modifier-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ModifierStack, UVProjectionModifier, NormalRecalculateModifier } from '@st-modifier-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d0d)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 12)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 2.5)
+sun.position.set(5, 10, 5)
+scene.add(sun)
+
+// Checkerboard texture to visualise UV seams clearly
+function makeChecker(size = 512) {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const n = 8
+  const cell = size / n
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#ffffff' : '#333333'
+      ctx.fillRect(x * cell, y * cell, cell, cell)
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  return tex
+}
+
+const checker = makeChecker()
+const mat = new THREE.MeshStandardMaterial({ map: checker, roughness: 0.6 })
+
+const baseGeo = new THREE.TorusKnotGeometry(0.8, 0.25, 128, 32)
+
+const modes = ['box', 'sphere', 'triplanar']
+const span  = (modes.length - 1) * 4
+
+const labels   = document.getElementById('labels')
+const labelEls = []
+
+modes.forEach((type, i) => {
+  const stack = new ModifierStack(baseGeo)
+  stack.add(new UVProjectionModifier({ type, scaleX: 1.5, scaleY: 1.5, scaleZ: 1.5 }))
+  const geo  = stack.apply()
+  const mesh = new THREE.Mesh(geo, mat.clone())
+  mesh.position.x = -span / 2 + i * 4
+  mesh.castShadow = true
+  scene.add(mesh)
+
+  const el = document.createElement('div')
+  el.className = 'label'
+  el.textContent = `UVProjection\n(${type})`
+  labels.appendChild(el)
+  labelEls.push({ mesh, el })
+})
+
+function projectLabel(mesh, lbl) {
+  const v = mesh.position.clone().project(camera)
+  lbl.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px'
+  lbl.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight + 80) + 'px'
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  labelEls.forEach(({ mesh, el }) => projectLabel(mesh, el))
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

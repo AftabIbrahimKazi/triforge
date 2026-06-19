@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-keyframe — Animation Driver</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a12; overflow: hidden; font-family: monospace; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px;
+    color: #ccc; font-size: 12px; line-height: 1.8;
+    background: rgba(0,0,0,0.55); padding: 12px 16px; border-radius: 6px;
+    min-width: 220px;
+  }
+  #ui h3 { color: #fff; margin-bottom: 6px; font-size: 13px; }
+  .row { display: flex; justify-content: space-between; gap: 16px; }
+  .val { color: #7df; }
+  #controls {
+    position: fixed; bottom: 16px; left: 16px;
+    display: flex; gap: 8px;
+  }
+  button {
+    background: #222; color: #ccc; border: 1px solid #444;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  button:hover { background: #333; }
+  #easing-panel {
+    position: fixed; top: 16px; right: 16px;
+    color: #ccc; font-size: 12px;
+    background: rgba(0,0,0,0.55); padding: 12px 16px; border-radius: 6px;
+  }
+  #easing-panel h3 { color: #fff; margin-bottom: 8px; }
+  #easing-panel label { display: block; cursor: pointer; padding: 2px 0; }
+  #easing-panel input { margin-right: 6px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>st-keyframe — live parameters</h3>
+  <div class="row"><span>bloom strength</span><span class="val" id="v-bloom">0.00</span></div>
+  <div class="row"><span>torus rotation X</span><span class="val" id="v-rotx">0.00</span></div>
+  <div class="row"><span>torus rotation Y</span><span class="val" id="v-roty">0.00</span></div>
+  <div class="row"><span>scale</span><span class="val" id="v-scale">1.00</span></div>
+  <div class="row"><span>emissive intensity</span><span class="val" id="v-emit">0.00</span></div>
+  <div class="row"><span>clip time</span><span class="val" id="v-time">0.00</span></div>
+  <div class="row"><span>loop count</span><span class="val" id="v-loop">0</span></div>
+</div>
+
+<div id="easing-panel">
+  <h3>Easing</h3>
+  <label><input type="radio" name="easing" value="linear" checked> Linear</label>
+  <label><input type="radio" name="easing" value="easeInOutSine"> Ease In/Out Sine</label>
+  <label><input type="radio" name="easing" value="easeInOutCubic"> Ease In/Out Cubic</label>
+  <label><input type="radio" name="easing" value="easeInOutExpo"> Ease In/Out Expo</label>
+  <label><input type="radio" name="easing" value="easeInBounce"> Ease In Bounce</label>
+  <label><input type="radio" name="easing" value="easeInElastic"> Ease In Elastic</label>
+</div>
+
+<div id="controls">
+  <button id="btn-play">⏸ Pause</button>
+  <button id="btn-restart">↺ Restart</button>
+  <button id="btn-loop">Loop: ON</button>
+  <button id="btn-speed">Speed: 1×</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "st-keyframe": "../../st-keyframe/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  KeyframeTrack, AnimationClip, AnimationMixer,
+  linear, easeInOutSine, easeInOutCubic, easeInOutExpo, easeInBounce, easeInElastic,
+  Easings,
+} from 'st-keyframe'
+
+const EASINGS = { linear, easeInOutSine, easeInOutCubic, easeInOutExpo, easeInBounce, easeInElastic }
+
+// ── Scene setup ──────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a12)
+scene.fog        = new THREE.FogExp2(0x0a0a12, 0.04)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 2, 8)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+// Lights
+const ambient = new THREE.AmbientLight(0x334455, 1.5)
+scene.add(ambient)
+const point = new THREE.PointLight(0x4466ff, 80, 20)
+point.position.set(3, 3, 3)
+scene.add(point)
+const point2 = new THREE.PointLight(0xff4422, 40, 20)
+point2.position.set(-3, -2, -3)
+scene.add(point2)
+
+// Main mesh: torus knot
+const geo = new THREE.TorusKnotGeometry(1.2, 0.35, 128, 32)
+const mat = new THREE.MeshStandardMaterial({
+  color: 0x3366ff,
+  emissive: 0x1122aa,
+  emissiveIntensity: 0,
+  metalness: 0.3,
+  roughness: 0.4,
+})
+const mesh = new THREE.Mesh(geo, mat)
+scene.add(mesh)
+
+// Grid
+const grid = new THREE.GridHelper(20, 20, 0x223355, 0x223355)
+grid.position.y = -2.5
+scene.add(grid)
+
+// Orbit spheres
+const orbitGeo = new THREE.SphereGeometry(0.15, 16, 16)
+const orbitMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x88aaff, emissiveIntensity: 0.5 })
+const orbiters = Array.from({ length: 6 }, (_, i) => {
+  const m = new THREE.Mesh(orbitGeo, orbitMat.clone())
+  scene.add(m)
+  return m
+})
+
+// ── Animation parameters (plain objects) ─────────────────────────────────────
+
+// These are the "parameters" objects that st-keyframe drives.
+// In real use these would be bloom.parameters, modifier.parameters, etc.
+const bloom   = { strength: 0 }        // simulates post-processing
+const rotation = { x: 0, y: 0 }
+const scale   = { value: 1 }
+const emissive = { intensity: 0 }
+
+// ── KeyframeTracks ──────────────────────────────────────────────────────────
+
+let currentEasing = linear
+
+function makeTrack(target, property, keyframeValues) {
+  // keyframeValues: [[time, value], ...]
+  // easing set on all but last keyframe
+  const kfs = keyframeValues.map(([t, v], i, arr) => ({
+    time: t, value: v,
+    easing: i < arr.length - 1 ? currentEasing : undefined
+  }))
+  return new KeyframeTrack(target, property, kfs)
+}
+
+let tracks, clip, mixer, action
+
+function buildAnimation() {
+  tracks = [
+    // bloom pulses twice per 4-second cycle
+    makeTrack(bloom,    'strength',   [[0,0],[1,1],[2,0],[3,0.7],[4,0]]),
+    // rotation oscillates
+    makeTrack(rotation, 'x',          [[0,0],[2,Math.PI],[4,Math.PI*2]]),
+    makeTrack(rotation, 'y',          [[0,0],[1.5,Math.PI*1.5],[4,Math.PI*2]]),
+    // scale breathes
+    makeTrack(scale,    'value',      [[0,1],[1,1.25],[2,0.9],[3,1.15],[4,1]]),
+    // emissive intensity pulses
+    makeTrack(emissive, 'intensity',  [[0,0],[0.5,1.2],[1,0.1],[2,0.8],[3,0.2],[4,0]]),
+  ]
+
+  clip  = new AnimationClip('main', tracks)
+  mixer = new AnimationMixer()
+  action = mixer.play(clip, { wrapMode: 'loop' })
+}
+
+buildAnimation()
+
+// ── UI controls ──────────────────────────────────────────────────────────────
+
+const btnPlay    = document.getElementById('btn-play')
+const btnRestart = document.getElementById('btn-restart')
+const btnLoop    = document.getElementById('btn-loop')
+const btnSpeed   = document.getElementById('btn-speed')
+
+let paused = false
+let looping = true
+let speedIdx = 0
+const speeds = [1, 0.5, 0.25, 2]
+
+btnPlay.addEventListener('click', () => {
+  paused = !paused
+  action.playing = !paused
+  btnPlay.textContent = paused ? '▶ Play' : '⏸ Pause'
+})
+
+btnRestart.addEventListener('click', () => {
+  action.time = 0
+  action.playing = true
+  paused = false
+  btnPlay.textContent = '⏸ Pause'
+})
+
+btnLoop.addEventListener('click', () => {
+  looping = !looping
+  action.wrapMode = looping ? 'loop' : 'once'
+  btnLoop.textContent = `Loop: ${looping ? 'ON' : 'OFF'}`
+})
+
+btnSpeed.addEventListener('click', () => {
+  speedIdx = (speedIdx + 1) % speeds.length
+  const s = speeds[speedIdx]
+  action.timeScale = s
+  btnSpeed.textContent = `Speed: ${s}×`
+})
+
+document.querySelectorAll('input[name="easing"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    currentEasing = EASINGS[radio.value] ?? linear
+    buildAnimation()
+  })
+})
+
+// ── Render loop ──────────────────────────────────────────────────────────────
+
+const clock = new THREE.Clock()
+
+function animate() {
+  requestAnimationFrame(animate)
+  const delta = clock.getDelta()
+
+  mixer.update(delta)
+
+  // Apply animated parameters to Three.js objects
+  mesh.rotation.x = rotation.x
+  mesh.rotation.y = rotation.y
+  mesh.scale.setScalar(scale.value)
+  mat.emissiveIntensity = emissive.intensity
+
+  // Bloom: simulate by adjusting scene fog density
+  scene.fog.density = 0.02 + bloom.strength * 0.06
+
+  // Orbit spheres
+  const r = 2.5 + bloom.strength * 0.5
+  orbiters.forEach((orb, i) => {
+    const angle = (i / 6) * Math.PI * 2 + rotation.y * 0.4
+    orb.position.set(
+      Math.cos(angle) * r,
+      Math.sin(angle * 1.7) * 0.8,
+      Math.sin(angle) * r,
+    )
+    orb.material.emissiveIntensity = 0.3 + bloom.strength * 1.2
+  })
+
+  // Update HUD
+  document.getElementById('v-bloom').textContent  = bloom.strength.toFixed(2)
+  document.getElementById('v-rotx').textContent   = (rotation.x % (Math.PI*2)).toFixed(2)
+  document.getElementById('v-roty').textContent   = (rotation.y % (Math.PI*2)).toFixed(2)
+  document.getElementById('v-scale').textContent  = scale.value.toFixed(2)
+  document.getElementById('v-emit').textContent   = emissive.intensity.toFixed(2)
+  document.getElementById('v-time').textContent   = action.time.toFixed(2)
+  document.getElementById('v-loop').textContent   = action.loopCount
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

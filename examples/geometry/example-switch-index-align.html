@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Switch · Index · AlignRotationToVector — @st-geometry-nodes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a12; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 14px; left: 14px;
+    background: rgba(0,0,0,0.7); padding: 12px 16px; border-radius: 6px;
+    min-width: 260px; line-height: 2;
+  }
+  #ui h3 { color: #adf; font-size: 12px; margin-bottom: 6px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  input[type=range] { width: 110px; }
+  .sep { border-top: 1px solid #333; margin: 6px 0; }
+  #info { position: fixed; bottom: 12px; left: 14px; font-size: 10px; color: #555; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>Geometry Node Utilities</h3>
+  <label>Switch A/B <input type="range" id="sw" min="0" max="1" step="0.01" value="0"></label>
+  <label>Index normalize <input type="checkbox" id="norm"></label>
+  <div class="sep"></div>
+  <label>Align factor <input type="range" id="factor" min="0" max="1" step="0.01" value="1"></label>
+  <label>Align axis
+    <select id="axis" style="background:#111;color:#ccc;border:1px solid #444;padding:2px 4px">
+      <option value="0">X</option>
+      <option value="1">Y</option>
+      <option value="2" selected>Z</option>
+    </select>
+  </label>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-geometry-nodes": "../../st-geometry-nodes/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import {
+  UVSphere, IcoSphere, Cube, Grid,
+  DistributePointsOnFaces, InstanceOnPoints,
+  Switch, Index, AlignRotationToVector,
+  evaluateGraph,
+} from '@st-geometry-nodes'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a12)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 4, 10)
+const controls = new OrbitControls(camera, renderer.domElement)
+scene.add(new THREE.AmbientLight(0x334466, 3))
+const dir = new THREE.DirectionalLight(0xffffff, 2)
+dir.position.set(4, 8, 4)
+scene.add(dir)
+
+// ── A: Switch node ─────────────────────────────────────────────────────────────
+// Left scene: Switch between a UVSphere and an IcoSphere based on slider
+
+const matA = new THREE.MeshPhongMaterial({ color: 0x44aaff, wireframe: false })
+const meshA = new THREE.Mesh(new THREE.BufferGeometry(), matA)
+meshA.position.set(-3.5, 0, 0)
+scene.add(meshA)
+
+const sphereA = new UVSphere({ radius: 1, widthSegments: 16, heightSegments: 12 })
+const sphereB = new IcoSphere({ radius: 1, subdivisions: 2 })
+const switchNode = new Switch({ geometryA: sphereA.output('Geometry'), geometryB: sphereB.output('Geometry') })
+
+function rebuildSwitch() {
+  const geo = evaluateGraph(switchNode.output('Geometry'))
+  if (geo) { meshA.geometry.dispose(); meshA.geometry = geo }
+}
+rebuildSwitch()
+
+document.getElementById('sw').addEventListener('input', (e) => {
+  switchNode.parameters.switch = +e.target.value
+  rebuildSwitch()
+})
+
+// ── B: Index node driving per-instance scale ───────────────────────────────────
+// Center scene: Cubes placed on a grid surface, scaled by normalized index
+
+const matB = new THREE.MeshPhongMaterial({ color: 0xff8833 })
+const meshB = new THREE.Mesh(new THREE.BufferGeometry(), matB)
+meshB.position.set(0, 0, 0)
+scene.add(meshB)
+
+const surface = new Grid({ sizeX: 4, sizeY: 4, subdivisionsX: 4, subdivisionsY: 4 })
+const pts     = new DistributePointsOnFaces({ mesh: surface.output('Geometry'), count: 25, seed: 42 })
+const idxNode = new Index({ normalized: 1 })
+
+function rebuildIndex() {
+  idxNode.parameters.normalized = document.getElementById('norm').checked ? 1 : 0
+  const scaleField = evaluateGraph(idxNode.output('Index'))
+  const instNode = new InstanceOnPoints({
+    points:   pts.output('Points'),
+    instance: new Cube({ size: 0.2 }).output('Geometry'),
+    scale:    scaleField,
+  })
+  const geo = evaluateGraph(instNode.output('Geometry'))
+  if (geo) { meshB.geometry.dispose(); meshB.geometry = geo }
+}
+rebuildIndex()
+document.getElementById('norm').addEventListener('change', rebuildIndex)
+
+// ── C: AlignRotationToVector ───────────────────────────────────────────────────
+// Right scene: Cone instances on a sphere surface, aligned to surface normals
+
+const matC = new THREE.MeshPhongMaterial({ color: 0x88ff44, side: THREE.DoubleSide })
+const meshC = new THREE.Mesh(new THREE.BufferGeometry(), matC)
+meshC.position.set(3.5, 0, 0)
+scene.add(meshC)
+
+const ballSurf = new UVSphere({ radius: 1.2, widthSegments: 12, heightSegments: 8 })
+const ballPts  = new DistributePointsOnFaces({ mesh: ballSurf.output('Geometry'), count: 60, seed: 7 })
+const alignNode = new AlignRotationToVector({
+  geometry: ballPts.output('Points'),
+  // radial outward vector field (normalized position = outward normal)
+  vectorField: (_i, _n) => {
+    // placeholder — actual per-point normals injected below
+    return [0, 1, 0]
+  },
+  factor: 1.0,
+  axis: 2,
+})
+
+function rebuildAlign() {
+  alignNode.parameters.factor = +document.getElementById('factor').value
+  alignNode.parameters.axis   = +document.getElementById('axis').value
+
+  // Evaluate the point cloud to get positions, compute outward vectors
+  const ptsGeo = evaluateGraph(ballPts.output('Points'))
+  if (!ptsGeo) return
+
+  const posAttr = ptsGeo.getAttribute('position')
+  const n = posAttr.count
+
+  // Build a fresh AlignRotationToVector with correct per-point vector field
+  const perPoint = new AlignRotationToVector({
+    geometry: ballPts.output('Points'),
+    vectorField: (i, _n) => {
+      const x = posAttr.getX(i), y = posAttr.getY(i), z = posAttr.getZ(i)
+      const len = Math.sqrt(x*x+y*y+z*z) || 1
+      return [x/len, y/len, z/len]
+    },
+    factor: alignNode.parameters.factor,
+    axis: alignNode.parameters.axis,
+  })
+
+  // Use InstanceOnPoints with the rotation attribute
+  const alignedPts = evaluateGraph(perPoint.output('Geometry'))
+  if (!alignedPts) return
+
+  // Instance small cones on those points, reading the rotation attribute
+  const rotAttr = alignedPts.getAttribute('rotation')
+
+  const coneGeo  = new THREE.ConeGeometry(0.06, 0.3, 5)
+  const geos = []
+  const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3(1,1,1)
+  for (let i = 0; i < n; i++) {
+    p.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i))
+    if (rotAttr) {
+      const rx = rotAttr.getX(i), ry = rotAttr.getY(i), rz = rotAttr.getZ(i)
+      q.setFromEuler(new THREE.Euler(rx, ry, rz, 'XYZ'))
+    } else {
+      q.identity()
+    }
+    const mat = new THREE.Matrix4().compose(p, q, s)
+    const g = coneGeo.clone()
+    const pa = g.getAttribute('position')
+    const v = new THREE.Vector3()
+    for (let j = 0; j < pa.count; j++) {
+      v.fromBufferAttribute(pa, j).applyMatrix4(mat)
+      pa.setXYZ(j, v.x, v.y, v.z)
+    }
+    geos.push(g)
+  }
+
+  if (geos.length > 0) {
+    const merged = mergeGeometries(geos)
+    merged.computeVertexNormals()
+    meshC.geometry.dispose()
+    meshC.geometry = merged
+  }
+}
+
+rebuildAlign()
+
+document.getElementById('factor').addEventListener('input', rebuildAlign)
+document.getElementById('axis').addEventListener('change', rebuildAlign)
+
+// ── Labels ─────────────────────────────────────────────────────────────────────
+function makeLabel(text, pos) {
+  const div = document.createElement('div')
+  div.style.cssText = 'position:fixed;font:10px monospace;color:#7df;pointer-events:none'
+  div.textContent = text
+  document.body.appendChild(div)
+  return { div, pos: new THREE.Vector3(...pos) }
+}
+const labels = [
+  makeLabel('Switch', [-3.5, 1.6, 0]),
+  makeLabel('Index (scale field)', [0, 1.6, 0]),
+  makeLabel('AlignRotationToVector', [3.5, 1.6, 0]),
+]
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  renderer.render(scene, camera)
+  labels.forEach(({ div, pos }) => {
+    const sp = pos.clone().project(camera)
+    div.style.left = ((sp.x * 0.5 + 0.5) * innerWidth) + 'px'
+    div.style.top  = ((-sp.y * 0.5 + 0.5) * innerHeight - 20) + 'px'
+  })
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

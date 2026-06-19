@@ -1,0 +1,426 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>st-particle-core — Cache / Bake (A8)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden }
+    canvas { display: block }
+    #ui {
+      position: fixed; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.6); padding: 12px 16px; border-radius: 6px;
+      display: flex; flex-direction: column; gap: 10px; min-width: 280px;
+    }
+    h2 { font-size: 13px; color: #aef; margin-bottom: 2px }
+    label { font-size: 11px; color: #ccc }
+    input[type=range] { width: 100% }
+    .row { display: flex; align-items: center; gap: 8px }
+    .row label { width: 90px; flex-shrink: 0 }
+    .val { font-size: 11px; color: #fa8; width: 38px; text-align: right }
+    .badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 4px;
+      background: #333; display: inline-block;
+    }
+    .badge.baked  { background: #164; color: #8fa }
+    .badge.live   { background: #532; color: #fba }
+    button {
+      cursor: pointer; border: none; border-radius: 4px;
+      padding: 5px 10px; font-size: 11px; font-family: monospace;
+      background: #334; color: #dde;
+    }
+    button:hover { background: #446 }
+    #legend { font-size: 10px; color: #888; margin-top: 4px }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h2>Cache / Bake — Phase A8</h2>
+
+  <div class="row">
+    <label>Mode</label>
+    <span id="modeBadge" class="badge live">LIVE</span>
+    <button id="btnBake">Bake 5 s</button>
+    <button id="btnUnbake">Unbake</button>
+  </div>
+
+  <div class="row">
+    <label>Scrub (baked)</label>
+    <input type="range" id="scrub" min="0" max="5" step="0.01" value="0" disabled>
+    <span class="val" id="scrubVal">0.00</span>
+  </div>
+
+  <div class="row">
+    <label>Frame</label>
+    <span class="val" id="frameInfo">—</span>
+  </div>
+
+  <div class="row">
+    <label>scaleTime</label>
+    <input type="range" id="scaleTime" min="-1" max="3" step="0.05" value="1">
+    <span class="val" id="scaleTimeVal">1.00</span>
+  </div>
+
+  <div id="legend">
+    Left = LIVE sim &nbsp;|&nbsp; Right = BAKED replay (orbit controls on right viewport)<br>
+    scaleTime: 0 = frozen · &lt;0 = reverse · &gt;1 = fast-forward
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.156.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.156.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Inline particle system (no build step) ───────────────────────────────────
+// Minimal self-contained impl that mirrors the full package API
+
+class SeededRandom {
+  constructor(seed = 0) { this._s = (seed ^ 0x5f3759df) >>> 0 || 1 }
+  next() {
+    this._s ^= this._s << 13; this._s ^= this._s >>> 17; this._s ^= this._s << 5
+    return (this._s >>> 0) / 0xffffffff
+  }
+  signed() { return this.next() * 2 - 1 }
+  reset(s) { this._s = (s ^ 0x5f3759df) >>> 0 || 1 }
+}
+
+class Particle {
+  constructor() {
+    this.position   = new THREE.Vector3()
+    this.velocity   = new THREE.Vector3()
+    this.rotation   = new THREE.Vector3()
+    this.angularVel = new THREE.Vector3()
+    this.age = 0; this.lifetime = 1; this.size = 1
+    this.normalised = 0; this.alive = false; this.emitterIndex = 0
+  }
+  reset() {
+    this.position.set(0,0,0); this.velocity.set(0,0,0)
+    this.rotation.set(0,0,0); this.angularVel.set(0,0,0)
+    this.age = 0; this.lifetime = 1; this.size = 1
+    this.normalised = 0; this.alive = false
+  }
+}
+
+class ParticleCache {
+  constructor() {
+    this._frames = []
+    this.parameters = { startSec:0, endSec:5, fps:30, step:0 }
+  }
+  get isBaked()    { return this._frames.length > 0 }
+  get frameCount() { return this._frames.length }
+
+  bake(pool, resetFn, stepFn, startSec, endSec, fps) {
+    this._frames = []
+    this.parameters.startSec = startSec; this.parameters.endSec = endSec
+    this.parameters.fps = fps
+    const dt = 1 / fps
+    const totalFrames = Math.ceil((endSec - startSec) * fps) + 1
+    resetFn()
+    const warmup = Math.round(startSec * fps)
+    for (let i = 0; i < warmup; i++) stepFn(dt)
+    for (let f = 0; f < totalFrames; f++) {
+      this._frames.push(this._snapshot(pool))
+      if (f < totalFrames - 1) stepFn(dt)
+    }
+  }
+
+  seek(pool, timeSec) {
+    if (!this._frames.length) return
+    const { startSec, fps } = this.parameters
+    const clampedF = Math.max(0, Math.min(this._frames.length - 1, (timeSec - startSec) * fps))
+    const f0 = Math.floor(clampedF)
+    const f1 = Math.min(this._frames.length - 1, f0 + 1)
+    const t  = (f0 === f1) ? 0 : (clampedF - f0)
+    const t1 = 1 - t
+    const FPP = 12
+    if (t === 0) {
+      const fr = this._frames[f0]
+      for (let i = 0; i < pool.length; i++) this._restore(pool[i], fr, i * FPP)
+    } else {
+      const fr0 = this._frames[f0], fr1 = this._frames[f1]
+      for (let i = 0; i < pool.length; i++) {
+        const b = i * FPP, p = pool[i]
+        p.position.set(fr0[b]*t1+fr1[b]*t, fr0[b+1]*t1+fr1[b+1]*t, fr0[b+2]*t1+fr1[b+2]*t)
+        p.velocity.set(fr0[b+3]*t1+fr1[b+3]*t, fr0[b+4]*t1+fr1[b+4]*t, fr0[b+5]*t1+fr1[b+5]*t)
+        p.size = fr0[b+9]*t1+fr1[b+9]*t
+        p.normalised = fr0[b+10]*t1+fr1[b+10]*t
+        p.alive = fr0[b+11] > 0.5
+      }
+    }
+  }
+
+  clear() { this._frames = [] }
+
+  _snapshot(pool) {
+    const d = new Array(pool.length * 12)
+    for (let i = 0; i < pool.length; i++) {
+      const p = pool[i], b = i * 12
+      d[b]=p.position.x; d[b+1]=p.position.y; d[b+2]=p.position.z
+      d[b+3]=p.velocity.x; d[b+4]=p.velocity.y; d[b+5]=p.velocity.z
+      d[b+6]=p.rotation.x; d[b+7]=p.rotation.y; d[b+8]=p.rotation.z
+      d[b+9]=p.size; d[b+10]=p.normalised; d[b+11]=p.alive?1:0
+    }
+    return d
+  }
+  _restore(p, fr, b) {
+    p.position.set(fr[b],fr[b+1],fr[b+2])
+    p.velocity.set(fr[b+3],fr[b+4],fr[b+5])
+    p.size=fr[b+9]; p.normalised=fr[b+10]; p.alive=fr[b+11]>0.5
+  }
+}
+
+// ── Minimal torus-emitting particle system ────────────────────────────────────
+
+const COUNT = 300
+const SEED  = 42
+
+function makePool() { return Array.from({length:COUNT}, () => new Particle()) }
+
+function makeSystem(pool) {
+  const rng  = new SeededRandom(SEED)
+  const state = { t:0, accum:0, cursor:0 }
+  const LIFETIME = 3, RATE = COUNT / LIFETIME
+  const R_MAJOR = 3, R_MINOR = 1
+
+  function reset() {
+    rng.reset(SEED); state.t = 0; state.accum = 0; state.cursor = 0
+    for (const p of pool) p.reset()
+  }
+
+  function emit() {
+    let slot = null
+    for (let i = 0; i < COUNT; i++) {
+      const idx = (state.cursor + i) % COUNT
+      if (!pool[idx].alive) { slot = pool[idx]; state.cursor = (idx+1) % COUNT; break }
+    }
+    if (!slot) { slot = pool[state.cursor]; state.cursor = (state.cursor+1) % COUNT }
+    slot.reset(); slot.alive = true
+    // torus emitter
+    const angle = rng.next() * Math.PI * 2
+    const phi   = rng.next() * Math.PI * 2
+    const r = R_MINOR * 0.9
+    slot.position.set(
+      (R_MAJOR + r * Math.cos(phi)) * Math.cos(angle),
+      r * Math.sin(phi),
+      (R_MAJOR + r * Math.cos(phi)) * Math.sin(angle),
+    )
+    const speed = 1.5 + rng.next() * 2
+    slot.velocity.set(
+      rng.signed() * speed,
+      1 + rng.next() * speed,
+      rng.signed() * speed,
+    )
+    slot.lifetime = LIFETIME * (0.7 + rng.next() * 0.6)
+    slot.size = 0.06 + rng.next() * 0.05
+  }
+
+  function step(dt) {
+    state.t += dt
+    if (state.t <= 30) {
+      state.accum += RATE * dt
+      const n = Math.floor(state.accum); state.accum -= n
+      for (let i = 0; i < n; i++) emit()
+    }
+    for (const p of pool) {
+      if (!p.alive) continue
+      p.age += dt
+      if (p.age >= p.lifetime) { p.alive = false; continue }
+      p.normalised = p.age / p.lifetime
+      p.velocity.y -= 1.5 * dt
+      p.velocity.multiplyScalar(1 - 0.3 * dt)
+      p.position.addScaledVector(p.velocity, dt)
+    }
+  }
+
+  return { reset, step }
+}
+
+// ── Renderer helper ───────────────────────────────────────────────────────────
+
+function makePointsRenderer(pool, color) {
+  const geo  = new THREE.BufferGeometry()
+  const pos  = new Float32Array(COUNT * 3)
+  const alpha = new Float32Array(COUNT)
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  geo.setAttribute('alpha',    new THREE.BufferAttribute(alpha, 1))
+  geo.setDrawRange(0, 0)
+
+  const mat = new THREE.PointsMaterial({
+    size: 0.12, color, vertexColors: false,
+    transparent: true, depthWrite: false,
+  })
+  const pts = new THREE.Points(geo, mat)
+
+  function update() {
+    let n = 0
+    for (const p of pool) {
+      if (!p.alive) continue
+      pos[n*3]=p.position.x; pos[n*3+1]=p.position.y; pos[n*3+2]=p.position.z
+      alpha[n] = 1 - p.normalised
+      n++
+    }
+    geo.setDrawRange(0, n)
+    geo.attributes.position.needsUpdate = true
+  }
+
+  return { mesh: pts, update }
+}
+
+// ── Scene setup ───────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+// Two side-by-side viewports via scissors
+const scenes = []
+for (let side = 0; side < 2; side++) {
+  const scene  = new THREE.Scene()
+  scene.background = new THREE.Color(side === 0 ? 0x0a1520 : 0x100a20)
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200)
+  camera.position.set(0, 4, 12)
+  camera.lookAt(0, 1, 0)
+  const controls = new OrbitControls(camera, renderer.domElement)
+  controls.target.set(0, 1, 0)
+
+  // Grid
+  scene.add(new THREE.GridHelper(20, 20, 0x222244, 0x1a1a33))
+
+  // Label sprite (simple)
+  const labelGeo = new THREE.PlaneGeometry(3, 0.6)
+  const canvas2d = document.createElement('canvas')
+  canvas2d.width = 256; canvas2d.height = 48
+  const ctx = canvas2d.getContext('2d')
+  ctx.fillStyle = side === 0 ? '#2af' : '#fa6'
+  ctx.font = 'bold 28px monospace'
+  ctx.textAlign = 'center'
+  ctx.fillText(side === 0 ? 'LIVE SIM' : 'BAKED REPLAY', 128, 34)
+  const tex = new THREE.CanvasTexture(canvas2d)
+  const labelMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false })
+  const label = new THREE.Mesh(labelGeo, labelMat)
+  label.position.set(0, 6.5, 0)
+  scene.add(label)
+
+  scenes.push({ scene, camera, controls })
+}
+
+// Two independent pools
+const livePool  = makePool()
+const bakedPool = makePool()
+const liveSys   = makeSystem(livePool)
+const bakedSys  = makeSystem(bakedPool)
+const cache     = new ParticleCache()
+
+const liveRenderer  = makePointsRenderer(livePool,  0x44aaff)
+const bakedRenderer = makePointsRenderer(bakedPool, 0xff9944)
+scenes[0].scene.add(liveRenderer.mesh)
+scenes[1].scene.add(bakedRenderer.mesh)
+
+liveSys.reset()
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+
+let isBaked = false
+let scrubTime = 0
+
+const scrub    = document.getElementById('scrub')
+const scrubVal = document.getElementById('scrubVal')
+const frameInfo= document.getElementById('frameInfo')
+const modeBadge= document.getElementById('modeBadge')
+
+document.getElementById('btnBake').addEventListener('click', () => {
+  console.log('Baking 5 seconds at 30 fps...')
+  cache.bake(bakedPool, bakedSys.reset, bakedSys.step, 0, 5, 30)
+  console.log(`Baked ${cache.frameCount} frames`)
+  isBaked = true
+  scrub.disabled = false
+  modeBadge.textContent = 'BAKED'
+  modeBadge.className   = 'badge baked'
+  scrubTime = 0; scrub.value = 0
+  scrubVal.textContent = '0.00'
+  frameInfo.textContent = `0 / ${cache.frameCount - 1}`
+  cache.seek(bakedPool, 0)
+})
+
+document.getElementById('btnUnbake').addEventListener('click', () => {
+  isBaked = false
+  cache.clear()
+  scrub.disabled = true
+  modeBadge.textContent = 'LIVE'
+  modeBadge.className   = 'badge live'
+  frameInfo.textContent = '—'
+  bakedSys.reset()
+  for (const p of bakedPool) p.reset()
+})
+
+scrub.addEventListener('input', () => {
+  if (!isBaked) return
+  scrubTime = parseFloat(scrub.value)
+  scrubVal.textContent = scrubTime.toFixed(2)
+  const fi = Math.round((scrubTime - cache.parameters.startSec) * cache.parameters.fps)
+  frameInfo.textContent = `${Math.max(0,fi)} / ${cache.frameCount - 1}`
+  cache.seek(bakedPool, scrubTime)
+})
+
+// ── Scale Time control ────────────────────────────────────────────────────────
+let scaleTime = 1.0
+
+document.getElementById('scaleTime').addEventListener('input', e => {
+  scaleTime = parseFloat(e.target.value)
+  document.getElementById('scaleTimeVal').textContent = scaleTime.toFixed(2)
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+
+let lastTime = performance.now() / 1000
+
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now() / 1000
+  const dt  = Math.min(now - lastTime, 0.05) * scaleTime
+  lastTime  = now
+
+  // Step live sim with scaled dt (scaleTime=0 → frozen, 2 → 2× speed)
+  if (Math.abs(dt) > 0) liveSys.step(Math.abs(dt))
+  liveRenderer.update()
+
+  // Baked side: auto-play if baked (override scrub)
+  if (isBaked) {
+    bakedRenderer.update()
+  } else {
+    bakedSys.step(dt)
+    bakedRenderer.update()
+  }
+
+  // Split-screen rendering
+  const W = innerWidth, H = innerHeight
+  const hw = Math.floor(W / 2)
+  renderer.setSize(W, H)
+  renderer.setScissorTest(true)
+
+  // Left viewport — live
+  scenes[0].controls.update()
+  renderer.setViewport(0, 0, hw, H)
+  renderer.setScissor(0, 0, hw, H)
+  renderer.render(scenes[0].scene, scenes[0].camera)
+
+  // Right viewport — baked
+  scenes[1].controls.update()
+  renderer.setViewport(hw, 0, W - hw, H)
+  renderer.setScissor(hw, 0, W - hw, H)
+  renderer.render(scenes[1].scene, scenes[1].camera)
+}
+
+animate()
+</script>
+</body>
+</html>

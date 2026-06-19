@@ -1,0 +1,159 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-particle-core — Force Field maxDistance</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+canvas { display: block; }
+#ui {
+  position: fixed; top: 12px; left: 12px;
+  background: rgba(0,0,0,.7); padding: 12px 16px; border-radius: 6px;
+  display: flex; flex-direction: column; gap: 8px; width: 260px;
+}
+label { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+input[type=range] { width: 140px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>Force Field maxDistance Demo</b>
+  <label>Wind strength <input type="range" id="wStrength" min="0" max="10" step="0.1" value="3"><span id="wStrVal">3</span></label>
+  <label>Wind maxDist  <input type="range" id="wDist"     min="0" max="20" step="0.5" value="8"><span id="wDistVal">8</span></label>
+  <label>Vortex str   <input type="range" id="vStrength" min="0" max="10" step="0.1" value="4"><span id="vStrVal">4</span></label>
+  <label>Vortex maxDist<input type="range" id="vDist"    min="0" max="20" step="0.5" value="6"><span id="vDistVal">6</span></label>
+  <small style="opacity:.6">White ring = wind range | yellow ring = vortex range</small>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem, PointEmitter, WindForce, VortexForce
+} from '@st-particle-core'
+
+// ── Renderer ────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200)
+camera.position.set(0, 12, 28)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+// ── Particle system ──────────────────────────────────────────────────────────
+const sys = new ParticleSystem({ maxParticles: 1200, lifetime: 4, rate: 200 })
+sys.addEmitter(new PointEmitter({ spread: 0.3 }))
+
+// Wind field — centred at (-8, 0, 0), blows in +X
+const wind = new WindForce({ x: 1, y: 0, z: 0, strength: 3, maxDistance: 8 })
+wind.position.set(-8, 0, 0)
+sys.addForce(wind)
+
+// Vortex field — centred at (+8, 0, 0)
+const vortex = new VortexForce({ strength: 4, maxDistance: 6 })
+vortex.position.set(8, 0, 0)
+sys.addForce(vortex)
+
+// ── Three.js rendering ───────────────────────────────────────────────────────
+const geo = new THREE.BufferGeometry()
+const positions = new Float32Array(1200 * 3)
+const posAttr   = new THREE.BufferAttribute(positions, 3)
+geo.setAttribute('position', posAttr)
+geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 100)
+
+const mat    = new THREE.PointsMaterial({ size: 0.18, vertexColors: false, color: 0x88ccff })
+const points = new THREE.Points(geo, mat)
+points.frustumCulled = false
+scene.add(points)
+
+// Range indicator rings
+function makeRing(radius, color) {
+  const segs = 64
+  const g = new THREE.BufferGeometry()
+  const v = new Float32Array(segs * 3)
+  for (let i = 0; i < segs; i++) {
+    const a = (i / segs) * Math.PI * 2
+    v[i*3]   = Math.cos(a) * radius
+    v[i*3+1] = 0
+    v[i*3+2] = Math.sin(a) * radius
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(v, 3))
+  g.setIndex([...Array(segs).keys(), 0])
+  return new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color }))
+}
+
+const windRing   = makeRing(8, 0xffffff)
+const vortexRing = makeRing(6, 0xffdd00)
+windRing.position.set(-8, 0, 0)
+vortexRing.position.set(8, 0, 0)
+scene.add(windRing, vortexRing)
+
+// Grid
+scene.add(new THREE.GridHelper(40, 20, 0x333333, 0x222222))
+
+// ── UI wiring ─────────────────────────────────────────────────────────────────
+function wire(id, valId, fn) {
+  const el = document.getElementById(id)
+  const vEl = document.getElementById(valId)
+  el.addEventListener('input', () => { vEl.textContent = el.value; fn(parseFloat(el.value)) })
+}
+wire('wStrength', 'wStrVal',  v => wind.parameters.strength    = v)
+wire('wDist',     'wDistVal', v => {
+  wind.parameters.maxDistance = v
+  const r = makeRing(v, 0xffffff)
+  r.position.set(-8, 0, 0)
+  scene.remove(windRing)
+  windRing.geometry.dispose()
+  const newRing = r
+  scene.add(newRing)
+})
+wire('vStrength', 'vStrVal',  v => vortex.parameters.strength    = v)
+wire('vDist',     'vDistVal', v => vortex.parameters.maxDistance = v)
+
+// ── Animation ────────────────────────────────────────────────────────────────
+let prev = performance.now()
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - prev) * 0.001, 0.05)
+  prev = now
+
+  sys.update(dt)
+
+  const pool = sys.pool
+  let alive = 0
+  for (let i = 0; i < pool.length; i++) {
+    if (!pool[i].alive) continue
+    positions[alive*3]   = pool[i].position.x
+    positions[alive*3+1] = pool[i].position.y
+    positions[alive*3+2] = pool[i].position.z
+    alive++
+  }
+  geo.setDrawRange(0, alive)
+  posAttr.needsUpdate = true
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(window.innerWidth, window.innerHeight)
+})
+</script>
+</body>
+</html>

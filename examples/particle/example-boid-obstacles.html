@@ -1,0 +1,168 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BoidForce — obstacle avoidance + flight height</title>
+<style>
+  body { margin: 0; background: #0a0a14; font-family: sans-serif; }
+  canvas { display: block; }
+  #ui { position: fixed; top: 16px; left: 16px; color: #ddd; background: rgba(0,0,0,.65);
+        padding: 14px 18px; border-radius: 8px; min-width: 230px; }
+  label { display: flex; justify-content: space-between; margin: 5px 0; font-size: 13px; }
+  input[type=range] { width: 110px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>Boids: obstacle avoidance + flight height</b>
+  <label>avoidWeight  <input type="range" id="aw" min="0" max="10" step="0.2" value="3">  <span id="avs">3</span></label>
+  <label>avoidRadius  <input type="range" id="ar" min="0.5" max="8" step="0.2" value="3"> <span id="ars">3</span></label>
+  <label>flightHeight <input type="range" id="fh" min="-5" max="10" step="0.5" value="2"> <span id="fhs">2</span></label>
+  <label>bankingAngle <input type="range" id="ba" min="0" max="2" step="0.1" value="0.8"> <span id="bas">0.8</span></label>
+  <p style="font-size:11px;margin:6px 0 0">Red spheres = obstacles · Blue dots = boids</p>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.167.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 200)
+camera.position.set(0, 10, 30)
+const controls = new OrbitControls(camera, renderer.domElement)
+scene.add(new THREE.AmbientLight(0x334466, 2))
+
+// ── obstacles (3 spheres) ─────────────────────────────────────────────────
+const obstacles = [
+  { position: new THREE.Vector3(-4, 2, 0), radius: 1.5 },
+  { position: new THREE.Vector3( 4, 2, 0), radius: 1.5 },
+  { position: new THREE.Vector3( 0, 2, 4), radius: 1.5 },
+]
+obstacles.forEach(o => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(o.radius, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xff3333, wireframe: true }))
+  m.position.copy(o.position)
+  scene.add(m)
+})
+
+// ── boids ─────────────────────────────────────────────────────────────────
+const N = 80
+const bpos = Array.from({ length: N }, () => new THREE.Vector3(
+  (Math.random()-0.5)*16, Math.random()*4+1, (Math.random()-0.5)*16))
+const bvel = Array.from({ length: N }, () => new THREE.Vector3(
+  (Math.random()-0.5)*3, (Math.random()-0.5)*0.5, (Math.random()-0.5)*3))
+const brot = Array.from({ length: N }, () => new THREE.Vector3())
+
+const geoB = new THREE.BufferGeometry()
+const posArr = new Float32Array(N * 3)
+const posAttr = new THREE.BufferAttribute(posArr, 3)
+posAttr.setUsage(THREE.DynamicDrawUsage)
+geoB.setAttribute('position', posAttr)
+scene.add(new THREE.Points(geoB,
+  new THREE.PointsMaterial({ color: 0x44aaff, size: 0.3, sizeAttenuation: true })))
+
+// ── params ────────────────────────────────────────────────────────────────
+const p = { avoidWeight: 3, avoidRadius: 3, flightHeight: 2, bankingAngle: 0.8,
+            separationRadius: 1.2, separationStrength: 2,
+            alignmentRadius: 3, alignmentStrength: 0.8,
+            cohesionRadius: 4, cohesionStrength: 0.5,
+            maxSpeed: 5, maxForce: 4 }
+
+function bind(id, key, dis) {
+  document.getElementById(id).addEventListener('input', function() {
+    p[key] = parseFloat(this.value)
+    document.getElementById(dis).textContent = this.value
+  })
+}
+bind('aw','avoidWeight','avs'); bind('ar','avoidRadius','ars')
+bind('fh','flightHeight','fhs'); bind('ba','bankingAngle','bas')
+
+// ── simulation ────────────────────────────────────────────────────────────
+const _tmp = new THREE.Vector3()
+const clock = new THREE.Clock()
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  for (let i = 0; i < N; i++) {
+    const pi = bpos[i], vi = bvel[i]
+    let fx = 0, fy = 0, fz = 0
+    let sepX=0,sepY=0,sepZ=0,sepN=0
+    let aliX=0,aliY=0,aliZ=0,aliN=0
+    let cohX=0,cohY=0,cohZ=0,cohN=0
+
+    for (let j = 0; j < N; j++) {
+      if (j===i) continue
+      const pj = bpos[j]
+      const dx=pj.x-pi.x, dy=pj.y-pi.y, dz=pj.z-pi.z
+      const r2=dx*dx+dy*dy+dz*dz
+      const sepR2=p.separationRadius*p.separationRadius
+      const aliR2=p.alignmentRadius*p.alignmentRadius
+      const cohR2=p.cohesionRadius*p.cohesionRadius
+      if (r2<sepR2&&r2>1e-8){const r=Math.sqrt(r2),inv=1/r;sepX-=dx*inv;sepY-=dy*inv;sepZ-=dz*inv;sepN++}
+      if (r2<aliR2){aliX+=bvel[j].x;aliY+=bvel[j].y;aliZ+=bvel[j].z;aliN++}
+      if (r2<cohR2){cohX+=pj.x;cohY+=pj.y;cohZ+=pj.z;cohN++}
+    }
+    if (sepN>0){const inv=1/sepN;fx+=sepX*inv*p.separationStrength;fy+=sepY*inv*p.separationStrength;fz+=sepZ*inv*p.separationStrength}
+    if (aliN>0){const inv=1/aliN;fx+=(aliX*inv-vi.x)*p.alignmentStrength;fy+=(aliY*inv-vi.y)*p.alignmentStrength;fz+=(aliZ*inv-vi.z)*p.alignmentStrength}
+    if (cohN>0){const inv=1/cohN;fx+=(cohX*inv-pi.x)*p.cohesionStrength;fy+=(cohY*inv-pi.y)*p.cohesionStrength;fz+=(cohZ*inv-pi.z)*p.cohesionStrength}
+
+    // obstacle avoidance
+    if (p.avoidWeight > 0) {
+      for (const obs of obstacles) {
+        const totalR = p.avoidRadius + obs.radius
+        const odx=pi.x-obs.position.x, ody=pi.y-obs.position.y, odz=pi.z-obs.position.z
+        const od2=odx*odx+ody*ody+odz*odz
+        if (od2<totalR*totalR&&od2>1e-10) {
+          const od=Math.sqrt(od2), prox=1-od/totalR, steer=p.avoidWeight*prox/od
+          fx+=odx*steer; fy+=ody*steer; fz+=odz*steer
+        }
+      }
+    }
+
+    // flight height
+    fy += (p.flightHeight - pi.y) * 0.5
+
+    // clamp force
+    const fMag2=fx*fx+fy*fy+fz*fz, maxF2=p.maxForce*p.maxForce
+    if (fMag2>maxF2&&fMag2>1e-12){const s=p.maxForce/Math.sqrt(fMag2);fx*=s;fy*=s;fz*=s}
+
+    vi.x+=fx*dt; vi.y+=fy*dt; vi.z+=fz*dt
+
+    // clamp speed
+    const vMag2=vi.x*vi.x+vi.y*vi.y+vi.z*vi.z, maxV2=p.maxSpeed*p.maxSpeed
+    if (vMag2>maxV2&&vMag2>1e-12){const s=p.maxSpeed/Math.sqrt(vMag2);vi.x*=s;vi.y*=s;vi.z*=s}
+
+    // banking
+    if (p.bankingAngle !== 0) brot[i].z = -Math.atan2(fx, p.maxForce) * p.bankingAngle
+
+    pi.x+=vi.x*dt; pi.y+=vi.y*dt; pi.z+=vi.z*dt
+    // soft boundary
+    const R=14
+    if (pi.x>R)vi.x-=2; if(pi.x<-R)vi.x+=2
+    if (pi.y>12)vi.y-=2; if(pi.y<-1)vi.y+=2
+    if (pi.z>R)vi.z-=2; if(pi.z<-R)vi.z+=2
+
+    posArr[i*3]=pi.x; posArr[i*3+1]=pi.y; posArr[i*3+2]=pi.z
+  }
+  posAttr.needsUpdate = true
+  controls.update()
+  renderer.render(scene, camera)
+})
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth,innerHeight)
+})
+</script>
+</body>
+</html>

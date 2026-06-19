@@ -1,0 +1,168 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RGB Curves — piecewise control points</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.8); padding: 16px; border-radius: 8px;
+      font-size: 12px; line-height: 1.8; min-width: 300px; max-width: 320px;
+    }
+    #ui h3 { color: #adf; margin-bottom: 8px; font-size: 13px; }
+    .preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .preset-btn {
+      padding: 4px 8px; border-radius: 4px; border: 1px solid #555;
+      background: #222; color: #aaa; cursor: pointer; font-family: monospace; font-size: 11px;
+    }
+    .preset-btn.active { background: #336; border-color: #adf; color: #eee; }
+    .ch { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+    .ch label { width: 60px; color: #888; }
+    .ch input { flex: 1; font-family: monospace; font-size: 11px;
+                background: #222; border: 1px solid #444; color: #eee;
+                padding: 3px 6px; border-radius: 3px; }
+    button.apply {
+      margin-top: 8px; width: 100%; padding: 6px;
+      background: #225; border: 1px solid #adf; border-radius: 4px;
+      color: #eee; cursor: pointer; font-family: monospace;
+    }
+    .note { font-size: 11px; color: #666; margin-top: 8px; line-height: 1.5; }
+    #info { position: fixed; bottom: 16px; left: 16px; font-size: 11px; color: #666; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h3>RGBCurves — piecewise linear curves</h3>
+
+  <div class="preset-row">
+    <button class="preset-btn active" data-preset="identity">Identity</button>
+    <button class="preset-btn" data-preset="contrast">S-Curve</button>
+    <button class="preset-btn" data-preset="warm">Warm</button>
+    <button class="preset-btn" data-preset="cool">Cool</button>
+    <button class="preset-btn" data-preset="invert">Invert</button>
+  </div>
+
+  <div class="ch"><label>R points</label><input id="rpts" value="0,0, 1,1"></div>
+  <div class="ch"><label>G points</label><input id="gpts" value="0,0, 1,1"></div>
+  <div class="ch"><label>B points</label><input id="bpts" value="0,0, 1,1"></div>
+  <div class="ch"><label>Master</label> <input id="mpts" value="0,0, 1,1"></div>
+
+  <button class="apply" id="apply">Apply Curves</button>
+
+  <div class="note">
+    Points: x,y pairs in [0,1]<br>
+    e.g. "0,0, 0.5,0.7, 1,1"<br>
+    Each point maps input → output.
+  </div>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  NoiseTexture, RGBCurves, ColorRamp, PrincipledBSDF, MaterialOutput, ShaderConfig
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 0, 3)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(3, 5, 3)
+scene.add(sun)
+
+const geo = new THREE.SphereGeometry(1, 64, 32)
+let mesh = null
+
+function parsePts(str) {
+  const nums = str.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n))
+  const pts = []
+  for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i+1]])
+  return pts.length >= 2 ? pts : [[0,0],[1,1]]
+}
+
+function rebuild() {
+  const noise  = new NoiseTexture({ scale: 3.0, detail: 4.0 })
+  const ramp   = new ColorRamp({ fac: noise.output('Fac'), stops: ['#220000', '#882200', '#cc6600', '#ffcc00'] })
+  const curves = new RGBCurves({
+    color:        ramp.output('Color'),
+    rPoints:      parsePts(document.getElementById('rpts').value),
+    gPoints:      parsePts(document.getElementById('gpts').value),
+    bPoints:      parsePts(document.getElementById('bpts').value),
+    masterPoints: parsePts(document.getElementById('mpts').value),
+  })
+  const bsdf = new PrincipledBSDF({ baseColor: curves.output('Color'), roughness: 0.6 })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+
+  if (mesh) {
+    const old = mesh.material
+    mesh.material = mat.material
+    old.dispose()
+  } else {
+    mesh = new THREE.Mesh(geo, mat.material)
+    scene.add(mesh)
+  }
+}
+
+rebuild()
+
+document.getElementById('apply').addEventListener('click', rebuild)
+
+// Presets
+const PRESETS = {
+  identity: { r:'0,0, 1,1',       g:'0,0, 1,1',       b:'0,0, 1,1',       m:'0,0, 1,1' },
+  contrast: { r:'0,0, 1,1',       g:'0,0, 1,1',       b:'0,0, 1,1',       m:'0,0, 0.1,0.0, 0.4,0.2, 0.6,0.8, 0.9,1.0, 1,1' },
+  warm:     { r:'0,0, 1,1',       g:'0,0, 0.5,0.4, 1,1', b:'0,0.1, 1,0.7', m:'0,0, 1,1' },
+  cool:     { r:'0,0.1, 1,0.75',  g:'0,0, 0.5,0.55, 1,1', b:'0,0, 1,1',    m:'0,0, 1,1' },
+  invert:   { r:'0,1, 1,0',       g:'0,1, 1,0',       b:'0,1, 1,0',       m:'0,0, 1,1' },
+}
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    const p = PRESETS[btn.dataset.preset]
+    document.getElementById('rpts').value = p.r
+    document.getElementById('gpts').value = p.g
+    document.getElementById('bpts').value = p.b
+    document.getElementById('mpts').value = p.m
+    rebuild()
+  })
+})
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

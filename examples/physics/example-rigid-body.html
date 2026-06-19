@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-physics-core — Rigid Body</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px; width: 240px;
+    background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 8px;
+    padding: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 13px;
+  }
+  h2 { font-size: 13px; color: #aaa; border-bottom: 1px solid #333; padding-bottom: 6px; }
+  label { display: flex; justify-content: space-between; align-items: center; }
+  input[type=range] { width: 120px; accent-color: #7af; }
+  .row { display: flex; gap: 8px; }
+  button {
+    flex: 1; padding: 5px 0; background: #2a2a2a; border: 1px solid #444;
+    color: #eee; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px;
+  }
+  button:hover { background: #3a3a3a; }
+  #info { font-size: 11px; color: #888; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h2>Rigid Body — st-physics-core</h2>
+  <label>Restitution <input type="range" id="rest" min="0" max="1" step="0.05" value="0.5"></label>
+  <label>Gravity Y <input type="range" id="grav" min="-20" max="0" step="0.5" value="-9.8"></label>
+  <div class="row">
+    <button id="addSphere">+ Sphere</button>
+    <button id="addBox">+ Box</button>
+  </div>
+  <button id="reset">Reset</button>
+  <div id="info">Click + Sphere or + Box to spawn objects.</div>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.167/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { RigidBodyWorld, RigidBody } from '../../st-physics-core/dist/index.js'
+
+// ── Scene setup ──────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d1117)
+scene.fog = new THREE.Fog(0x0d1117, 25, 50)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 8, 15)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(8, 15, 8)
+sun.castShadow = true
+scene.add(sun)
+
+// ── Floor & walls ────────────────────────────────────────────────────────────
+const floorGeo  = new THREE.PlaneGeometry(20, 20)
+const floorMat  = new THREE.MeshStandardMaterial({ color: 0x223344 })
+const floorMesh = new THREE.Mesh(floorGeo, floorMat)
+floorMesh.rotation.x = -Math.PI / 2
+floorMesh.receiveShadow = true
+scene.add(floorMesh)
+scene.add(new THREE.GridHelper(20, 20, 0x334455, 0x223344))
+
+// ── Physics world ────────────────────────────────────────────────────────────
+let world = new RigidBodyWorld({ gravity: [0, -9.8, 0] })
+
+// Static floor rigid body
+const floorBody = world.createBody({ shape: 'box', mass: 0, size: [10, 0.1, 10], position: [0, -0.1, 0] })
+
+// Tracking body→mesh pairs
+const pairs = []
+
+function spawnSphere() {
+  const x = (Math.random() - 0.5) * 4
+  const z = (Math.random() - 0.5) * 4
+  const r = 0.3 + Math.random() * 0.4
+  const body = world.createBody({
+    shape: 'sphere', mass: 1, size: r,
+    position: [x, 6 + Math.random() * 4, z],
+    velocity: [(Math.random()-0.5)*3, 0, (Math.random()-0.5)*3],
+    restitution: parseFloat(document.getElementById('rest').value),
+  })
+  const geo  = new THREE.SphereGeometry(r, 16, 12)
+  const mat  = new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff, roughness: 0.4 })
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.castShadow = true
+  scene.add(mesh)
+  pairs.push({ body, mesh })
+}
+
+function spawnBox() {
+  const x = (Math.random() - 0.5) * 4
+  const z = (Math.random() - 0.5) * 4
+  const sx = 0.3 + Math.random() * 0.5
+  const sy = 0.3 + Math.random() * 0.5
+  const sz = 0.3 + Math.random() * 0.5
+  const body = world.createBody({
+    shape: 'box', mass: 1, size: [sx, sy, sz],
+    position: [x, 6 + Math.random() * 4, z],
+    velocity: [(Math.random()-0.5)*3, 0, (Math.random()-0.5)*3],
+    restitution: parseFloat(document.getElementById('rest').value),
+  })
+  const geo  = new THREE.BoxGeometry(sx*2, sy*2, sz*2)
+  const mat  = new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff, roughness: 0.3 })
+  const mesh = new THREE.Mesh(geo, mat)
+  mesh.castShadow = true
+  scene.add(mesh)
+  pairs.push({ body, mesh })
+}
+
+function reset() {
+  for (const { mesh } of pairs) scene.remove(mesh)
+  pairs.length = 0
+  world = new RigidBodyWorld({ gravity: [0, parseFloat(document.getElementById('grav').value), 0] })
+  world.createBody({ shape: 'box', mass: 0, size: [10, 0.1, 10], position: [0, -0.1, 0] })
+}
+
+document.getElementById('addSphere').addEventListener('click', spawnSphere)
+document.getElementById('addBox').addEventListener('click', spawnBox)
+document.getElementById('reset').addEventListener('click', reset)
+document.getElementById('grav').addEventListener('input', () => {
+  world.parameters.gravityY = parseFloat(document.getElementById('grav').value)
+})
+
+// Spawn a few to start
+for (let i = 0; i < 5; i++) spawnSphere()
+for (let i = 0; i < 3; i++) spawnBox()
+
+// ── Animate ──────────────────────────────────────────────────────────────────
+let last = performance.now()
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - last) / 1000, 0.033)
+  last = now
+
+  world.step(dt)
+
+  for (const { body, mesh } of pairs) {
+    mesh.position.copy(body.position)
+    mesh.quaternion.copy(body.orientation)
+    // Remove if far below floor
+    if (body.position.y < -20) {
+      world.removeBody(body)
+      scene.remove(mesh)
+    }
+  }
+  // Prune removed pairs
+  for (let i = pairs.length - 1; i >= 0; i--) {
+    if (pairs[i].body.position.y < -20) pairs.splice(i, 1)
+  }
+
+  document.getElementById('info').textContent = `Bodies: ${world.bodies.length}  Time: ${world.time.toFixed(1)}s`
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

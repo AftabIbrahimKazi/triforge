@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-physics-core — Cloth Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box }
+  body { background: #111; overflow: hidden; font-family: sans-serif }
+  canvas { display: block }
+  #ui {
+    position: fixed; top: 16px; left: 16px; color: #eee;
+    background: rgba(0,0,0,0.6); padding: 12px 16px; border-radius: 8px;
+    font-size: 13px; line-height: 1.8; user-select: none;
+  }
+  label { display: flex; align-items: center; gap: 8px }
+  input[type=range] { width: 120px }
+  select { background: #333; color: #eee; border: none; padding: 2px 4px; border-radius: 4px }
+  #info {
+    position: fixed; bottom: 16px; left: 16px; color: #888;
+    font-size: 12px; font-family: monospace
+  }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>st-physics-core</b><br>
+  <label>Scene:
+    <select id="scene">
+      <option value="flag">Hanging Flag</option>
+      <option value="drape">Draped on Sphere</option>
+      <option value="wind">Wind Tunnel</option>
+      <option value="floor">Falls to Floor</option>
+    </select>
+  </label>
+  <label>Stiffness: <input type="range" id="stiffness" min="0.1" max="1" step="0.05" value="0.8"><span id="stiffVal">0.80</span></label>
+  <label>Wind: <input type="range" id="wind" min="0" max="20" step="0.5" value="5"><span id="windVal">5.0</span></label>
+  <label>Gravity: <input type="range" id="gravity" min="0" max="20" step="0.5" value="9.8"><span id="gravVal">9.8</span></label>
+  <label>Damping: <input type="range" id="damping" min="0" max="0.1" step="0.005" value="0.01"><span id="dampVal">0.010</span></label>
+</div>
+<div id="info">0 ms/frame</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-physics-core": "../../st-physics-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { PlaneCollider, SphereCollider, WindForce, ClothSimulator } from '@st-physics-core'
+
+// ── Three.js scene ────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x1a1a2e)
+scene.fog = new THREE.Fog(0x1a1a2e, 10, 30)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.01, 100)
+camera.position.set(0, 1, 5)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+controls.update()
+
+scene.add(new THREE.AmbientLight(0x404060, 1.5))
+const dirLight = new THREE.DirectionalLight(0xffffff, 2)
+dirLight.position.set(3, 5, 2)
+dirLight.castShadow = true
+scene.add(dirLight)
+
+// ── Scene setup ───────────────────────────────────────────────────────────────
+let cloth, clothMesh, clothGeo, clothWind, colliderMeshes = []
+
+function clearScene() {
+  if (clothMesh) scene.remove(clothMesh)
+  colliderMeshes.forEach(m => scene.remove(m))
+  colliderMeshes = []
+}
+
+function buildCloth(segsX, segsY, width, height) {
+  const cols = segsX + 1, rows = segsY + 1
+  const pos = new Float32Array(cols * rows * 3)
+  const idx = []
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const i = (y * cols + x) * 3
+      pos[i]   = (x / segsX - 0.5) * width
+      pos[i+1] = (y / segsY - 0.5) * height
+      pos[i+2] = 0
+    }
+  }
+  for (let y = 0; y < segsY; y++) {
+    for (let x = 0; x < segsX; x++) {
+      const a = y * cols + x
+      idx.push(a, a+1, a+cols, a+1, a+cols+1, a+cols)
+    }
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  geo.setIndex(idx)
+  geo.computeVertexNormals()
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x4488ff, side: THREE.DoubleSide,
+    roughness: 0.6, metalness: 0.1,
+    wireframe: false,
+  })
+  return { geo, mesh: new THREE.Mesh(geo, mat) }
+}
+
+function addColliderViz(geo, color = 0xff4444, opacity = 0.25) {
+  const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity, depthWrite: false })
+  const m = new THREE.Mesh(geo, mat)
+  scene.add(m)
+  colliderMeshes.push(m)
+  return m
+}
+
+function setupFlag() {
+  clearScene()
+  const segsX = 24, segsY = 16, W = 3, H = 2
+  cloth = new ClothSimulator(segsX, segsY, { gravity: 9.8, stiffness: 0.8, bending: 0.2, damping: 0.01 })
+  const { geo, mesh } = buildCloth(segsX, segsY, W, H)
+  cloth.setFromGeometry(geo)
+  cloth.pinColumn(0) // left edge pinned = flag on pole
+  clothGeo = geo; clothMesh = mesh
+  clothWind = new WindForce({ direction: [1, 0.1, 0.2], strength: 5, turbulence: 0.4 })
+  cloth.setWind(clothWind)
+  // Pole visual
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3, 8), new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8 }))
+  pole.position.x = -W/2
+  scene.add(pole)
+  colliderMeshes.push(pole)
+  scene.add(clothMesh)
+  camera.position.set(0, 0.5, 6); controls.target.set(0, 0, 0); controls.update()
+}
+
+function setupDrape() {
+  clearScene()
+  const segsX = 20, segsY = 20, W = 3, H = 3
+  cloth = new ClothSimulator(segsX, segsY, { gravity: 9.8, stiffness: 0.9, bending: 0.15, damping: 0.008, substeps: 6, iterations: 12 })
+  const { geo, mesh } = buildCloth(segsX, segsY, W, H)
+  // raise cloth above sphere
+  const pos = geo.getAttribute('position')
+  for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) + 2.5)
+  pos.needsUpdate = true
+  cloth.setFromGeometry(geo)
+  clothGeo = geo; clothMesh = mesh
+  clothWind = null; cloth.setWind(null)
+  const sphere = new SphereCollider({ center: [0, 0.5, 0], radius: 1.0 })
+  cloth.addCollider(sphere)
+  const floor  = new PlaneCollider({ point: [0, -0.5, 0], normal: [0, 1, 0] })
+  cloth.addCollider(floor)
+  addColliderViz(new THREE.SphereGeometry(1.0, 32, 32), 0xff6644)
+  scene.add(clothMesh)
+  camera.position.set(0, 2, 6); controls.target.set(0, 0.5, 0); controls.update()
+}
+
+function setupWind() {
+  clearScene()
+  const segsX = 30, segsY = 20, W = 4, H = 3
+  cloth = new ClothSimulator(segsX, segsY, { gravity: 2, stiffness: 0.7, bending: 0.3, damping: 0.005 })
+  const { geo, mesh } = buildCloth(segsX, segsY, W, H)
+  cloth.setFromGeometry(geo)
+  cloth.pinRow(0) // bottom edge down, top pinned — like a sail
+  cloth.pinRow(segsY)
+  clothGeo = geo; clothMesh = mesh
+  clothWind = new WindForce({ direction: [0, 0, 1], strength: 5, turbulence: 0.5, frequency: 1.5 })
+  cloth.setWind(clothWind)
+  scene.add(clothMesh)
+  camera.position.set(2, 0, 8); controls.target.set(0, 0, 0); controls.update()
+}
+
+function setupFloor() {
+  clearScene()
+  const segsX = 20, segsY = 20, W = 3, H = 3
+  cloth = new ClothSimulator(segsX, segsY, { gravity: 9.8, stiffness: 0.8, bending: 0.2, damping: 0.01 })
+  const { geo, mesh } = buildCloth(segsX, segsY, W, H)
+  const pos = geo.getAttribute('position')
+  for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) + 3)
+  pos.needsUpdate = true
+  cloth.setFromGeometry(geo)
+  clothGeo = geo; clothMesh = mesh
+  clothWind = new WindForce({ direction: [1, 0, 0.5], strength: 2, turbulence: 0.3 })
+  cloth.setWind(clothWind)
+  const floor = new PlaneCollider({ point: [0, -1.5, 0], normal: [0, 1, 0] })
+  cloth.addCollider(floor)
+  const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshStandardMaterial({ color: 0x334455 }))
+  floorMesh.rotation.x = -Math.PI/2; floorMesh.position.y = -1.5
+  scene.add(floorMesh); colliderMeshes.push(floorMesh)
+  scene.add(clothMesh)
+  camera.position.set(0, 2, 8); controls.target.set(0, 0, 0); controls.update()
+}
+
+setupFlag()
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('scene').addEventListener('change', e => {
+  const v = e.target.value
+  if (v === 'flag')  setupFlag()
+  if (v === 'drape') setupDrape()
+  if (v === 'wind')  setupWind()
+  if (v === 'floor') setupFloor()
+})
+
+function bindSlider(id, valId, obj, prop, fmt) {
+  const s = document.getElementById(id)
+  const l = document.getElementById(valId)
+  s.addEventListener('input', () => {
+    const v = parseFloat(s.value)
+    obj()[prop] = v
+    l.textContent = v.toFixed(fmt)
+  })
+}
+
+bindSlider('stiffness', 'stiffVal', () => cloth.parameters, 'stiffness', 2)
+bindSlider('gravity',   'gravVal',  () => cloth.parameters, 'gravity',   1)
+bindSlider('damping',   'dampVal',  () => cloth.parameters, 'damping',   3)
+document.getElementById('wind').addEventListener('input', e => {
+  const v = parseFloat(e.target.value)
+  document.getElementById('windVal').textContent = v.toFixed(1)
+  if (clothWind) clothWind.parameters.strength = v
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+const infoEl = document.getElementById('info')
+
+function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+  const t0 = performance.now()
+  cloth.step(dt)
+  cloth.apply(clothGeo)
+  const ms = (performance.now() - t0).toFixed(1)
+  infoEl.textContent = `${ms} ms/frame  |  ${cloth.vertexCount} verts  |  orbit to inspect`
+  controls.update()
+  renderer.render(scene, camera)
+}
+
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

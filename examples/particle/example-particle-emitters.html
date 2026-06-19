@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Particle Emitters — @st-particle-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #06080f; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.65); padding: 8px 12px; border-radius: 4px; }
+  #tabs { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .tab { background: rgba(0,0,0,0.6); border: 1px solid #333; padding: 5px 12px;
+    border-radius: 4px; cursor: pointer; color: #aaa; font: 11px monospace; }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+</style>
+</head>
+<body>
+<div id="info">Emitter Types — @st-particle-core<br>PointEmitter · EdgeEmitter · MeshEmitter</div>
+<div id="tabs"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":      "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core":  "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem, BillboardRenderer,
+  PointEmitter, EdgeEmitter, MeshEmitter,
+  GravityForce, DragForce
+} from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene   = new THREE.Scene()
+scene.background = new THREE.Color(0x06080f)
+const camera  = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500)
+camera.position.set(0, 5, 18)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+
+scene.add(new THREE.AmbientLight(0x334455, 1))
+
+const clock    = new THREE.Clock()
+let activeSystems  = []
+let activeRenderers = []
+let activeHelpers   = []
+
+function clearActive() {
+  for (const sys  of activeSystems)   sys.dispose?.()
+  for (const rend of activeRenderers) { scene.remove(rend.object3D); rend.dispose() }
+  for (const h    of activeHelpers)   scene.remove(h)
+  activeSystems   = []
+  activeRenderers = []
+  activeHelpers   = []
+}
+
+// ---- PointEmitter -------------------------------------------------------
+function makePoint() {
+  clearActive()
+
+  const rend = new BillboardRenderer({ maxCount: 500, additive: true, fadeOut: true, opacity: 0.9 })
+  scene.add(rend.object3D)
+
+  const sys = new ParticleSystem({
+    count: 500, start: 0, end: 999,
+    lifetime: 3.0, lifetimeRandom: 0.5,
+    size: 0.15, physics: 'newtonian', gravity: 0, drag: 0,
+  })
+  sys.addEmitter(new PointEmitter({ position: { x: 0, y: 0, z: 0 }, normalVelocity: 2.5, randomVelocity: 1.5 }))
+  sys.addForce(new GravityForce(4))
+  sys.addForce(new DragForce({ linear: 0.3 }))
+  sys.setRenderer(rend)
+
+  // Visual marker
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0x44aaff, wireframe: true })
+  )
+  scene.add(marker)
+
+  activeSystems.push(sys)
+  activeRenderers.push(rend)
+  activeHelpers.push(marker)
+}
+
+// ---- EdgeEmitter --------------------------------------------------------
+function makeEdge() {
+  clearActive()
+
+  const rend = new BillboardRenderer({ maxCount: 500, additive: true, fadeOut: true, opacity: 0.9 })
+  scene.add(rend.object3D)
+
+  // Source geometry — a flat plane; EdgeEmitter fires from its edges
+  const planeGeo = new THREE.PlaneGeometry(6, 6, 6, 6)
+  planeGeo.rotateX(-Math.PI / 2)
+
+  const planeHelper = new THREE.Mesh(
+    planeGeo,
+    new THREE.MeshBasicMaterial({ color: 0xff8800, wireframe: true, opacity: 0.4, transparent: true })
+  )
+  scene.add(planeHelper)
+
+  // EdgeEmitter — emit from all edges, no threshold filtering
+  const sys = new ParticleSystem({
+    count: 500, start: 0, end: 999,
+    lifetime: 2.5, lifetimeRandom: 0.4,
+    size: 0.12, physics: 'newtonian', gravity: 0, drag: 0,
+    geometry: planeGeo,
+  })
+  sys.addEmitter(new EdgeEmitter({ normalVelocity: 2.0, randomVelocity: 0.8 }))
+  sys.addForce(new GravityForce(5))
+  sys.addForce(new DragForce({ linear: 0.3 }))
+  sys.setRenderer(rend)
+
+  activeSystems.push(sys)
+  activeRenderers.push(rend)
+  activeHelpers.push(planeHelper)
+}
+
+// ---- MeshEmitter --------------------------------------------------------
+function makeMesh() {
+  clearActive()
+
+  const rend = new BillboardRenderer({ maxCount: 600, additive: true, fadeOut: true, opacity: 0.9 })
+  scene.add(rend.object3D)
+
+  // Source geometry — a torus; particles burst from its surface
+  const torusGeo = new THREE.TorusGeometry(2, 0.5, 16, 48)
+
+  const torusHelper = new THREE.Mesh(
+    torusGeo,
+    new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true, opacity: 0.35, transparent: true })
+  )
+  scene.add(torusHelper)
+
+  const sys = new ParticleSystem({
+    count: 600, start: 0, end: 999,
+    lifetime: 2.5, lifetimeRandom: 0.5,
+    size: 0.12, physics: 'newtonian', gravity: 0, drag: 0,
+    geometry: torusGeo,
+  })
+  sys.addEmitter(new MeshEmitter({ normalVelocity: 1.8, randomVelocity: 0.6 }))
+  sys.addForce(new GravityForce(3))
+  sys.addForce(new DragForce({ linear: 0.25 }))
+  sys.setRenderer(rend)
+
+  activeSystems.push(sys)
+  activeRenderers.push(rend)
+  activeHelpers.push(torusHelper)
+}
+
+const defs = [
+  { name: 'PointEmitter',  make: makePoint },
+  { name: 'EdgeEmitter',   make: makeEdge  },
+  { name: 'MeshEmitter\n(torus surface)', make: makeMesh  },
+]
+
+const tabsEl = document.getElementById('tabs')
+function activateTab(i) {
+  tabsEl.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  defs[i].make()
+}
+
+defs.forEach((d, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = d.name
+  btn.addEventListener('click', () => activateTab(i))
+  tabsEl.appendChild(btn)
+})
+activateTab(0)
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+  for (const sys of activeSystems) sys.update(dt)
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

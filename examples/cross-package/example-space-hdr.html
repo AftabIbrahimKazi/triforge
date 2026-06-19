@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Space HDR Environment</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    canvas { display: block; }
+
+    #hint {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.35); font: 11px/1 monospace; letter-spacing: 0.08em;
+      pointer-events: none;
+    }
+
+    /* ── Controls — same style as example-ocean.html ── */
+    #controls {
+      position: absolute; top: 12px; right: 12px; bottom: 12px;
+      color: #ccc; font: 11px/2.2 monospace;
+      background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+      min-width: 260px; overflow-y: auto;
+    }
+    #controls::-webkit-scrollbar { width: 4px; }
+    #controls::-webkit-scrollbar-track { background: transparent; }
+    #controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+    #controls label {
+      display: flex; justify-content: space-between; gap: 10px; align-items: center;
+    }
+    #controls input[type=range] { width: 100px; }
+    #controls span { min-width: 42px; text-align: right; color: #fff; }
+    #controls hr { border: none; border-top: 1px solid #333; margin: 4px 0; }
+
+    /* colour picker row */
+    .col-row {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 10px; line-height: 2.2;
+    }
+    .col-row input[type=color] {
+      width: 60px; height: 20px; border: 1px solid #444; border-radius: 3px;
+      background: none; cursor: pointer; padding: 0;
+    }
+    .col-note { font-size: 9px; color: #556; }
+
+    /* action buttons */
+    .ctl-btn {
+      flex: 1; padding: 3px 0; border: 1px solid #333; border-radius: 3px;
+      background: rgba(255,255,255,0.05); color: #aac; font: 10px monospace;
+      cursor: pointer; letter-spacing: 0.04em;
+    }
+    .ctl-btn:hover { background: rgba(255,255,255,0.1); }
+    #import-file { display: none; }
+
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(10,10,30,0.9); color: #aad; font: 11px monospace;
+      padding: 7px 18px; border-radius: 20px; pointer-events: none;
+      opacity: 0; transition: opacity 0.3s;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+<div id="hint">DRAG TO LOOK &nbsp;·&nbsp; SCROLL TO ZOOM</div>
+<div id="toast"></div>
+
+<div id="controls">
+  <b style="color:#aabf">Space HDR</b>
+  <hr>
+
+  <b style="color:#ffe8bb">Stars</b>
+  <label>Dense density   <input type="range" id="s1scale" min="50"    max="500"  step="5"     value="50">   <span id="s1scaleV">50</span></label>
+  <label>Dense size      <input type="range" id="s1size"  min="0.005" max="0.08" step="0.001" value="0.015"><span id="s1sizeV">0.015</span></label>
+  <label>Dense bright    <input type="range" id="s1bri"   min="0"     max="3"    step="0.05"  value="3">    <span id="s1briV">3.00</span></label>
+  <label>Bright density  <input type="range" id="s2scale" min="20"    max="200"  step="5"     value="30">   <span id="s2scaleV">30</span></label>
+  <label>Bright size     <input type="range" id="s2size"  min="0.005" max="0.05" step="0.001" value="0.05"> <span id="s2sizeV">0.050</span></label>
+  <label>Bright bright   <input type="range" id="s2bri"   min="0"     max="5"    step="0.1"   value="5">    <span id="s2briV">5.00</span></label>
+  <hr>
+
+  <b style="color:#88aaff">Blue Nebula</b>
+  <div class="col-row">
+    <span>Colour</span>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="col-note">recompiles</span>
+      <input type="color" id="blue-col" value="#ffffff">
+    </div>
+  </div>
+  <label>Shape scale     <input type="range" id="bshape"  min="0.05"  max="5"    step="0.05"  value="0.25"> <span id="bshapeV">0.25</span></label>
+  <label>Shape rough     <input type="range" id="bsrough" min="0"     max="1"    step="0.01"  value="0.75"> <span id="bsroughV">0.75</span></label>
+  <label>Detail scale    <input type="range" id="bdetail" min="1"     max="15"   step="0.1"   value="5">    <span id="bdetailV">5.0</span></label>
+  <label>Detail rough    <input type="range" id="bdrough" min="0"     max="1"    step="0.01"  value="0.25"> <span id="bdroughV">0.25</span></label>
+  <label>Density shadow  <input type="range" id="bthlo"   min="0"     max="0.5"  step="0.01"  value="0.35"> <span id="bthloV">0.35</span></label>
+  <label>Density bright  <input type="range" id="bthhi"   min="0.1"   max="0.8"  step="0.01"  value="0.65"> <span id="bthhiV">0.65</span></label>
+  <label>Core threshold  <input type="range" id="bcorlo"  min="0.2"   max="0.9"  step="0.01"  value="0.6">  <span id="bcorloV">0.60</span></label>
+  <label>Core falloff    <input type="range" id="bcorhi"  min="0.4"   max="1.0"  step="0.01"  value="0.75"> <span id="bcorhiV">0.75</span></label>
+  <hr>
+
+  <b style="color:#ff5088">Red Nebula</b>
+  <div class="col-row">
+    <span>Colour</span>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="col-note">recompiles</span>
+      <input type="color" id="red-col" value="#2453e0">
+    </div>
+  </div>
+  <label>Shape scale     <input type="range" id="rshape"  min="0.05"  max="5"    step="0.05"  value="1">    <span id="rshapeV">1.00</span></label>
+  <label>Shape rough     <input type="range" id="rsrough" min="0"     max="1"    step="0.01"  value="0.75"> <span id="rsroughV">0.75</span></label>
+  <label>Detail scale    <input type="range" id="rdetail" min="1"     max="15"   step="0.1"   value="15">   <span id="rdetailV">15.0</span></label>
+  <label>Detail rough    <input type="range" id="rdrough" min="0"     max="1"    step="0.01"  value="0.75"> <span id="rdroughV">0.75</span></label>
+  <label>Density shadow  <input type="range" id="rthlo"   min="0"     max="0.5"  step="0.01"  value="0.25"> <span id="rthloV">0.25</span></label>
+  <label>Density bright  <input type="range" id="rthhi"   min="0.1"   max="0.8"  step="0.01"  value="0.4">  <span id="rthhiV">0.40</span></label>
+  <label>Fringe thresh   <input type="range" id="rfrlo"   min="0"     max="0.7"  step="0.01"  value="0.5">  <span id="rfrloV">0.50</span></label>
+  <label>Fringe falloff  <input type="range" id="rfrhi"   min="0.2"   max="0.9"  step="0.01"  value="0.9">  <span id="rfrhiV">0.90</span></label>
+  <hr>
+
+  <b style="color:#cc88ff">Background</b>
+  <label>Scale           <input type="range" id="bgscale" min="0.2"   max="4"    step="0.05"  value="4">    <span id="bgscaleV">4.00</span></label>
+  <label>Roughness       <input type="range" id="bgrough" min="0"     max="1"    step="0.01"  value="1">    <span id="bgroughV">1.00</span></label>
+  <label>Shadow          <input type="range" id="bgthlo"  min="0"     max="0.6"  step="0.01"  value="0.4">  <span id="bgthloV">0.40</span></label>
+  <label>Bright          <input type="range" id="bgthhi"  min="0.1"   max="0.9"  step="0.01"  value="0.55"> <span id="bgthhiV">0.55</span></label>
+  <hr>
+
+  <b style="color:#88ccff">Global</b>
+  <label>Emission        <input type="range" id="emstr"   min="0.1"   max="3"    step="0.05"  value="0.75"> <span id="emstrV">0.75</span></label>
+  <label>Exposure        <input type="range" id="expo"    min="0.2"   max="3"    step="0.05"  value="3">    <span id="expoV">3.00</span></label>
+  <label>Auto-rotate     <input type="range" id="rotat"   min="0"     max="0.5"  step="0.01"  value="0.5">  <span id="rotatV">0.50</span></label>
+  <hr>
+
+  <div style="display:flex; gap:6px; padding:2px 0">
+    <button class="ctl-btn" id="btn-export">⬇ Export JSON</button>
+    <button class="ctl-btn" id="btn-code">{ } Copy Code</button>
+    <button class="ctl-btn" id="btn-import">⬆ Import JSON</button>
+  </div>
+  <input type="file" id="import-file" accept=".json">
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ShaderConfig, MaterialOutput, Emission,
+  MixRGB, ColorRamp, NoiseTexture, VoronoiTexture,
+  MapRange, ShaderMath, TextureCoordinate, Mapping
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 3.0
+renderer.outputColorSpace = THREE.SRGBColorSpace
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 2000)
+camera.position.set(0, 0, 0.001)
+
+const orbitCtrl = new OrbitControls(camera, renderer.domElement)
+orbitCtrl.enableDamping   = true
+orbitCtrl.dampingFactor   = 0.06
+orbitCtrl.enablePan       = false
+orbitCtrl.rotateSpeed     = 0.4
+orbitCtrl.autoRotate      = true
+orbitCtrl.autoRotateSpeed = 0.5
+
+// ── Colour helpers ────────────────────────────────────────────────────────────
+function hexToHSL(hex) {
+  const r = parseInt(hex.slice(1,3),16)/255
+  const g = parseInt(hex.slice(3,5),16)/255
+  const b = parseInt(hex.slice(5,7),16)/255
+  const max = Math.max(r,g,b), min = Math.min(r,g,b)
+  let h = 0, s = 0, l = (max+min)/2
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d/(2-max-min) : d/(max+min)
+    switch(max) {
+      case r: h = (g-b)/d + (g<b?6:0); break
+      case g: h = (b-r)/d + 2; break
+      case b: h = (r-g)/d + 4; break
+    }
+    h /= 6
+  }
+  return [h*360, s*100, l*100]
+}
+
+function hslToHex(h, s, l) {
+  h /= 360; s /= 100; l /= 100
+  const q = l < 0.5 ? l*(1+s) : l+s-l*s
+  const p = 2*l - q
+  const hue2rgb = (p,q,t) => {
+    if (t<0) t+=1; if (t>1) t-=1
+    if (t<1/6) return p+(q-p)*6*t
+    if (t<1/2) return q
+    if (t<2/3) return p+(q-p)*(2/3-t)*6
+    return p
+  }
+  const toH = x => Math.round(Math.min(1,Math.max(0,x))*255).toString(16).padStart(2,'0')
+  if (s === 0) { const v = toH(l); return `#${v}${v}${v}` }
+  return `#${toH(hue2rgb(p,q,h+1/3))}${toH(hue2rgb(p,q,h))}${toH(hue2rgb(p,q,h-1/3))}`
+}
+
+// Derive a 5-stop nebula gradient from one accent hex colour
+function nebStops(hex) {
+  const [h, s, l] = hexToHSL(hex)
+  return [
+    '#000000',
+    hslToHex(h, s, Math.max(l*0.08, 1)),
+    hslToHex(h, s, Math.max(l*0.25, 2)),
+    hex,
+    hslToHex(h, Math.max(s-20,10), Math.min(l*1.7, 88)),
+  ]
+}
+// 3-stop bright core
+function coreStops(hex) {
+  const [h, s, l] = hexToHSL(hex)
+  return [
+    '#000000',
+    hslToHex(h, Math.max(s-10,15), Math.min(l*1.35, 72)),
+    hslToHex(h, Math.max(s-25,10), Math.min(l*2.0,  90)),
+  ]
+}
+
+// ── Shared state — all defaults match the user's JSON ─────────────────────────
+const S = {
+  s1scale:50,  s1size:0.015, s1bri:3,
+  s2scale:30,  s2size:0.05,  s2bri:5,
+  bshape:0.25, bsrough:0.75, bdetail:5,  bdrough:0.25,
+  bthlo:0.35,  bthhi:0.65,  bcorlo:0.6, bcorhi:0.75,
+  rshape:1,    rsrough:0.75, rdetail:15, rdrough:0.75,
+  rthlo:0.25,  rthhi:0.4,   rfrlo:0.5,  rfrhi:0.9,
+  bgscale:4,   bgrough:1,   bgthlo:0.4, bgthhi:0.55,
+  emstr:0.75,  expo:3,       rotat:0.5,
+  blueColor:'#ffffff',
+  redColor: '#2453e0',
+}
+
+// Live node refs — replaced on each rebuild, but bind() closures always
+// read through this object, so they automatically use the new nodes.
+const N = {}
+
+let skyMesh = null
+let prevMat = null
+
+// ── Build / rebuild sky ───────────────────────────────────────────────────────
+function buildSky() {
+  const tc = new TextureCoordinate()
+
+  // Stars
+  const sv1 = new VoronoiTexture({ vector: tc.output('Normal'), scale: S.s1scale, feature: 'F1' })
+  const sr1  = new MapRange({ value: sv1.output('Distance'), fromMin:0, fromMax:S.s1size, toMin:S.s1bri, toMax:0, clamp:true })
+  const sc1  = new ColorRamp({ fac: sr1.output('Result'), stops: ['#000000','#aabbff'] })
+
+  const sv2 = new VoronoiTexture({ vector: tc.output('Normal'), scale: S.s2scale, feature: 'F1' })
+  const sr2  = new MapRange({ value: sv2.output('Distance'), fromMin:0, fromMax:S.s2size, toMin:S.s2bri, toMax:0, clamp:true })
+  const sc2  = new ColorRamp({ fac: sr2.output('Result'), stops: ['#000000','#ffe8cc'] })
+
+  const allStars = new MixRGB({ mode:'ADD', fac:1, colorA:sc1.output('Color'), colorB:sc2.output('Color') })
+
+  // Blue nebula
+  const bmap   = new Mapping({ vector: tc.output('Normal'), location:[0.4,0.3,-0.2] })
+  const bLarge = new NoiseTexture({ vector:bmap.output('Vector'), scale:S.bshape,  detail:4, roughness:S.bsrough })
+  const bFine  = new NoiseTexture({ vector:bmap.output('Vector'), scale:S.bdetail, detail:4, roughness:S.bdrough })
+  const bMul   = new ShaderMath({ mode:'MULTIPLY', a:bLarge.output('Fac'), b:bFine.output('Fac') })
+  const bBoost = new MapRange({ value:bMul.output('Value'), fromMin:S.bthlo, fromMax:S.bthhi, toMin:0, toMax:1, clamp:true })
+  const bColor = new ColorRamp({ fac:bBoost.output('Result'), stops:nebStops(S.blueColor) })
+  const bCore  = new MapRange({ value:bLarge.output('Fac'), fromMin:S.bcorlo, fromMax:S.bcorhi, toMin:0, toMax:1, clamp:true })
+  const bCoreC = new ColorRamp({ fac:bCore.output('Result'), stops:coreStops(S.blueColor) })
+  const blueNeb = new MixRGB({ mode:'ADD', fac:1, colorA:bColor.output('Color'), colorB:bCoreC.output('Color') })
+
+  // Red nebula
+  const rmap   = new Mapping({ vector: tc.output('Normal'), location:[-0.5,-0.2,0.4] })
+  const rLarge = new NoiseTexture({ vector:rmap.output('Vector'), scale:S.rshape,  detail:4, roughness:S.rsrough })
+  const rFine  = new NoiseTexture({ vector:rmap.output('Vector'), scale:S.rdetail, detail:4, roughness:S.rdrough })
+  const rMul   = new ShaderMath({ mode:'MULTIPLY', a:rLarge.output('Fac'), b:rFine.output('Fac') })
+  const rBoost = new MapRange({ value:rMul.output('Value'), fromMin:S.rthlo, fromMax:S.rthhi, toMin:0, toMax:1, clamp:true })
+  const rColor = new ColorRamp({ fac:rBoost.output('Result'), stops:nebStops(S.redColor) })
+  const rFring = new MapRange({ value:rLarge.output('Fac'), fromMin:S.rfrlo, fromMax:S.rfrhi, toMin:0, toMax:1, clamp:true })
+  const rFrigC = new ColorRamp({ fac:rFring.output('Result'), stops:coreStops(S.redColor) })
+  const redNeb  = new MixRGB({ mode:'ADD', fac:1, colorA:rColor.output('Color'), colorB:rFrigC.output('Color') })
+
+  // Background
+  const bgN   = new NoiseTexture({ vector:tc.output('Normal'), scale:S.bgscale, detail:3, roughness:S.bgrough })
+  const bgMap = new MapRange({ value:bgN.output('Fac'), fromMin:S.bgthlo, fromMax:S.bgthhi, toMin:0, toMax:1, clamp:true })
+  const bgCol = new ColorRamp({ fac:bgMap.output('Result'), stops:['#000000','#0a0008','#1a0815'] })
+
+  // Compose
+  const nebulas  = new MixRGB({ mode:'ADD', fac:1, colorA:blueNeb.output('Color'), colorB:redNeb.output('Color') })
+  const withBg   = new MixRGB({ mode:'ADD', fac:1, colorA:nebulas.output('Color'), colorB:bgCol.output('Color') })
+  const withStar = new MixRGB({ mode:'ADD', fac:1, colorA:withBg.output('Color'),  colorB:allStars.output('Color') })
+  const emit     = new Emission({ color:withStar.output('Color'), strength:S.emstr })
+
+  const skyOut = new MaterialOutput({ surface:emit.output('BSDF') })
+  skyOut.compile()
+  skyOut.material.side       = THREE.BackSide
+  skyOut.material.depthWrite = false
+
+  // Update live node refs
+  Object.assign(N, { sv1,sr1,sv2,sr2, bLarge,bFine,bBoost,bCore, rLarge,rFine,rBoost,rFring, bgN,bgMap,emit })
+
+  return skyOut.material
+}
+
+// First build
+const firstMat = buildSky()
+skyMesh = new THREE.Mesh(new THREE.SphereGeometry(1000, 48, 32), firstMat)
+scene.add(skyMesh)
+
+function rebuildSky() {
+  const newMat = buildSky()
+  if (prevMat) prevMat.dispose()
+  prevMat = skyMesh.material
+  skyMesh.material = newMat
+  toast('Shader recompiled')
+}
+
+// ── UI wiring — same bind() pattern as example-ocean.html ─────────────────────
+function bind(id, valId, dec, statKey, nodeFn) {
+  const el  = document.getElementById(id)
+  const vEl = document.getElementById(valId)
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value)
+    S[statKey]  = v
+    vEl.textContent = v.toFixed(dec)
+    if (nodeFn) nodeFn(v)
+  })
+}
+
+bind('s1scale','s1scaleV',0,'s1scale', v => N.sv1.parameters.scale     = v)
+bind('s1size', 's1sizeV', 3,'s1size',  v => N.sr1.parameters.fromMax   = v)
+bind('s1bri',  's1briV',  2,'s1bri',   v => N.sr1.parameters.toMin     = v)
+bind('s2scale','s2scaleV',0,'s2scale', v => N.sv2.parameters.scale     = v)
+bind('s2size', 's2sizeV', 3,'s2size',  v => N.sr2.parameters.fromMax   = v)
+bind('s2bri',  's2briV',  2,'s2bri',   v => N.sr2.parameters.toMin     = v)
+
+bind('bshape', 'bshapeV', 2,'bshape',  v => N.bLarge.parameters.scale     = v)
+bind('bsrough','bsroughV',2,'bsrough', v => N.bLarge.parameters.roughness = v)
+bind('bdetail','bdetailV',1,'bdetail', v => N.bFine.parameters.scale      = v)
+bind('bdrough','bdroughV',2,'bdrough', v => N.bFine.parameters.roughness  = v)
+bind('bthlo',  'bthloV',  2,'bthlo',   v => N.bBoost.parameters.fromMin   = v)
+bind('bthhi',  'bthhiV',  2,'bthhi',   v => N.bBoost.parameters.fromMax   = v)
+bind('bcorlo', 'bcorloV', 2,'bcorlo',  v => N.bCore.parameters.fromMin    = v)
+bind('bcorhi', 'bcorhiV', 2,'bcorhi',  v => N.bCore.parameters.fromMax    = v)
+
+bind('rshape', 'rshapeV', 2,'rshape',  v => N.rLarge.parameters.scale     = v)
+bind('rsrough','rsroughV',2,'rsrough', v => N.rLarge.parameters.roughness = v)
+bind('rdetail','rdetailV',1,'rdetail', v => N.rFine.parameters.scale      = v)
+bind('rdrough','rdroughV',2,'rdrough', v => N.rFine.parameters.roughness  = v)
+bind('rthlo',  'rthloV',  2,'rthlo',   v => N.rBoost.parameters.fromMin   = v)
+bind('rthhi',  'rthhiV',  2,'rthhi',   v => N.rBoost.parameters.fromMax   = v)
+bind('rfrlo',  'rfrloV',  2,'rfrlo',   v => N.rFring.parameters.fromMin   = v)
+bind('rfrhi',  'rfrhiV',  2,'rfrhi',   v => N.rFring.parameters.fromMax   = v)
+
+bind('bgscale','bgscaleV',2,'bgscale', v => N.bgN.parameters.scale        = v)
+bind('bgrough','bgroughV',2,'bgrough', v => N.bgN.parameters.roughness    = v)
+bind('bgthlo', 'bgthloV', 2,'bgthlo',  v => N.bgMap.parameters.fromMin    = v)
+bind('bgthhi', 'bgthhiV', 2,'bgthhi',  v => N.bgMap.parameters.fromMax    = v)
+
+bind('emstr',  'emstrV',  2,'emstr',   v => N.emit.parameters.strength    = v)
+bind('expo',   'expoV',   2,'expo',    v => renderer.toneMappingExposure  = v)
+bind('rotat',  'rotatV',  2,'rotat',   v => { orbitCtrl.autoRotateSpeed = v; orbitCtrl.autoRotate = v > 0 })
+
+// Colour pickers — require recompile
+document.getElementById('blue-col').addEventListener('input', e => {
+  S.blueColor = e.target.value
+  rebuildSky()
+})
+document.getElementById('red-col').addEventListener('input', e => {
+  S.redColor = e.target.value
+  rebuildSky()
+})
+
+// ── Settings serialise / apply ─────────────────────────────────────────────────
+function getSettings() {
+  return {
+    s1scale:+el('s1scale').value, s1size:+el('s1size').value,  s1bri:+el('s1bri').value,
+    s2scale:+el('s2scale').value, s2size:+el('s2size').value,  s2bri:+el('s2bri').value,
+    bshape: +el('bshape').value,  bsrough:+el('bsrough').value,bdetail:+el('bdetail').value,
+    bdrough:+el('bdrough').value, bthlo:+el('bthlo').value,    bthhi:+el('bthhi').value,
+    bcorlo: +el('bcorlo').value,  bcorhi:+el('bcorhi').value,
+    rshape: +el('rshape').value,  rsrough:+el('rsrough').value,rdetail:+el('rdetail').value,
+    rdrough:+el('rdrough').value, rthlo:+el('rthlo').value,    rthhi:+el('rthhi').value,
+    rfrlo:  +el('rfrlo').value,   rfrhi:+el('rfrhi').value,
+    bgscale:+el('bgscale').value, bgrough:+el('bgrough').value,bgthlo:+el('bgthlo').value,
+    bgthhi: +el('bgthhi').value,
+    emstr:  +el('emstr').value,   expo:+el('expo').value,       rotat:+el('rotat').value,
+    blueColor: el('blue-col').value,
+    redColor:  el('red-col').value,
+  }
+}
+
+function applySettings(s) {
+  // Apply colour pickers first (they trigger recompile)
+  let needsRebuild = false
+  if (s.blueColor && s.blueColor !== S.blueColor) {
+    S.blueColor = s.blueColor
+    el('blue-col').value = s.blueColor
+    needsRebuild = true
+  }
+  if (s.redColor && s.redColor !== S.redColor) {
+    S.redColor = s.redColor
+    el('red-col').value = s.redColor
+    needsRebuild = true
+  }
+  if (needsRebuild) rebuildSky()
+
+  // Apply sliders — fire input events to trigger bind() callbacks
+  const skip = new Set(['blueColor','redColor'])
+  Object.keys(s).forEach(id => {
+    if (skip.has(id)) return
+    const input = document.getElementById(id)
+    if (!input) return
+    input.value = s[id]
+    input.dispatchEvent(new Event('input'))
+  })
+}
+
+function el(id) { return document.getElementById(id) }
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer
+function toast(msg) {
+  const t = document.getElementById('toast')
+  t.textContent = msg; t.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200)
+}
+
+// ── Export JSON ───────────────────────────────────────────────────────────────
+el('btn-export').addEventListener('click', () => {
+  const a = Object.assign(document.createElement('a'), {
+    href:     URL.createObjectURL(new Blob([JSON.stringify(getSettings(),null,2)],{type:'application/json'})),
+    download: 'space-hdr-settings.json',
+  })
+  a.click()
+  toast('Exported space-hdr-settings.json')
+})
+
+// ── Copy as code ──────────────────────────────────────────────────────────────
+el('btn-code').addEventListener('click', () => {
+  const s = getSettings()
+  const lines = [
+    '// Space HDR — parameter snapshot',
+    `sv1.parameters.scale        = ${s.s1scale}`,
+    `sr1.parameters.fromMax      = ${s.s1size}`,
+    `sr1.parameters.toMin        = ${s.s1bri}`,
+    `sv2.parameters.scale        = ${s.s2scale}`,
+    `sr2.parameters.fromMax      = ${s.s2size}`,
+    `sr2.parameters.toMin        = ${s.s2bri}`,
+    `bLarge.parameters.scale     = ${s.bshape}`,
+    `bLarge.parameters.roughness = ${s.bsrough}`,
+    `bFine.parameters.scale      = ${s.bdetail}`,
+    `bFine.parameters.roughness  = ${s.bdrough}`,
+    `bBoost.parameters.fromMin   = ${s.bthlo}`,
+    `bBoost.parameters.fromMax   = ${s.bthhi}`,
+    `bCore.parameters.fromMin    = ${s.bcorlo}`,
+    `bCore.parameters.fromMax    = ${s.bcorhi}`,
+    `rLarge.parameters.scale     = ${s.rshape}`,
+    `rLarge.parameters.roughness = ${s.rsrough}`,
+    `rFine.parameters.scale      = ${s.rdetail}`,
+    `rFine.parameters.roughness  = ${s.rdrough}`,
+    `rBoost.parameters.fromMin   = ${s.rthlo}`,
+    `rBoost.parameters.fromMax   = ${s.rthhi}`,
+    `rFring.parameters.fromMin   = ${s.rfrlo}`,
+    `rFring.parameters.fromMax   = ${s.rfrhi}`,
+    `bgN.parameters.scale        = ${s.bgscale}`,
+    `bgN.parameters.roughness    = ${s.bgrough}`,
+    `bgMap.parameters.fromMin    = ${s.bgthlo}`,
+    `bgMap.parameters.fromMax    = ${s.bgthhi}`,
+    `emit.parameters.strength    = ${s.emstr}`,
+    `renderer.toneMappingExposure = ${s.expo}`,
+    `orbitCtrl.autoRotateSpeed   = ${s.rotat}`,
+    `// blueColor: '${s.blueColor}'  redColor: '${s.redColor}'`,
+  ]
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => toast('Code snippet copied to clipboard'))
+    .catch(() => toast('Clipboard unavailable'))
+})
+
+// ── Import JSON ───────────────────────────────────────────────────────────────
+el('btn-import').addEventListener('click', () => el('import-file').click())
+el('import-file').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return
+  const reader = new FileReader()
+  reader.onload = ev => {
+    try { applySettings(JSON.parse(ev.target.result)); toast(`Loaded ${file.name}`) }
+    catch { toast('Invalid JSON file') }
+  }
+  reader.readAsText(file)
+  e.target.value = ''
+})
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+;(function loop() {
+  requestAnimationFrame(loop)
+  orbitCtrl.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

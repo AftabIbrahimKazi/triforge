@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Texture Nodes — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px; }
+  #labels { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .label { position: absolute; transform: translateX(-50%); background: rgba(0,0,0,0.6);
+    padding: 2px 7px; border-radius: 3px; font: 10px monospace; color: #eee; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="info">Texture Nodes — @st-shader-core<br>Magic · Musgrave · Gradient · Brick · Checker · Wave · WhiteNoise · HashValue</div>
+<div id="labels"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  MaterialOutput, PrincipledBSDF, Emission,
+  MagicTexture, MusgraveTexture, GradientTexture,
+  BrickTexture, CheckerTexture, WaveTexture,
+  WhiteNoise, HashValue,
+  ColorRamp, RGB
+} from '@st-shader-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d0d)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 18)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5))
+const sun = new THREE.DirectionalLight(0xffffff, 2)
+sun.position.set(5, 8, 4)
+scene.add(sun)
+
+const defs = [
+  {
+    name: 'MagicTexture',
+    build: () => {
+      const tex  = new MagicTexture({ scale: 3.0, distortion: 1.0 })
+      const bsdf = new PrincipledBSDF({ baseColor: tex.output('Color'), roughness: 0.5 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'MusgraveTexture',
+    build: () => {
+      const tex  = new MusgraveTexture({ scale: 4.0, detail: 8.0, dimension: 2.0 })
+      const ramp = new ColorRamp({ fac: tex.output('Fac'), stops: ['#1a0a00', '#cc6600', '#ffdd88'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.7 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'GradientTexture',
+    build: () => {
+      const tex  = new GradientTexture({ type: 'SPHERICAL' })
+      const ramp = new ColorRamp({ fac: tex.output('Fac'), stops: ['#000033', '#0055ff', '#88ccff'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.4 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'BrickTexture',
+    build: () => {
+      const tex  = new BrickTexture({ scale: 4.0, mortarSize: 0.04 })
+      const bsdf = new PrincipledBSDF({ baseColor: tex.output('Color'), roughness: 0.8 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'CheckerTexture',
+    build: () => {
+      const tex  = new CheckerTexture({ scale: 5.0, color1: new RGB('#111111'), color2: new RGB('#eeeeee') })
+      const bsdf = new PrincipledBSDF({ baseColor: tex.output('Color'), roughness: 0.3 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'WaveTexture',
+    build: () => {
+      const tex  = new WaveTexture({ scale: 5.0, distortion: 2.0, detail: 3.0 })
+      const ramp = new ColorRamp({ fac: tex.output('Fac'), stops: ['#001133', '#0088cc', '#aaddff'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.2 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'WhiteNoise',
+    build: () => {
+      const tex  = new WhiteNoise()
+      const ramp = new ColorRamp({ fac: tex.output('Value'), stops: ['#000000', '#ffffff'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.9 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  },
+  {
+    name: 'HashValue',
+    build: () => {
+      const tex  = new HashValue()
+      const ramp = new ColorRamp({ fac: tex.output('Value'), stops: ['#110022', '#aa00ff', '#ffaaff'] })
+      const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.5 })
+      const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+      mat.compile(); return mat.material
+    }
+  }
+]
+
+const geo    = new THREE.SphereGeometry(0.9, 48, 32)
+const cols   = 4
+const labels = document.getElementById('labels')
+
+const spheres = defs.map((def, i) => {
+  const mat  = def.build()
+  const mesh = new THREE.Mesh(geo, mat)
+  const col  = i % cols
+  const row  = Math.floor(i / cols)
+  mesh.position.set(-cols * 1.2 + col * 2.4 + 1.2, row * -2.4 + 1.2, 0)
+  scene.add(mesh)
+
+  const lbl = document.createElement('div')
+  lbl.className = 'label'
+  lbl.textContent = def.name
+  labels.appendChild(lbl)
+
+  return { mesh, lbl }
+})
+
+function projectLabel(mesh, lbl) {
+  const v = mesh.position.clone().project(camera)
+  lbl.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px'
+  lbl.style.top  = ((-v.y * 0.5 + 0.5) * innerHeight + 78) + 'px'
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+;(function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  spheres.forEach(({ mesh, lbl }) => projectLabel(mesh, lbl))
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

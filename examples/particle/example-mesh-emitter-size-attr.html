@@ -1,0 +1,133 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MeshEmitter — sizeAttribute vertex group</title>
+<style>
+  body { margin: 0; background: #0d0d1a; font-family: sans-serif; }
+  canvas { display: block; }
+  #ui { position: fixed; top: 16px; left: 16px; color: #ddd; background: rgba(0,0,0,.65);
+        padding: 14px 18px; border-radius: 8px; min-width: 230px; }
+  label { display: flex; justify-content: space-between; margin: 5px 0; font-size: 13px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>MeshEmitter — sizeAttribute</b>
+  <label>sizeStrength <input type="range" id="ss" min="0" max="1" step="0.05" value="1"> <span id="ssv">1.00</span></label>
+  <p style="font-size:11px;margin:6px 0 0">
+    Particles spawn on a sphere.<br>
+    Top half → size attr = 1.0 (large).<br>
+    Bottom half → size attr = 0.1 (small).<br>
+    sizeStrength blends between no effect and full effect.
+  </p>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.167.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.167.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 3, 10)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+// ── source geometry (sphere with per-vertex size weights) ─────────────────
+const sGeo = new THREE.SphereGeometry(3, 32, 32)
+const vCount = sGeo.getAttribute('position').count
+const sizeWeights = new Float32Array(vCount)
+for (let i = 0; i < vCount; i++) {
+  const y = sGeo.getAttribute('position').getY(i)
+  // top half = large (1.0), bottom half = small (0.1)
+  sizeWeights[i] = y > 0 ? 1.0 : 0.1
+}
+sGeo.setAttribute('mySize', new THREE.Float32BufferAttribute(sizeWeights, 1))
+
+// Wireframe to show the source mesh
+scene.add(new THREE.Mesh(sGeo, new THREE.MeshBasicMaterial({ color: 0x334466, wireframe: true })))
+
+// ── particles ─────────────────────────────────────────────────────────────
+let sizeStrength = 1.0
+const N = 1500
+// Pre-sample spawn positions from sphere vertices
+const posGeo = sGeo.getAttribute('position')
+const nrmGeo = sGeo.getAttribute('normal')
+const mySizeAttr = sGeo.getAttribute('mySize')
+const ppos = new Float32Array(N * 3)
+const psizes = new Float32Array(N)
+const BASE_SIZE = 0.15
+
+function resampleParticles() {
+  for (let i = 0; i < N; i++) {
+    const vi = Math.floor(Math.random() * posGeo.count)
+    ppos[i*3]   = posGeo.getX(vi)
+    ppos[i*3+1] = posGeo.getY(vi)
+    ppos[i*3+2] = posGeo.getZ(vi)
+    const w = mySizeAttr.getX(vi)
+    psizes[i] = BASE_SIZE * (1 - sizeStrength + sizeStrength * w)
+  }
+}
+resampleParticles()
+
+const pGeo = new THREE.BufferGeometry()
+const posAttr = new THREE.BufferAttribute(ppos, 3)
+const sizeAttr2 = new THREE.BufferAttribute(psizes, 1)
+posAttr.setUsage(THREE.DynamicDrawUsage)
+sizeAttr2.setUsage(THREE.DynamicDrawUsage)
+pGeo.setAttribute('position', posAttr)
+pGeo.setAttribute('size', sizeAttr2)
+
+const pMat = new THREE.ShaderMaterial({
+  uniforms: {},
+  vertexShader: `
+    attribute float size;
+    void main() {
+      vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = size * (400.0 / -mvPos.z);
+      gl_Position = projectionMatrix * mvPos;
+    }`,
+  fragmentShader: `
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      gl_FragColor = vec4(0.4, 0.8, 1.0, 1.0 - d * 1.5);
+    }`,
+  transparent: true,
+  depthWrite: false,
+})
+scene.add(new THREE.Points(pGeo, pMat))
+
+// ── UI ────────────────────────────────────────────────────────────────────
+document.getElementById('ss').addEventListener('input', function() {
+  sizeStrength = parseFloat(this.value)
+  document.getElementById('ssv').textContent = sizeStrength.toFixed(2)
+  resampleParticles()
+  posAttr.needsUpdate = true
+  sizeAttr2.needsUpdate = true
+})
+
+// gentle spin
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  scene.rotation.y += 0.003
+  controls.update()
+  renderer.render(scene, camera)
+})
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

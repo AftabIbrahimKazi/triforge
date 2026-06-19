@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HairDynamics — Cloth-like Strand Simulation — @st-hair-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a10; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 14px; left: 14px;
+    background: rgba(0,0,0,0.72); padding: 12px 16px; border-radius: 6px;
+    min-width: 240px; line-height: 2.1;
+  }
+  #ui h3 { color: #adf; font-size: 12px; margin-bottom: 4px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  input[type=range] { width: 110px; }
+  .sep { border-top: 1px solid #333; margin: 5px 0; }
+  #info { position: fixed; bottom: 12px; left: 14px; font-size: 10px; color: #555; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>HairDynamics</h3>
+  <label>Gravity <input type="range" id="gravity" min="-20" max="0" step="0.5" value="-9.8"></label>
+  <label>Wind X  <input type="range" id="windx"   min="-5"  max="5"  step="0.1" value="0"></label>
+  <label>Wind Z  <input type="range" id="windz"   min="-5"  max="5"  step="0.1" value="0"></label>
+  <div class="sep"></div>
+  <label>Stiffness  <input type="range" id="stiff" min="0" max="1" step="0.01" value="0.8"></label>
+  <label>Damping    <input type="range" id="damp"  min="0.8" max="1" step="0.005" value="0.98"></label>
+  <div class="sep"></div>
+  <label>Collision sphere <input type="checkbox" id="coll" checked></label>
+  <label>Show roots       <input type="checkbox" id="roots"></label>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll · sliders: adjust physics</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-hair-core":   "../../st-hair-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { HairSystem, HairDynamics, StrandGenerator } from '@st-hair-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a10)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 5)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0.5, 0)
+scene.add(new THREE.AmbientLight(0x334466, 3))
+const dir = new THREE.DirectionalLight(0xffffff, 2)
+dir.position.set(3, 6, 3)
+scene.add(dir)
+
+// ── Base mesh (scalp) ─────────────────────────────────────────────────────────
+const scalpGeo = new THREE.SphereGeometry(0.7, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.6)
+const scalpMat = new THREE.MeshPhongMaterial({ color: 0xc47a3a, side: THREE.DoubleSide })
+scene.add(new THREE.Mesh(scalpGeo, scalpMat))
+
+// ── Collision sphere (same as scalp) ─────────────────────────────────────────
+const collSphere = [0, 0, 0, 0.72]
+const sphereHelper = new THREE.Mesh(
+  new THREE.SphereGeometry(0.72, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0x4488ff, wireframe: true, opacity: 0.15, transparent: true })
+)
+scene.add(sphereHelper)
+
+// ── Generate initial strands from scalp ───────────────────────────────────────
+const gen = new StrandGenerator({ count: 120, length: 1.0, segments: 6, surface: 'hemisphere' })
+const baseStrands = gen.generate(scalpGeo)
+
+// ── HairSystem (rendering) ────────────────────────────────────────────────────
+const hairSys = new HairSystem({ mode: 'line', steps: 6 })
+hairSys.setStrands(baseStrands)
+
+const hairMat = new THREE.LineBasicMaterial({ color: 0xc8a060, vertexColors: false })
+let hairMesh = new THREE.LineSegments(hairSys.build(), hairMat)
+scene.add(hairMesh)
+
+// ── HairDynamics (simulation) ─────────────────────────────────────────────────
+const dynamics = new HairDynamics(baseStrands, {
+  gravity:    -9.8,
+  stiffness:  0.8,
+  damping:    0.98,
+  iterations: 4,
+  collisionSphere: collSphere,
+})
+
+// ── UI controls → dynamics.parameters ────────────────────────────────────────
+document.getElementById('gravity').addEventListener('input', e => {
+  dynamics.parameters.gravity = +e.target.value
+})
+document.getElementById('windx').addEventListener('input', e => {
+  dynamics.parameters.windX = +e.target.value
+})
+document.getElementById('windz').addEventListener('input', e => {
+  dynamics.parameters.windZ = +e.target.value
+})
+document.getElementById('stiff').addEventListener('input', e => {
+  dynamics.parameters.stiffness = +e.target.value
+})
+document.getElementById('damp').addEventListener('input', e => {
+  dynamics.parameters.damping = +e.target.value
+})
+document.getElementById('coll').addEventListener('change', e => {
+  dynamics.setCollisionSphere(
+    e.target.checked ? collSphere[0] : 1e9,
+    e.target.checked ? collSphere[1] : 1e9,
+    e.target.checked ? collSphere[2] : 1e9,
+    e.target.checked ? collSphere[3] : 0.001
+  )
+  sphereHelper.visible = e.target.checked
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.033)
+
+  // Step simulation
+  dynamics.update(dt)
+
+  // Rebuild geometry from simulated strands
+  hairSys.setStrands(dynamics.getStrands())
+  const newGeo = hairSys.build()
+  hairMesh.geometry.dispose()
+  hairMesh.geometry = newGeo
+
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

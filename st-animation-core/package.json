@@ -1,0 +1,23 @@
+{
+  "name": "@st-animation-core",
+  "version": "0.1.0",
+  "description": "Blender-matched shape keys, armature/bones, and NLA animation for Three.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist/index.js", "dist/index.d.ts", "package.json"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node test/run-tests.js",
+    "bench": "node bench/run-bench.js"
+  },
+  "keywords": ["animation", "shape-keys", "armature", "skeleton", "NLA", "three.js", "blender"],
+  "license": "MIT",
+  "peerDependencies": { "three": ">=0.128.0" },
+  "devDependencies": {
+    "@types/three": "^0.156.0",
+    "three": "^0.156.0",
+    "typescript": "^5.3.0"
+  }
+}

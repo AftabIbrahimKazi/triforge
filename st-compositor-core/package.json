@@ -1,0 +1,42 @@
+{
+  "name": "@st-compositor-core",
+  "version": "0.1.0",
+  "description": "Blender-matched compositor node graph for Three.js — backend-agnostic (three/addons or pmndrs/postprocessing)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "three.js",
+    "post-processing",
+    "compositor",
+    "blender",
+    "effects"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "three": ">=0.128.0"
+  },
+  "peerDependenciesMeta": {
+    "postprocessing": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/three": "^0.156.0",
+    "three": "^0.156.0",
+    "typescript": "^5.3.0"
+  }
+}

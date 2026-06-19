@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-uv-core — Seam Cutting</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:monospace; color:#ccc; }
+  #info {
+    position:absolute; top:10px; left:10px; font-size:12px; line-height:1.8;
+    pointer-events:none;
+  }
+  #info b { color:#fff; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<div id="info">
+  <b>st-uv-core — Seam Cutting</b><br>
+  Left: LSCM, no seam (closed sphere — auto-pinned)<br>
+  Centre: LSCM + seam along longitude (unwrapped flat)<br>
+  Right: ABF + seam along longitude (same seam, mean-value weights)<br>
+  <br>
+  UV grid texture shows how the mesh is unwrapped.<br>
+  Drag to orbit. Scroll to zoom.
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ConformalLSCM, AngleBasedABF, MarkSeams } from '../../st-uv-core/dist/index.js'
+
+// ── Renderer / scene ──────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x1a1a2e)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 0, 9)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+// ── Procedural UV-grid texture ────────────────────────────────────────────────
+function makeGridTexture(cols = 8, rows = 8, size = 512) {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  const cellW = size / cols
+  const cellH = size / rows
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      ctx.fillStyle = (r + c) % 2 === 0 ? '#e8d5b7' : '#c0a87a'
+      ctx.fillRect(c * cellW, r * cellH, cellW, cellH)
+    }
+  }
+  // Grid lines
+  ctx.strokeStyle = '#333'
+  ctx.lineWidth = 1
+  for (let c = 0; c <= cols; c++) {
+    ctx.beginPath(); ctx.moveTo(c * cellW, 0); ctx.lineTo(c * cellW, size); ctx.stroke()
+  }
+  for (let r = 0; r <= rows; r++) {
+    ctx.beginPath(); ctx.moveTo(0, r * cellH); ctx.lineTo(size, r * cellH); ctx.stroke()
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  return tex
+}
+
+const gridTex = makeGridTexture()
+
+// ── Build a UV sphere ─────────────────────────────────────────────────────────
+// THREE.SphereGeometry is indexed, which is what LSCM/ABF expect.
+const sphereGeo = new THREE.SphereGeometry(1.2, 24, 16)
+
+// ── Seam: mark a full longitude line (u=0 edge of the sphere) ────────────────
+// The seam follows the v-column at phi=0, splitting the sphere so it unfolds
+// like a world map. We collect the vertical seam edges by finding pairs of
+// consecutive vertices along the seam.
+//
+// SphereGeometry vertex layout (widthSegments W, heightSegments H):
+//   Row r (0..H), column c (0..W) → vertex index r*(W+1)+c
+//   Columns 0 and W share the same position (phi=0) but are separate vertices.
+//
+// We mark edges between c=0 and c=W vertices in adjacent rows as seams.
+const W = 24, H = 16
+const seamEdges = []
+for (let r = 0; r < H; r++) {
+  // Left column
+  const topLeft    = r * (W + 1)
+  const bottomLeft = (r + 1) * (W + 1)
+  seamEdges.push({ a: topLeft, b: bottomLeft })
+  // Right column (same position — we also cut the other side to get full seam)
+  const topRight    = r * (W + 1) + W
+  const bottomRight = (r + 1) * (W + 1) + W
+  seamEdges.push({ a: topRight, b: bottomRight })
+}
+
+const seamed = new MarkSeams().apply(sphereGeo, seamEdges)
+
+// ── Unwrap ────────────────────────────────────────────────────────────────────
+const noSeamGeo  = new ConformalLSCM().apply(sphereGeo)   // no seam — auto-pinned
+const lscmGeo    = new ConformalLSCM().apply(seamed)       // seam → proper boundary
+const abfGeo     = new AngleBasedABF().apply(seamed)       // same seam, ABF solver
+
+// ── Meshes ────────────────────────────────────────────────────────────────────
+const mat = new THREE.MeshStandardMaterial({ map: gridTex, side: THREE.DoubleSide })
+
+function makeMesh(geo, x) {
+  const m = new THREE.Mesh(geo, mat.clone())
+  m.position.x = x
+  scene.add(m)
+  return m
+}
+
+makeMesh(noSeamGeo, -4)
+makeMesh(lscmGeo,    0)
+makeMesh(abfGeo,     4)
+
+// ── Lights ────────────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+const dir = new THREE.DirectionalLight(0xffffff, 1.2)
+dir.position.set(5, 8, 5)
+scene.add(dir)
+
+// ── Labels ────────────────────────────────────────────────────────────────────
+function makeLabel(text, x) {
+  const c = document.createElement('canvas')
+  c.width = 400; c.height = 60
+  const ctx = c.getContext('2d')
+  ctx.fillStyle = 'rgba(0,0,0,0)'
+  ctx.clearRect(0, 0, 400, 60)
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 28px monospace'
+  ctx.textAlign = 'center'
+  ctx.fillText(text, 200, 40)
+  const tex = new THREE.CanvasTexture(c)
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.5, 0.4),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
+  )
+  plane.position.set(x, -2, 0)
+  scene.add(plane)
+}
+
+makeLabel('No seam', -4)
+makeLabel('LSCM + seam', 0)
+makeLabel('ABF + seam', 4)
+
+// ── Animate ───────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  renderer.render(scene, camera)
+})
+</script>
+</body>
+</html>

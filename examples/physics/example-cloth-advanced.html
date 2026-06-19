@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cloth Self-Collision · Pressure — @st-physics-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 290px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #tabs {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; gap: 6px;
+  }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 230px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>Cloth — Self-Collision &amp; Pressure</h3>
+  <b>Self-Collision</b><br>
+  <span class="code">selfCollision: true</span><br>
+  Cloth can't pass through itself.<br><br>
+  <b>Pressure</b><br>
+  <span class="code">pressure: true, pressureFactor</span><br>
+  Outward inflation along face normals.
+</div>
+<div id="tabs"></div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-physics-core":"../../st-physics-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ClothSimulator, PlaneCollider, SphereCollider, WindForce } from '@st-physics-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x050810)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 3, 9)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 1, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xfff0cc, 1.5)
+sun.position.set(4, 8, 3); scene.add(sun)
+scene.add(new THREE.GridHelper(10, 10, 0x111133, 0x0a0a20))
+
+let cloth = null, clothMesh = null, simRunning = false
+
+function makeCloth({ vertsX = 12, vertsY = 12, selfCollision = false, pressure = false, pressureFactor = 0.5 } = {}) {
+  if (clothMesh) { scene.remove(clothMesh); clothMesh.geometry.dispose() }
+
+  const geo = new THREE.PlaneGeometry(3, 3, vertsX - 1, vertsY - 1)
+  geo.rotateX(-Math.PI / 2)
+  geo.translate(0, 3, 0)
+
+  cloth = new ClothSimulator({
+    stiffness: 0.9,
+    damping: 0.02,
+    gravity: -9.8,
+    selfCollision,
+    selfCollisionDist: 0.05,
+    pressure,
+    pressureFactor,
+  })
+  cloth.setFromGeometry(geo)
+
+  // Pin top row
+  const posAttr = geo.getAttribute('position')
+  const pinSet  = new Set()
+  for (let i = 0; i < posAttr.count; i++) {
+    if (posAttr.getY(i) > 2.9) pinSet.add(i)
+  }
+  cloth.setPins([...pinSet])
+  cloth.addCollider(new PlaneCollider({ normal: [0,1,0], point: [0,0,0] }))
+
+  clothMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    color: 0x6688cc, side: THREE.DoubleSide, roughness: 0.6,
+  }))
+  scene.add(clothMesh)
+}
+
+// ── Presets ───────────────────────────────────────────────────────────────────
+const panelEl = document.getElementById('panel')
+const tabsEl  = document.getElementById('tabs')
+
+const presets = [
+  {
+    name: 'Self-Collision OFF',
+    knobs: [
+      { label: 'stiffness', key: 'stiffness', min: 0.1, max: 1, step: 0.05, def: 0.9 },
+      { label: 'gravity',   key: 'gravity',   min: -20, max: 0, step: 0.5,  def: -9.8 },
+    ],
+    setup: (v) => makeCloth({ selfCollision: false }),
+    live:  (v) => {
+      if (cloth) {
+        cloth.parameters.stiffness = v.stiffness
+        cloth.parameters.gravity   = v.gravity
+      }
+    },
+  },
+  {
+    name: 'Self-Collision ON',
+    knobs: [
+      { label: 'selfCollisionDist', key: 'selfCollisionDist', min: 0.01, max: 0.2, step: 0.01, def: 0.05 },
+    ],
+    setup: (v) => makeCloth({ selfCollision: true, vertsX: 10, vertsY: 10 }),
+    live:  (v) => {
+      if (cloth) cloth.parameters.selfCollisionDist = v.selfCollisionDist
+    },
+  },
+  {
+    name: 'Pressure (Balloon)',
+    knobs: [
+      { label: 'pressureFactor', key: 'pressureFactor', min: 0, max: 5, step: 0.1, def: 1.5 },
+      { label: 'stiffness',      key: 'stiffness',      min: 0.1, max: 1, step: 0.05, def: 0.95 },
+    ],
+    setup: (v) => {
+      // Closed sphere for pressure demo
+      const geo = new THREE.SphereGeometry(1, 10, 10)
+      geo.translate(0, 2, 0)
+      if (clothMesh) { scene.remove(clothMesh); clothMesh.geometry.dispose() }
+      cloth = new ClothSimulator({ stiffness: 0.95, damping: 0.02, gravity: -3, pressure: true, pressureFactor: v.pressureFactor ?? 1.5 })
+      cloth.setFromGeometry(geo)
+      clothMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xee7733, side: THREE.DoubleSide, roughness: 0.5 }))
+      scene.add(clothMesh)
+    },
+    live: (v) => {
+      if (cloth) {
+        cloth.parameters.pressureFactor = v.pressureFactor
+        cloth.parameters.stiffness      = v.stiffness
+      }
+    },
+  },
+]
+
+let liveFn = () => {}
+let activeKnobs = {}
+
+function activatePreset(i) {
+  document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  const preset = presets[i]
+  activeKnobs = {}
+  preset.knobs.forEach(k => { activeKnobs[k.key] = k.def })
+  preset.setup(activeKnobs)
+  liveFn = preset.live
+
+  panelEl.innerHTML = ''
+  for (const k of preset.knobs) {
+    const row = document.createElement('label')
+    const val = document.createElement('span')
+    const inp = document.createElement('input')
+    inp.type='range'; inp.min=k.min; inp.max=k.max; inp.step=k.step; inp.value=k.def
+    val.textContent = (+inp.value).toFixed(2)
+    inp.addEventListener('input', () => {
+      activeKnobs[k.key] = +inp.value
+      val.textContent = (+inp.value).toFixed(2)
+      liveFn(activeKnobs)
+    })
+    row.innerHTML=`<span>${k.label}</span>`; row.appendChild(inp); row.appendChild(val)
+    panelEl.appendChild(row)
+  }
+}
+
+presets.forEach((p, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = p.name
+  btn.addEventListener('click', () => activatePreset(i))
+  tabsEl.appendChild(btn)
+})
+activatePreset(0)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.033)
+  if (cloth && clothMesh) {
+    cloth.step(dt)
+    cloth.updateGeometry(clothMesh.geometry)
+    clothMesh.geometry.computeVertexNormals()
+  }
+  liveFn(activeKnobs)
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

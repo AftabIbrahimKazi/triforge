@@ -1,0 +1,144 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voronoi Texture — all four Blender feature modes</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.75); padding: 16px; border-radius: 8px;
+      font-size: 13px; line-height: 2.2; min-width: 280px;
+    }
+    #ui h3 { color: #adf; margin-bottom: 4px; font-size: 13px; }
+    label { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    input[type=range] { width: 130px; }
+    span.val { color: #ffa; min-width: 40px; text-align: right; }
+    .modes { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+    .mode-btn {
+      padding: 4px 8px; border-radius: 4px; border: 1px solid #555;
+      background: #222; color: #aaa; cursor: pointer; font-family: monospace; font-size: 11px;
+    }
+    .mode-btn.active { background: #336; border-color: #adf; color: #eee; }
+    .note { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.6; }
+    #info { position: fixed; bottom: 16px; left: 16px; font-size: 11px; color: #666; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h3>VoronoiTexture — feature mode</h3>
+  <div class="modes">
+    <button class="mode-btn active" data-mode="F1">F1</button>
+    <button class="mode-btn" data-mode="F2">F2</button>
+    <button class="mode-btn" data-mode="SMOOTH_F1">SMOOTH_F1</button>
+    <button class="mode-btn" data-mode="DISTANCE_TO_EDGE">DISTANCE_TO_EDGE</button>
+  </div>
+  <label>scale
+    <input type="range" id="scale" min="1" max="20" step="0.5" value="6">
+    <span class="val" id="scale-val">6.0</span>
+  </label>
+  <label>smoothness
+    <input type="range" id="smooth" min="0.01" max="3" step="0.01" value="1">
+    <span class="val" id="smooth-val">1.00</span>
+  </label>
+  <div class="note">
+    F1: distance to nearest cell<br>
+    F2: distance to second nearest<br>
+    SMOOTH_F1: soft cell edges<br>
+    DISTANCE_TO_EDGE: cell boundaries
+  </div>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll · scale/smoothness update live</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  VoronoiTexture, ColorRamp, PrincipledBSDF, MaterialOutput, ShaderConfig
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 0, 3)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const sun = new THREE.DirectionalLight(0xffffff, 1.5)
+sun.position.set(3, 5, 3)
+scene.add(sun)
+
+const geo = new THREE.SphereGeometry(1, 64, 32)
+let mesh = null
+
+let currentMode = 'F1'
+
+function rebuild() {
+  const vor  = new VoronoiTexture({ scale: parseFloat(document.getElementById('scale').value), smoothness: parseFloat(document.getElementById('smooth').value), feature: currentMode })
+  const ramp = new ColorRamp({ fac: vor.output('Distance'), stops: ['#000011', '#002266', '#0055cc', '#44aaff', '#ffffff'] })
+  const bsdf = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.4 })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+
+  if (mesh) {
+    const old = mesh.material
+    mesh.material = mat.material
+    old.dispose()
+  } else {
+    mesh = new THREE.Mesh(geo, mat.material)
+    scene.add(mesh)
+  }
+}
+
+rebuild()
+
+// Mode buttons
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    currentMode = btn.dataset.mode
+    rebuild()
+  })
+})
+
+// Scale and smoothness — update parameters live where possible
+document.getElementById('scale').addEventListener('input', e => {
+  document.getElementById('scale-val').textContent = parseFloat(e.target.value).toFixed(1)
+  rebuild()
+})
+document.getElementById('smooth').addEventListener('input', e => {
+  document.getElementById('smooth-val').textContent = parseFloat(e.target.value).toFixed(2)
+  rebuild()
+})
+
+renderer.setAnimationLoop(() => {
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

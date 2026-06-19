@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VolumeBox — @st-volume-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #030508; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.7); padding: 10px 14px; border-radius: 4px;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  #tabs {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; gap: 6px;
+  }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 210px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 110px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>VolumeBox — @st-volume-core</h3>
+  Ray-marched volumetric media<br>
+  Fog · Smoke · Fire
+</div>
+<div id="tabs"></div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-volume-core":   "../../st-volume-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { VolumeBox } from '@st-volume-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 7)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+// Background scenery
+scene.background = new THREE.Color(0x030508)
+scene.add(new THREE.GridHelper(10, 10, 0x111122, 0x111122))
+scene.add(new THREE.AmbientLight(0x334466, 0.5))
+const sun = new THREE.DirectionalLight(0xfff0cc, 1.5)
+sun.position.set(3, 8, 4)
+scene.add(sun)
+
+// ── Volume presets ────────────────────────────────────────────────────────────
+const presets = [
+  {
+    name: 'Fog',
+    make: () => new VolumeBox({
+      type: 'fog', size: [4, 2, 4],
+      density: 0.8, color: '#aaccee',
+    }),
+  },
+  {
+    name: 'Smoke',
+    make: () => new VolumeBox({
+      type: 'smoke', size: [3, 4, 3],
+      density: 1.2, noiseScale: 1.8, noiseSpeed: 0.4, color: '#888888',
+    }),
+  },
+  {
+    name: 'Fire',
+    make: () => new VolumeBox({
+      type: 'fire', size: [2, 3, 2],
+      density: 2.0, noiseScale: 2.5, noiseSpeed: 0.8,
+      color: '#ff5500', emissionColor: '#ffee88', emissionStrength: 4,
+    }),
+  },
+]
+
+let active = null
+
+function activatePreset(i) {
+  if (active) { scene.remove(active.mesh); active.dispose(); active = null }
+  active = presets[i].make()
+  scene.add(active.mesh)
+  buildPanel(active)
+  document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+const tabsEl = document.getElementById('tabs')
+presets.forEach((p, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = p.name
+  btn.addEventListener('click', () => activatePreset(i))
+  tabsEl.appendChild(btn)
+})
+
+// ── Parameter panel ───────────────────────────────────────────────────────────
+const panelEl = document.getElementById('panel')
+function buildPanel(vol) {
+  panelEl.innerHTML = ''
+  const knobs = [
+    { label: 'density',   key: 'density',   min: 0,   max: 4,   step: 0.05 },
+    { label: 'noiseScale',key: 'noiseScale', min: 0.1, max: 5,   step: 0.1  },
+    { label: 'noiseSpeed',key: 'noiseSpeed', min: 0,   max: 2,   step: 0.05 },
+    { label: 'steps',     key: 'steps',      min: 8,   max: 96,  step: 4    },
+    { label: 'anisotropy',key: 'anisotropy', min: -1,  max: 1,   step: 0.05 },
+  ]
+  for (const k of knobs) {
+    const row   = document.createElement('label')
+    const val   = document.createElement('span')
+    const input = document.createElement('input')
+    input.type = 'range'; input.min = k.min; input.max = k.max
+    input.step = k.step; input.value = vol.parameters[k.key]
+    val.textContent = (+input.value).toFixed(2)
+    input.addEventListener('input', () => {
+      vol.parameters[k.key] = +input.value
+      val.textContent = (+input.value).toFixed(2)
+    })
+    row.innerHTML = `<span>${k.label}</span>`
+    row.appendChild(input); row.appendChild(val)
+    panelEl.appendChild(row)
+  }
+}
+
+activatePreset(0)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime()
+  if (active) {
+    active.setCameraPosition(camera.position.x, camera.position.y, camera.position.z)
+    active.tick(t)
+  }
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Strand Density via Vertex Weights — @st-particle-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #070c0a; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 300px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 130px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>Strand Density — vertex weight → strand culling</h3>
+  Green sphere has a <span class="code">weight</span> attribute<br>
+  (1 at poles, 0 at equator).<br><br>
+  <span class="code">MeshEmitter({ sizeAttribute: 'weight' })</span><br>
+  scales particle size by weight at spawn.<br><br>
+  <span class="code">StrandRenderer({ densityThreshold })</span><br>
+  culls strands below the threshold.
+</div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ParticleSystem, MeshEmitter, StrandRenderer, GravityForce } from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x070c0a)
+scene.add(new THREE.AmbientLight(0x334433, 0.6))
+const sun = new THREE.DirectionalLight(0xffffff, 1.2)
+sun.position.set(3, 5, 3); scene.add(sun)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 5)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+// ── Sphere mesh with vertex weight attribute ──────────────────────────────────
+// weight = |sin(latitude)| — full at poles, zero at equator
+const sphereGeo = new THREE.SphereGeometry(1, 32, 32)
+const posAttr   = sphereGeo.getAttribute('position')
+const weight    = new Float32Array(posAttr.count)
+for (let i = 0; i < posAttr.count; i++) {
+  const y    = posAttr.getY(i)
+  const r    = Math.sqrt(posAttr.getX(i)**2 + posAttr.getZ(i)**2 + y*y)
+  const lat  = Math.asin(y / r)          // latitude: -π/2 at south pole, +π/2 at north
+  weight[i]  = Math.abs(Math.sin(lat))   // 1 at poles, 0 at equator
+}
+sphereGeo.setAttribute('weight', new THREE.BufferAttribute(weight, 1))
+
+// Show sphere as wireframe so we can see strands through it
+const sphereMesh = new THREE.Mesh(
+  sphereGeo,
+  new THREE.MeshStandardMaterial({ color: 0x224422, wireframe: true, opacity: 0.4, transparent: true }),
+)
+scene.add(sphereMesh)
+
+// ── Particle system with strand renderer ─────────────────────────────────────
+const sys = new ParticleSystem({
+  count: 1500, start: 0, end: 0,   // emit all at t=0 (static)
+  lifetime: 9999, size: 0.15, sizeRandom: 0.05,
+  physics: 'none', gravity: 0,
+})
+
+// MeshEmitter: sizeAttribute scales particle.size by the vertex weight
+const emitter = new MeshEmitter({
+  emitFrom: 'verts',
+  sizeAttribute: 'weight',
+  sizeStrength: 1,
+})
+sys.addEmitter(emitter)
+sys.setGeometry(sphereGeo)
+
+// StrandRenderer: densityThreshold culls low-size (low-weight) strands
+const strand = new StrandRenderer({
+  maxCount: 1500,
+  segments: 6,
+  mode: 'line',
+  material: new THREE.LineBasicMaterial({ color: 0x66ee88 }),
+  strandCurve: (p, t) => ({
+    x: p.position.x + p.position.x * t * p.size * 0.6,
+    y: p.position.y + p.position.y * t * p.size * 0.6,
+    z: p.position.z + p.position.z * t * p.size * 0.6,
+  }),
+})
+strand.parameters.densityThreshold = 0.05
+sys.setRenderer(strand)
+scene.add(strand.object3D)
+
+// Emit once
+sys.update(0)
+
+// ── Panel ─────────────────────────────────────────────────────────────────────
+const panelEl = document.getElementById('panel')
+const knobs = [
+  { label: 'densityThreshold', obj: strand.parameters, key: 'densityThreshold', min: 0, max: 0.2, step: 0.005, def: 0.05 },
+]
+for (const k of knobs) {
+  const row   = document.createElement('label')
+  const val   = document.createElement('span')
+  const input = document.createElement('input')
+  input.type = 'range'; input.min = k.min; input.max = k.max; input.step = k.step; input.value = k.def
+  val.textContent = (+input.value).toFixed(3)
+  input.addEventListener('input', () => { k.obj[k.key] = +input.value; val.textContent = (+input.value).toFixed(3) })
+  row.innerHTML = `<span>${k.label}</span>`; row.appendChild(input); row.appendChild(val)
+  panelEl.appendChild(row)
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05)
+  sys.update(dt)
+  sphereMesh.rotation.y += dt * 0.2
+  strand.object3D.rotation.y = sphereMesh.rotation.y
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

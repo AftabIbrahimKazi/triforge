@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Asteroid — @st-shader-core + @st-geometry-nodes</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    canvas { display: block; }
+    #hint  { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+             color: rgba(255,255,255,0.18); font: 11px/1 monospace; pointer-events: none; }
+    #badge { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+             color: rgba(180,200,255,0.4); font: 10px monospace; pointer-events: none; }
+
+    #controls {
+      position: absolute; top: 12px; right: 12px; bottom: 12px;
+      color: #ccc; font: 11px/2.0 monospace;
+      background: rgba(2,4,10,0.90); padding: 10px 12px; border-radius: 4px;
+      min-width: 295px; overflow-y: auto; border: 1px solid #1a2535;
+    }
+    #controls::-webkit-scrollbar { width: 3px; }
+    #controls::-webkit-scrollbar-thumb { background: rgba(80,120,180,0.3); border-radius: 2px; }
+
+    .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+    .row .lbl { color: #889; font-size: 10px; flex: 1; min-width: 100px; }
+    .row input[type=range] {
+      width: 80px; height: 3px; appearance: none; -webkit-appearance: none;
+      background: rgba(255,255,255,0.15); border-radius: 2px; outline: none; flex-shrink: 0;
+    }
+    .row input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 10px; height: 10px;
+      border-radius: 50%; background: #77aaff; cursor: pointer;
+    }
+    .vi {
+      width: 58px; text-align: right; color: #fff; font: 10px monospace;
+      background: rgba(255,255,255,0.06); border: 1px solid #1a2535;
+      border-radius: 3px; padding: 2px 4px; outline: none; flex-shrink: 0;
+      -moz-appearance: textfield; appearance: textfield;
+    }
+    .vi::-webkit-outer-spin-button, .vi::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .vi:hover { border-color: #334; background: rgba(255,255,255,0.1); }
+    .vi:focus { border-color: #77aaff; background: rgba(20,50,140,0.3); color: #adf; }
+
+    .col-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+    .col-row .lbl { color: #889; font-size: 10px; flex: 1; }
+    .col-row input[type=color] { width: 52px; height: 20px; border: 1px solid #333;
+      border-radius: 3px; padding: 0; background: none; cursor: pointer; }
+
+    #controls hr { border: none; border-top: 1px solid #1a2535; margin: 5px 0; }
+    #controls b  { font-size: 10px; letter-spacing: 0.06em; }
+
+    .ctl-btn { flex: 1; padding: 4px 0; border: 1px solid #1a2535; border-radius: 3px;
+               background: rgba(20,50,100,0.2); color: #7799bb; font: 10px monospace; cursor: pointer; }
+    .ctl-btn:hover { background: rgba(30,70,140,0.3); }
+
+    #regen-btn {
+      width: 100%; padding: 5px; margin-bottom: 4px;
+      border: 1px solid #2a3a4a; border-radius: 3px;
+      background: rgba(30,70,130,0.25); color: #99bbdd; font: 10px monospace; cursor: pointer;
+    }
+    #regen-btn:hover { background: rgba(40,90,160,0.4); }
+  </style>
+</head>
+<body>
+<div id="hint">DRAG TO ORBIT &nbsp;·&nbsp; SCROLL TO ZOOM</div>
+<div id="badge">Procedural Asteroid · @st-shader-core nodes</div>
+
+<div id="controls">
+
+<b style="color:#aaddff">ASTEROID</b><hr>
+
+<button id="regen-btn">⟳ Regenerate Shape</button>
+<div style="display:flex;gap:4px;margin-bottom:6px">
+  <button class="ctl-btn" id="btn-export">↓ Export JSON</button>
+  <button class="ctl-btn" id="btn-import">↑ Import JSON</button>
+  <input type="file" id="import-file" accept=".json" style="display:none">
+</div>
+
+<b style="color:#cccccc">Shape</b>
+<div class="row"><span class="lbl">Seed</span>         <input type="range" id="seed"     min="0"   max="999" step="1"    value="7">   <input class="vi" type="number" id="seedV"     min="0"   max="999" step="1"    value="7"></div>
+<div class="row"><span class="lbl">Base radius</span>  <input type="range" id="radius"   min="0.3" max="3"   step="0.05" value="1">   <input class="vi" type="number" id="radiusV"   min="0.3" max="3"   step="0.05" value="1"></div>
+<div class="row"><span class="lbl">Elongation X</span> <input type="range" id="elongX"   min="0.3" max="3"   step="0.05" value="1.35"><input class="vi" type="number" id="elongXV"   min="0.3" max="3"   step="0.05" value="1.35"></div>
+<div class="row"><span class="lbl">Elongation Y</span> <input type="range" id="elongY"   min="0.3" max="3"   step="0.05" value="0.75"><input class="vi" type="number" id="elongYV"   min="0.3" max="3"   step="0.05" value="0.75"></div>
+<div class="row"><span class="lbl">Elongation Z</span> <input type="range" id="elongZ"   min="0.3" max="3"   step="0.05" value="1">   <input class="vi" type="number" id="elongZV"   min="0.3" max="3"   step="0.05" value="1"></div>
+<div class="row"><span class="lbl">Large bumps</span>  <input type="range" id="bumpLg"   min="0"   max="1"   step="0.01" value="0.45"><input class="vi" type="number" id="bumpLgV"   min="0"   max="1"   step="0.01" value="0.45"></div>
+<div class="row"><span class="lbl">Medium bumps</span> <input type="range" id="bumpMd"   min="0"   max="1"   step="0.01" value="0.25"><input class="vi" type="number" id="bumpMdV"   min="0"   max="1"   step="0.01" value="0.25"></div>
+<div class="row"><span class="lbl">Fine detail</span>  <input type="range" id="bumpSm"   min="0"   max="0.5" step="0.005" value="0.08"><input class="vi" type="number" id="bumpSmV"  min="0"   max="0.5" step="0.005" value="0.08"></div>
+<div class="row"><span class="lbl">FBM roughness</span><input type="range" id="roughAmt" min="0.1" max="1"   step="0.01" value="0.5"> <input class="vi" type="number" id="roughAmtV" min="0.1" max="1"   step="0.01" value="0.5"></div>
+<div class="row"><span class="lbl">Subdivision</span>  <input type="range" id="subdiv"   min="2"   max="7"   step="1"    value="6">   <input class="vi" type="number" id="subdivV"   min="2"   max="7"   step="1"    value="6"></div>
+<hr>
+
+<b style="color:#dd7755">Impact Craters</b>
+<div class="row"><span class="lbl">Count</span>        <input type="range" id="craterN"   min="0"   max="30"  step="1"    value="10">  <input class="vi" type="number" id="craterNV"   min="0"   max="30"  step="1"    value="10"></div>
+<div class="row"><span class="lbl">Min radius</span>   <input type="range" id="craterRmin" min="0.01" max="0.4" step="0.01" value="0.04"><input class="vi" type="number" id="craterRminV" min="0.01" max="0.4" step="0.01" value="0.04"></div>
+<div class="row"><span class="lbl">Max radius</span>   <input type="range" id="craterRmax" min="0.05" max="0.6" step="0.01" value="0.22"><input class="vi" type="number" id="craterRmaxV" min="0.05" max="0.6" step="0.01" value="0.22"></div>
+<div class="row"><span class="lbl">Depth</span>        <input type="range" id="craterDp"   min="0"   max="1"   step="0.01" value="0.35"><input class="vi" type="number" id="craterDpV"   min="0"   max="1"   step="0.01" value="0.35"></div>
+<div class="row"><span class="lbl">Rim height</span>   <input type="range" id="craterRim"  min="0"   max="1"   step="0.01" value="0.35"><input class="vi" type="number" id="craterRimV"  min="0"   max="1"   step="0.01" value="0.35"></div>
+<div class="row"><span class="lbl">Rim width</span>    <input type="range" id="craterRimW" min="0.05" max="0.5" step="0.01" value="0.18"><input class="vi" type="number" id="craterRimWV" min="0.05" max="0.5" step="0.01" value="0.18"></div>
+<div class="row"><span class="lbl">Ejecta reach</span> <input type="range" id="ejecta"     min="0"   max="1"   step="0.01" value="0.25"><input class="vi" type="number" id="ejectaV"     min="0"   max="1"   step="0.01" value="0.25"></div>
+<div class="row"><span class="lbl">Floor flatness</span><input type="range" id="craterFlat" min="0"   max="1"   step="0.01" value="0.4"> <input class="vi" type="number" id="craterFlatV" min="0"   max="1"   step="0.01" value="0.4"></div>
+<hr>
+
+<b style="color:#cc9966">Surface Material</b>
+<div class="row"><span class="lbl">Color scale</span>  <input type="range" id="colScale"  min="0.5" max="20"  step="0.25" value="5">   <input class="vi" type="number" id="colScaleV"  min="0.5" max="20"  step="0.25" value="5"></div>
+<div class="row"><span class="lbl">Color detail</span> <input type="range" id="colDet"    min="1"   max="8"   step="0.5"  value="4">   <input class="vi" type="number" id="colDetV"    min="1"   max="8"   step="0.5"  value="4"></div>
+<div class="row"><span class="lbl">Bump scale</span>   <input type="range" id="bumpSc"    min="0.5" max="30"  step="0.25" value="12">  <input class="vi" type="number" id="bumpScV"    min="0.5" max="30"  step="0.25" value="12"></div>
+<div class="row"><span class="lbl">Bump strength</span><input type="range" id="bumpStr"   min="0"   max="5"   step="0.05" value="1.8"> <input class="vi" type="number" id="bumpStrV"   min="0"   max="5"   step="0.05" value="1.8"></div>
+<div class="row"><span class="lbl">Roughness</span>    <input type="range" id="matRough"  min="0"   max="1"   step="0.01" value="0.82"><input class="vi" type="number" id="matRoughV"  min="0"   max="1"   step="0.01" value="0.82"></div>
+<div class="row"><span class="lbl">Specular</span>     <input type="range" id="specular"  min="0"   max="1"   step="0.01" value="0.15"><input class="vi" type="number" id="specularV"  min="0"   max="1"   step="0.01" value="0.15"></div>
+<div class="row"><span class="lbl">Crevice dark</span> <input type="range" id="darkBlend" min="0"   max="1"   step="0.01" value="0.4"> <input class="vi" type="number" id="darkBlendV" min="0"   max="1"   step="0.01" value="0.4"></div>
+<div class="col-row"><span class="lbl">Rock dark</span> <input type="color" id="colDark"  value="#2a1f14"></div>
+<div class="col-row"><span class="lbl">Rock mid</span>  <input type="color" id="colMid"   value="#5c4c3a"></div>
+<div class="col-row"><span class="lbl">Rock light</span><input type="color" id="colLight" value="#8a7460"></div>
+<hr>
+
+<b style="color:#ffdd88">Lighting</b>
+<div class="row"><span class="lbl">Sun intensity</span><input type="range" id="sunInt"   min="0"   max="5"   step="0.05" value="2.2"> <input class="vi" type="number" id="sunIntV"   min="0"   max="5"   step="0.05" value="2.2"></div>
+<div class="row"><span class="lbl">Ambient</span>      <input type="range" id="ambInt"   min="0"   max="1"   step="0.01" value="0.04"><input class="vi" type="number" id="ambIntV"   min="0"   max="1"   step="0.01" value="0.04"></div>
+<div class="row"><span class="lbl">Sun angle H</span>  <input type="range" id="sunH"     min="0"   max="360" step="1"    value="45">  <input class="vi" type="number" id="sunHV"     min="0"   max="360" step="1"    value="45"></div>
+<div class="row"><span class="lbl">Sun angle V</span>  <input type="range" id="sunV"     min="-90" max="90"  step="1"    value="25">  <input class="vi" type="number" id="sunVV"     min="-90" max="90"  step="1"    value="25"></div>
+<div class="col-row"><span class="lbl">Sun color</span> <input type="color" id="sunColor" value="#fff4e0"></div>
+<hr>
+
+<b style="color:#aaaaff">Animation</b>
+<div class="row"><span class="lbl">Spin speed</span>   <input type="range" id="spinSpd"   min="0" max="2"    step="0.01" value="0.12"><input class="vi" type="number" id="spinSpdV"   min="0" max="2"    step="0.01" value="0.12"></div>
+<div class="row"><span class="lbl">Tumble speed</span> <input type="range" id="tumbleSpd" min="0" max="1"    step="0.01" value="0.04"><input class="vi" type="number" id="tumbleSpdV" min="0" max="1"    step="0.01" value="0.04"></div>
+<div class="row"><span class="lbl">Stars</span>        <input type="range" id="starCnt"   min="0" max="3000" step="100"  value="2000"><input class="vi" type="number" id="starCntV"   min="0" max="3000" step="100"  value="2000"></div>
+
+</div><!-- #controls -->
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  NoiseTexture, MixRGB, Bump, PrincipledBSDF,
+  MaterialOutput, TextureCoordinate,
+} from '@st-shader-core'
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(innerWidth, innerHeight)
+renderer.shadowMap.enabled  = true
+renderer.shadowMap.type     = THREE.PCFSoftShadowMap
+renderer.toneMapping        = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.2
+document.body.appendChild(renderer.domElement)
+
+// ── Scene / Camera ────────────────────────────────────────────────────────────
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 500)
+camera.position.set(0, 0.8, 4)
+const orbit  = new OrbitControls(camera, renderer.domElement)
+orbit.enableDamping = true; orbit.dampingFactor = 0.06
+
+// ── Lighting ──────────────────────────────────────────────────────────────────
+const sunLight = new THREE.DirectionalLight('#fff4e0', 2.2)
+sunLight.castShadow = true
+sunLight.shadow.mapSize.set(2048, 2048)
+sunLight.shadow.camera.near = 0.1
+sunLight.shadow.camera.far  = 30
+sunLight.shadow.bias        = -0.001
+scene.add(sunLight)
+const ambLight = new THREE.AmbientLight('#2244aa', 0.04)
+scene.add(ambLight)
+
+function setSunAngle(hDeg, vDeg) {
+  const h = hDeg * Math.PI / 180, v = vDeg * Math.PI / 180
+  sunLight.position.set(Math.cos(v)*Math.sin(h)*10, Math.sin(v)*10, Math.cos(v)*Math.cos(h)*10)
+}
+setSunAngle(45, 25)
+
+// ── Star field ────────────────────────────────────────────────────────────────
+let starMesh = null
+function buildStars(count) {
+  if (starMesh) { scene.remove(starMesh); starMesh.geometry.dispose() }
+  if (count < 1) return
+  const pos = new Float32Array(count * 3)
+  for (let i = 0; i < count * 3; i++) pos[i] = (Math.random() - 0.5) * 400
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  starMesh = new THREE.Points(geo, new THREE.PointsMaterial({ color: '#ffffff', size: 0.3, sizeAttenuation: true }))
+  scene.add(starMesh)
+}
+buildStars(2000)
+
+// ── Noise / RNG helpers ───────────────────────────────────────────────────────
+function lcg(s) { return ((s * 1664525 + 1013904223) & 0xffffffff) >>> 0 }
+function rng(seed, i) {
+  let s = lcg((seed * 2654435761 >>> 0) ^ (i * 2246822519 >>> 0))
+  s = lcg(s); s = lcg(s); return s / 0xffffffff
+}
+
+function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10) }
+function lerp(a, b, t) { return a + (b - a) * t }
+function hash3(ix, iy, iz, seed) {
+  let h = (seed * 1234567891 + ix * 73856093 + iy * 19349663 + iz * 83492791) >>> 0
+  h = lcg(h); h = lcg(h); return h / 0xffffffff
+}
+function valueNoise3(x, y, z, seed) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z)
+  const u = fade(x-xi), v = fade(y-yi), w = fade(z-zi)
+  return lerp(
+    lerp(lerp(hash3(xi,yi,zi,seed),   hash3(xi+1,yi,zi,seed),   u),
+         lerp(hash3(xi,yi+1,zi,seed), hash3(xi+1,yi+1,zi,seed), u), v),
+    lerp(lerp(hash3(xi,yi,zi+1,seed),   hash3(xi+1,yi,zi+1,seed),   u),
+         lerp(hash3(xi,yi+1,zi+1,seed), hash3(xi+1,yi+1,zi+1,seed), u), v),
+    w)
+}
+function fbm(x, y, z, seed, octaves, roughness) {
+  let val = 0, amp = 0.5, freq = 1, max = 0
+  for (let i = 0; i < octaves; i++) {
+    val += valueNoise3(x*freq, y*freq, z*freq, seed + i*137) * amp
+    max += amp; amp *= roughness; freq *= 2
+  }
+  return val / max
+}
+
+// ── Crater profile ────────────────────────────────────────────────────────────
+// d = normalised distance from crater centre (0=centre, 1=rim edge, >1=outside)
+// Returns signed displacement (negative = dug in, positive = raised rim/ejecta)
+function craterProfile(d, depth, rimH, rimW, flatness, ejecta) {
+  if (d >= 1 + rimW + ejecta * 0.5) return 0   // outside influence zone
+
+  if (d <= 1) {
+    // Interior: flat floor blending to parabolic bowl walls
+    const bowl = d * d                           // 0 at centre, 1 at rim
+    const floor = lerp(bowl, 0, flatness)        // flatness=1 → fully flat
+    return -depth * floor
+  }
+
+  // Rim peak sits at d = 1 + rimW*0.5
+  const rimZone = d - 1                          // 0 at rim edge, goes positive outward
+  if (rimZone <= rimW) {
+    // Smooth bell for the raised rim
+    const t = rimZone / rimW                     // 0→1 across rim width
+    const bell = Math.sin(t * Math.PI)           // 0 at both edges, 1 at peak
+    return rimH * depth * bell
+  }
+
+  // Ejecta blanket: gradual tapering mound beyond the rim
+  if (ejecta > 0.001) {
+    const eZone = rimZone - rimW                 // 0 just past rim
+    const eReach = ejecta * 0.5
+    if (eZone <= eReach) {
+      const t = eZone / eReach
+      return rimH * depth * 0.3 * (1 - t) * (1 - t)
+    }
+  }
+  return 0
+}
+
+// ── Build asteroid ────────────────────────────────────────────────────────────
+let asteroidMesh = null
+let asteroidMat  = null
+
+function buildMaterial(p) {
+  if (asteroidMat) asteroidMat.material.dispose()
+
+  const tc = new TextureCoordinate()
+
+  // Color variation: two noise layers
+  const colNoise = new NoiseTexture({ vector: tc.output('Generated'), scale: p.colScale, detail: p.colDet, roughness: 0.6 })
+  const darkNoise = new NoiseTexture({ vector: tc.output('Generated'), scale: p.colScale * 0.3, detail: 3, roughness: 0.7 })
+
+  // Three-stop color blend: dark → mid → light
+  // Use two MixRGB nodes to simulate a 3-stop ramp
+  const midMix = new MixRGB({ mode: 'MIX', fac: colNoise.output('Fac'), colorA: p.colDark, colorB: p.colMid })
+  const lightMix = new MixRGB({ mode: 'MIX', fac: colNoise.output('Fac'), colorA: p.colMid, colorB: p.colLight })
+  const colRamp = new MixRGB({ mode: 'MIX', fac: colNoise.output('Fac'), colorA: midMix.output('Color'), colorB: lightMix.output('Color') })
+
+  // Darken crevices
+  const darkened = new MixRGB({ mode: 'MULTIPLY', fac: darkNoise.output('Fac'), colorA: colRamp.output('Color'), colorB: p.colDark })
+  const final = new MixRGB({ mode: 'MIX', fac: p.darkBlend, colorA: colRamp.output('Color'), colorB: darkened.output('Color') })
+
+  // Micro-detail bump
+  const bumpN = new NoiseTexture({ vector: tc.output('Generated'), scale: p.bumpSc, detail: 6, roughness: 0.5 })
+  const bump  = new Bump({ height: bumpN.output('Fac'), strength: p.bumpStr })
+
+  const bsdf = new PrincipledBSDF({ baseColor: final.output('Color'), roughness: p.matRough, specular: p.specular, normal: bump.output('Normal') })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+  mat.material.side = THREE.FrontSide
+  asteroidMat = mat
+  return mat.material
+}
+
+function buildAsteroid(p) {
+  if (asteroidMesh) { scene.remove(asteroidMesh); asteroidMesh.geometry.dispose() }
+
+  const seed   = Math.floor(p.seed)
+  const subdiv = Math.floor(p.subdiv)
+  const geo    = new THREE.IcosahedronGeometry(1, subdiv)
+  const pos    = geo.attributes.position
+  const count  = pos.count
+
+  // ── Pre-generate craters (direction + radius) before vertex loop ──────────
+  const craterN = Math.floor(p.craterN)
+  const craters = []
+  for (let c = 0; c < craterN; c++) {
+    // Random point on sphere via rejection
+    let cx, cy, cz, cl
+    do {
+      cx = rng(seed + c*17, 1) * 2 - 1
+      cy = rng(seed + c*17, 2) * 2 - 1
+      cz = rng(seed + c*17, 3) * 2 - 1
+      cl = Math.sqrt(cx*cx + cy*cy + cz*cz)
+    } while (cl < 0.01)
+    craters.push({
+      nx: cx/cl, ny: cy/cl, nz: cz/cl,
+      // Radius in radians (angular size on unit sphere)
+      r:  p.craterRmin + rng(seed + c*17, 4) * (p.craterRmax - p.craterRmin),
+      // Per-crater depth/rim variation
+      depthScale: 0.6 + rng(seed + c*17, 5) * 0.8,
+    })
+  }
+
+  const displaced = new Float32Array(count * 3)
+
+  for (let i = 0; i < count; i++) {
+    let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i)
+    const len = Math.sqrt(x*x + y*y + z*z)
+    const nx = x/len, ny = y/len, nz = z/len   // unit sphere direction
+
+    // ── Base shape: FBM displacement ─────────────────────────────────────────
+    const large  = fbm(nx*1.5, ny*1.5, nz*1.5, seed,        4, p.roughAmt) * 2 - 1
+    const medium = fbm(nx*4,   ny*4,   nz*4,   seed + 999,  3, p.roughAmt) * 2 - 1
+    const small  = fbm(nx*12,  ny*12,  nz*12,  seed + 2222, 2, p.roughAmt) * 2 - 1
+    let disp = 1 + large*p.bumpLg + medium*p.bumpMd + small*p.bumpSm
+
+    // ── Crater displacements ──────────────────────────────────────────────────
+    for (const cr of craters) {
+      // Angular distance from this vertex to crater centre
+      const dot    = nx*cr.nx + ny*cr.ny + nz*cr.nz
+      const angDist = Math.acos(Math.max(-1, Math.min(1, dot)))
+      // Normalise by crater radius (d=0 centre, d=1 rim, d>1 outside)
+      const d = angDist / cr.r
+      const influence = 1 + p.craterRimW + p.ejecta * 0.5
+      if (d > influence) continue
+
+      const dVal = craterProfile(d, p.craterDp * cr.depthScale, p.craterRim, p.craterRimW, p.craterFlat, p.ejecta)
+      disp += dVal
+    }
+
+    disp = Math.max(0.2, disp) * p.radius
+
+    // Apply elongation after displacement so craters aren't stretched
+    displaced[i*3]   = nx * disp * p.elongX
+    displaced[i*3+1] = ny * disp * p.elongY
+    displaced[i*3+2] = nz * disp * p.elongZ
+  }
+
+  geo.setAttribute('position', new THREE.BufferAttribute(displaced, 3))
+  geo.computeVertexNormals()
+
+  const mat = buildMaterial(p)
+  asteroidMesh = new THREE.Mesh(geo, mat)
+  asteroidMesh.castShadow = asteroidMesh.receiveShadow = true
+  scene.add(asteroidMesh)
+}
+
+// ── Default params ────────────────────────────────────────────────────────────
+const P = {
+  seed: 7, radius: 1,
+  elongX: 1.35, elongY: 0.75, elongZ: 1,
+  bumpLg: 0.45, bumpMd: 0.25, bumpSm: 0.08, roughAmt: 0.5,
+  subdiv: 6,
+  craterN: 10, craterRmin: 0.04, craterRmax: 0.22,
+  craterDp: 0.35, craterRim: 0.35, craterRimW: 0.18, ejecta: 0.25, craterFlat: 0.4,
+  colScale: 5, colDet: 4,
+  bumpSc: 12, bumpStr: 1.8, matRough: 0.82, specular: 0.15, darkBlend: 0.4,
+  colDark: '#2a1f14', colMid: '#5c4c3a', colLight: '#8a7460',
+  sunInt: 2.2, ambInt: 0.04, sunH: 45, sunV: 25, sunColor: '#fff4e0',
+  spinSpd: 0.12, tumbleSpd: 0.04, starCnt: 2000,
+}
+
+buildAsteroid(P)
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function el(id) { return document.getElementById(id) }
+
+function bind(id, fn) {
+  const s = el(id), n = el(id + 'V')
+  s.addEventListener('input', () => { const v = parseFloat(s.value); n.value = v; fn(v) })
+  n.addEventListener('change', () => {
+    let v = parseFloat(n.value)
+    if (isNaN(v)) { n.value = s.value; return }
+    v = Math.max(parseFloat(s.min), Math.min(parseFloat(s.max), v))
+    n.value = v; s.value = v; fn(v)
+  })
+}
+function bindColor(id, fn) { el(id).addEventListener('input', e => fn(e.target.value)) }
+
+// Param categories
+const SHAPE_PARAMS  = ['seed','radius','elongX','elongY','elongZ','bumpLg','bumpMd','bumpSm','roughAmt','subdiv',
+                       'craterN','craterRmin','craterRmax','craterDp','craterRim','craterRimW','ejecta','craterFlat']
+const MAT_PARAMS    = ['colScale','colDet','bumpSc','bumpStr','matRough','specular','darkBlend']
+const COL_PARAMS    = ['colDark','colMid','colLight']
+
+function rebuildGeo() { buildAsteroid(P) }
+function rebuildMat() { if (asteroidMesh) asteroidMesh.material = buildMaterial(P) }
+
+SHAPE_PARAMS.forEach(id => bind(id, v => { P[id] = v; rebuildGeo() }))
+MAT_PARAMS.forEach(id   => bind(id, v => { P[id] = v; rebuildMat() }))
+COL_PARAMS.forEach(id   => bindColor(id, v => { P[id] = v; rebuildMat() }))
+
+bind('sunInt',    v => { P.sunInt = v;    sunLight.intensity = v })
+bind('ambInt',    v => { P.ambInt = v;    ambLight.intensity = v })
+bind('sunH',      v => { P.sunH = v;      setSunAngle(P.sunH, P.sunV) })
+bind('sunV',      v => { P.sunV = v;      setSunAngle(P.sunH, P.sunV) })
+bind('spinSpd',   v => { P.spinSpd = v })
+bind('tumbleSpd', v => { P.tumbleSpd = v })
+bind('starCnt',   v => { P.starCnt = v;   buildStars(Math.round(v)) })
+bindColor('sunColor', v => { P.sunColor = v; sunLight.color.set(v) })
+
+// ── Export / Import ───────────────────────────────────────────────────────────
+function applySettings(s) {
+  Object.assign(P, s)
+  ;[...SHAPE_PARAMS, ...MAT_PARAMS, 'sunInt','ambInt','sunH','sunV','spinSpd','tumbleSpd','starCnt'].forEach(id => {
+    const slider = el(id), numInp = el(id + 'V')
+    if (!slider || !(id in s)) return
+    slider.value = s[id]; numInp.value = s[id]
+  })
+  COL_PARAMS.concat(['sunColor']).forEach(id => { if (id in s) el(id).value = s[id] })
+  sunLight.intensity = P.sunInt
+  ambLight.intensity = P.ambInt
+  sunLight.color.set(P.sunColor)
+  setSunAngle(P.sunH, P.sunV)
+  buildStars(Math.round(P.starCnt))
+  rebuildGeo()
+}
+
+el('btn-export').addEventListener('click', () => {
+  Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([JSON.stringify(P, null, 2)], { type: 'application/json' })),
+    download: 'asteroid-settings.json',
+  }).click()
+})
+el('btn-import').addEventListener('click', () => el('import-file').click())
+el('import-file').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return
+  const r = new FileReader()
+  r.onload = ev => { try { applySettings(JSON.parse(ev.target.result)) } catch {} }
+  r.readAsText(f); e.target.value = ''
+})
+
+el('regen-btn').addEventListener('click', () => {
+  const s = Math.floor(Math.random() * 999)
+  P.seed = s; el('seed').value = s; el('seedV').value = s
+  rebuildGeo()
+})
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+// ── Loop ──────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+;(function loop() {
+  requestAnimationFrame(loop)
+  if (asteroidMesh) {
+    asteroidMesh.rotation.y += P.spinSpd   * 0.005
+    asteroidMesh.rotation.x += P.tumbleSpd * 0.003
+    asteroidMesh.rotation.z += P.tumbleSpd * 0.001
+  }
+  orbit.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

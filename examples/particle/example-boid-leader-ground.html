@@ -1,0 +1,187 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-particle-core — Boids: Leader Follow & Ground Walk</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #111; color: #eee; font-family: monospace; overflow: hidden; }
+canvas { display: block; }
+#ui {
+  position: fixed; top: 12px; left: 12px;
+  background: rgba(0,0,0,.75); padding: 12px 16px; border-radius: 6px;
+  display: flex; flex-direction: column; gap: 7px; width: 270px;
+}
+label { display: flex; justify-content: space-between; font-size: 13px; }
+input[type=range] { width: 130px; }
+b { color: #adf; }
+small { opacity: .6; line-height: 1.4; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>Boids — Leader & Ground Demo</b>
+  <label>Leader weight <input type="range" id="lw" min="0" max="5" step="0.1" value="1.5"><span id="lwVal">1.5</span></label>
+  <label>Leader radius <input type="range" id="lr" min="1" max="20" step="0.5" value="8"><span id="lrVal">8</span></label>
+  <label>Ground mode   <input type="range" id="gm" min="0" max="1" step="1"   value="0"><span id="gmVal">OFF</span></label>
+  <label>Ground level  <input type="range" id="gl" min="-5" max="5" step="0.5" value="0"><span id="glVal">0</span></label>
+  <label>Ground str    <input type="range" id="gs" min="0" max="10" step="0.5" value="3"><span id="gsVal">3</span></label>
+  <label>Collision R   <input type="range" id="cr" min="0" max="2" step="0.1" value="0.4"><span id="crVal">0.4</span></label>
+  <small>Red sphere = leader (particle 0). Others follow it.<br>Ground mode locks flock to ground level.</small>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ParticleSystem, PointEmitter, BoidForce } from '@st-particle-core'
+
+// ── Renderer ─────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(window.innerWidth, window.innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200)
+camera.position.set(0, 8, 22)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+// ── Particle system ──────────────────────────────────────────────────────────
+const MAX = 80
+const sys = new ParticleSystem({ maxParticles: MAX, lifetime: 60, rate: 80 })
+sys.addEmitter(new PointEmitter({ spread: 3 }))
+
+const boid = new BoidForce(sys.pool, {
+  separationRadius: 0.8, separationStrength: 3,
+  alignmentRadius:  3,   alignmentStrength: 0.5,
+  cohesionRadius:   5,   cohesionStrength: 0.3,
+  maxSpeed: 4, maxForce: 6,
+  leaderIndex: 0, leaderWeight: 1.5, leaderRadius: 8,
+  collisionRadius: 0.4, collisionStiffness: 8,
+  bankingAngle: 0.6, pitchAngle: 0.4,
+})
+sys.addForce(boid)
+
+// Warm up pool so all particles are alive
+for (let i = 0; i < 200; i++) sys.update(0.016)
+
+// ── Geometry ──────────────────────────────────────────────────────────────────
+const geo  = new THREE.BufferGeometry()
+const pos  = new Float32Array(MAX * 3)
+const cols = new Float32Array(MAX * 3)
+const posAttr = new THREE.BufferAttribute(pos, 3)
+const colAttr = new THREE.BufferAttribute(cols, 3)
+geo.setAttribute('position', posAttr)
+geo.setAttribute('color', colAttr)
+geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 100)
+
+const mat    = new THREE.PointsMaterial({ size: 0.25, vertexColors: true })
+const points = new THREE.Points(geo, mat)
+points.frustumCulled = false
+scene.add(points)
+
+// Leader marker
+const leaderMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.35, 12, 8),
+  new THREE.MeshBasicMaterial({ color: 0xff4444 })
+)
+scene.add(leaderMesh)
+
+// Leader orbits in a circle
+let leaderAngle = 0
+
+// Ground plane
+const groundMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(40, 40),
+  new THREE.MeshBasicMaterial({ color: 0x223322, transparent: true, opacity: 0.4 })
+)
+groundMesh.rotation.x = -Math.PI / 2
+groundMesh.visible = false
+scene.add(groundMesh)
+
+scene.add(new THREE.GridHelper(40, 20, 0x334433, 0x222222))
+
+// ── UI wiring ─────────────────────────────────────────────────────────────────
+function wire(id, valId, fn, fmt = v => v) {
+  const el = document.getElementById(id)
+  const vEl = document.getElementById(valId)
+  el.addEventListener('input', () => { vEl.textContent = fmt(el.value); fn(parseFloat(el.value)) })
+}
+wire('lw', 'lwVal', v => boid.parameters.leaderWeight = v)
+wire('lr', 'lrVal', v => boid.parameters.leaderRadius = v)
+wire('gm', 'gmVal', v => {
+  boid.parameters.groundMode = v
+  groundMesh.visible = v >= 0.5
+}, v => v >= 0.5 ? 'ON' : 'OFF')
+wire('gl', 'glVal', v => {
+  boid.parameters.groundLevel = v
+  groundMesh.position.y = v
+})
+wire('gs', 'gsVal', v => boid.parameters.groundStrength = v)
+wire('cr', 'crVal', v => boid.parameters.collisionRadius = v)
+
+// ── Animation ────────────────────────────────────────────────────────────────
+let prev = performance.now()
+
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - prev) * 0.001, 0.05)
+  prev = now
+
+  // Move leader particle (index 0)
+  leaderAngle += dt * 0.4
+  const leader = sys.pool[0]
+  if (leader && leader.alive) {
+    leader.position.x = Math.cos(leaderAngle) * 6
+    leader.position.z = Math.sin(leaderAngle) * 6
+    leader.position.y = Math.sin(leaderAngle * 1.3) * 2
+    leader.velocity.set(
+      -Math.sin(leaderAngle) * 6 * 0.4,
+       Math.cos(leaderAngle * 1.3) * 1.3 * 2 * 0.4,
+       Math.cos(leaderAngle) * 6 * 0.4
+    )
+    leaderMesh.position.copy(leader.position)
+  }
+
+  sys.update(dt)
+
+  const pool = sys.pool
+  let alive = 0
+  for (let i = 0; i < pool.length; i++) {
+    const p = pool[i]
+    if (!p.alive) continue
+    const isLeader = i === 0
+    pos[alive*3]   = p.position.x
+    pos[alive*3+1] = p.position.y
+    pos[alive*3+2] = p.position.z
+    cols[alive*3]   = isLeader ? 1 : 0.4
+    cols[alive*3+1] = isLeader ? 0.3 : 0.8
+    cols[alive*3+2] = isLeader ? 0.3 : 1.0
+    alive++
+  }
+  geo.setDrawRange(0, alive)
+  posAttr.needsUpdate = true
+  colAttr.needsUpdate = true
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(window.innerWidth, window.innerHeight)
+})
+</script>
+</body>
+</html>

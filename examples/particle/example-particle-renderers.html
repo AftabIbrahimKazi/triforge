@@ -1,0 +1,312 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>@st-particle-core — Render Modes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #06080f; overflow: hidden; font: 12px/1.5 monospace; color: #ccc; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; top: 14px; left: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    z-index: 10; pointer-events: none;
+  }
+  .hud-box {
+    background: rgba(0,0,0,0.65); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px; padding: 10px 14px; pointer-events: all;
+    backdrop-filter: blur(8px);
+  }
+  .hud-title {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: rgba(255,255,255,0.35); margin-bottom: 8px;
+  }
+  .hud-row {
+    display: grid; grid-template-columns: 120px 120px 40px;
+    align-items: center; gap: 6px; margin: 4px 0;
+  }
+  .hud-row label { font-size: 10px; color: rgba(255,255,255,0.5); }
+  .hud-row input[type=range] {
+    -webkit-appearance: none; width: 100%; height: 3px;
+    background: rgba(255,255,255,0.15); border-radius: 2px; outline: none;
+  }
+  .hud-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%;
+    background: #4a9eff; border: 2px solid rgba(255,255,255,0.5); cursor: pointer;
+  }
+  .hud-row .v { font-size: 10px; color: #fff; text-align: right; }
+
+  #labels {
+    position: fixed; bottom: 20px; left: 0; right: 0;
+    display: flex; justify-content: space-around;
+    pointer-events: none;
+  }
+  .col-label {
+    font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: rgba(255,255,255,0.4); text-align: center;
+  }
+  .col-label span { display: block; color: rgba(255,255,255,0.15); font-size: 10px; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div class="hud-box">
+    <div class="hud-title">Particle System</div>
+    <div class="hud-row">
+      <label>count</label>
+      <input type="range" id="r-count" min="10" max="600" step="10" value="300">
+      <div class="v" id="v-count">300</div>
+    </div>
+    <div class="hud-row">
+      <label>lifetime (s)</label>
+      <input type="range" id="r-life" min="0.5" max="5" step="0.1" value="2.5">
+      <div class="v" id="v-life">2.5</div>
+    </div>
+    <div class="hud-row">
+      <label>opacity</label>
+      <input type="range" id="r-opacity" min="0" max="1" step="0.01" value="0.9">
+      <div class="v" id="v-opacity">0.9</div>
+    </div>
+    <div class="hud-row">
+      <label>line length</label>
+      <input type="range" id="r-linelen" min="0.01" max="1" step="0.01" value="0.15">
+      <div class="v" id="v-linelen">0.15</div>
+    </div>
+  </div>
+</div>
+
+<div id="labels">
+  <div class="col-label">Halo<span>BillboardRenderer</span></div>
+  <div class="col-label">Line<span>LineRenderer</span></div>
+  <div class="col-label">Object<span>InstanceRenderer</span></div>
+  <div class="col-label">Collection<span>CollectionRenderer</span></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":             "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":     "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem,
+  MeshEmitter,
+  GravityForce, DragForce, TurbulenceForce,
+  HaloRenderer, LineRenderer, ObjectRenderer, CollectionRenderer,
+} from '@st-particle-core'
+
+// ── renderer / scene ──────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.1
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x06080f)
+scene.fog = new THREE.Fog(0x06080f, 30, 80)
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200)
+camera.position.set(0, 5, 28)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+controls.enableDamping = true
+controls.dampingFactor = 0.06
+
+// ── lighting ──────────────────────────────────────────────────────────────
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+const dir = new THREE.DirectionalLight(0xffeedd, 2.0)
+dir.position.set(5, 10, 5)
+scene.add(dir)
+
+// ── column helpers ────────────────────────────────────────────────────────
+// Each column is offset on X so all four systems are visible side by side.
+
+const COLS = [-10.5, -3.5, 3.5, 10.5]
+
+// Dim grid planes per column to make the offset clear
+COLS.forEach(cx => {
+  const grid = new THREE.GridHelper(6, 6, 0x222244, 0x111133)
+  grid.position.set(cx, -0.01, 0)
+  scene.add(grid)
+})
+
+// ── torus emitter geometry (shared across all four systems) ───────────────
+
+const torusGeo = new THREE.TorusGeometry(2.0, 0.25, 12, 60)
+
+// ── system factory ────────────────────────────────────────────────────────
+
+let COUNT    = 300
+let LIFETIME = 2.5
+
+function makeSystem(cx) {
+  const sys = new ParticleSystem({
+    count:          COUNT,
+    lifetime:       LIFETIME,
+    lifetimeRandom: 0.35,
+    size:           0.18,
+    sizeRandom:     0.1,
+    physics:        'newtonian',
+    seed:           cx | 0,
+  })
+
+  const emitter = new MeshEmitter({
+    geometry:       torusGeo,
+    emitFrom:       1,           // faces
+    normalVelocity: 3.0,
+    randomVelocity: 1.2,
+    evenDistribution: true,
+  })
+  sys.addEmitter(emitter)
+  sys.addForce(new GravityForce(4.5))
+  sys.addForce(new DragForce({ linear: 0.6 }))
+  sys.addForce(new TurbulenceForce({ strength: 0.8, scale: 1.2, speed: 0.6 }))
+
+  // Optional torus helper mesh
+  const torusMesh = new THREE.Mesh(
+    torusGeo,
+    new THREE.MeshStandardMaterial({ color: 0x223344, roughness: 0.8, metalness: 0.1, wireframe: false })
+  )
+  torusMesh.position.x = cx
+  scene.add(torusMesh)
+
+  return { sys }
+}
+
+// ── HaloRenderer (Blender: Halo) ──────────────────────────────────────────
+
+const { sys: sysHalo } = makeSystem(COLS[0])
+const haloRend = new HaloRenderer({
+  maxCount:        600,
+  color:           0x88ccff,
+  opacity:         0.9,
+  additive:        true,
+  fadeOut:         true,
+  sizeAttenuation: true,
+})
+sysHalo.setRenderer(haloRend)
+haloRend.object3D.position.x = COLS[0]
+scene.add(haloRend.object3D)
+
+// ── LineRenderer (Blender: Line) ──────────────────────────────────────────
+
+const { sys: sysLine } = makeSystem(COLS[1])
+const lineRend = new LineRenderer({
+  maxCount:    600,
+  color:       0xffaa44,
+  lengthScale: 0.15,
+})
+sysLine.setRenderer(lineRend)
+lineRend.object3D.position.x = COLS[1]
+scene.add(lineRend.object3D)
+
+// ── ObjectRenderer (Blender: Object) ─────────────────────────────────────
+
+const { sys: sysObj } = makeSystem(COLS[2])
+const objRend = new ObjectRenderer({
+  geometry:   new THREE.OctahedronGeometry(0.12),
+  material:   new THREE.MeshStandardMaterial({ color: 0xff6644, roughness: 0.4, metalness: 0.3 }),
+  maxCount:   600,
+  billboard:  false,
+  fadeOut:    true,
+})
+sysObj.setRenderer(objRend)
+objRend.object3D.position.x = COLS[2]
+scene.add(objRend.object3D)
+
+// ── CollectionRenderer (Blender: Collection) ──────────────────────────────
+
+const { sys: sysCol } = makeSystem(COLS[3])
+const colRend = new CollectionRenderer({
+  meshes: [
+    {
+      geometry: new THREE.IcosahedronGeometry(0.10, 0),
+      material: new THREE.MeshStandardMaterial({ color: 0x44ffaa, roughness: 0.3, metalness: 0.5 }),
+    },
+    {
+      geometry: new THREE.BoxGeometry(0.14, 0.14, 0.14),
+      material: new THREE.MeshStandardMaterial({ color: 0xffdd44, roughness: 0.5, metalness: 0.2 }),
+    },
+    {
+      geometry: new THREE.ConeGeometry(0.08, 0.2, 6),
+      material: new THREE.MeshStandardMaterial({ color: 0xff44dd, roughness: 0.4, metalness: 0.4 }),
+    },
+  ],
+  maxCount:  600,
+  billboard: false,
+  fadeOut:   true,
+  seed:      7,
+})
+sysCol.setRenderer(colRend)
+colRend.object3D.position.x = COLS[3]
+scene.add(colRend.object3D)
+
+const allSystems = [sysHalo, sysLine, sysObj, sysCol]
+const allRenderers = [haloRend, lineRend, objRend, colRend]
+
+// ── HUD sliders ───────────────────────────────────────────────────────────
+
+function sl(id, vid, decimals, cb) {
+  const inp = document.getElementById(id)
+  const val = document.getElementById(vid)
+  inp.addEventListener('input', () => {
+    const v = parseFloat(inp.value)
+    val.textContent = v.toFixed(decimals)
+    cb(v)
+  })
+}
+
+sl('r-opacity', 'v-opacity', 2, v => {
+  haloRend.parameters.opacity = v
+  lineRend.object3D.material.opacity = v
+})
+
+sl('r-linelen', 'v-linelen', 2, v => {
+  lineRend.parameters.lengthScale = v
+})
+
+sl('r-count', 'v-count', 0, v => {
+  allSystems.forEach(s => { s.parameters.count = v })
+})
+
+sl('r-life', 'v-life', 1, v => {
+  allSystems.forEach(s => { s.parameters.lifetime = v })
+})
+
+// ── animate ───────────────────────────────────────────────────────────────
+
+const clock = new THREE.Clock()
+
+function animate() {
+  requestAnimationFrame(animate)
+  const dt = Math.min(clock.getDelta(), 0.05)
+
+  for (const sys of allSystems) sys.update(dt)
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

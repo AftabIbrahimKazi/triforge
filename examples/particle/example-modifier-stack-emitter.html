@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Particle Emitter from Modifier Stack — @st-particle-core + @st-modifier-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080c14; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 14px; left: 14px;
+    background: rgba(0,0,0,0.72); padding: 12px 16px; border-radius: 6px;
+    min-width: 260px; line-height: 2.1;
+  }
+  #ui h3 { color: #adf; font-size: 12px; margin-bottom: 4px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  input[type=range] { width: 110px; }
+  .sep { border-top: 1px solid #333; margin: 5px 0; }
+  .note { color: #666; font-size: 10px; margin-top: 6px; line-height: 1.5; }
+  #info { position: fixed; bottom: 12px; left: 14px; font-size: 10px; color: #555; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>geometryProvider — modifier stack emission</h3>
+  <label>Subdivision levels
+    <input type="range" id="subLevels" min="0" max="3" step="1" value="1">
+    <span id="subVal">1</span>
+  </label>
+  <label>Displacement
+    <input type="range" id="disp" min="0" max="0.5" step="0.01" value="0.2">
+    <span id="dispVal">0.20</span>
+  </label>
+  <label>Particle count
+    <input type="range" id="count" min="100" max="2000" step="100" value="500">
+    <span id="countVal">500</span>
+  </label>
+  <div class="sep"></div>
+  <label>Show base mesh <input type="checkbox" id="showBase" checked></label>
+  <div class="note">
+    Particles emit from the post-modifier surface.<br>
+    No cross-package import — wired via geometryProvider callback.
+  </div>
+</div>
+<div id="info">orbit: left-drag · zoom: scroll</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":               "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":       "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-modifier-core":   "../../st-modifier-core/dist/index.js",
+    "@st-particle-core":   "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ModifierStack, SubdivisionModifier, DisplacementModifier, NormalRecalculateModifier } from '@st-modifier-core'
+import { ParticleSystem, MeshEmitter, BillboardRenderer, GravityForce, DragForce } from '@st-particle-core'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x080c14)
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 2, 6)
+const controls = new OrbitControls(camera, renderer.domElement)
+scene.add(new THREE.AmbientLight(0x334466, 3))
+const dir = new THREE.DirectionalLight(0xffffff, 2)
+dir.position.set(3, 6, 3)
+scene.add(dir)
+
+// ── Base geometry ─────────────────────────────────────────────────────────────
+const baseGeo = new THREE.IcosahedronGeometry(1, 1)
+
+// ── Modifier stack ────────────────────────────────────────────────────────────
+const subMod  = new SubdivisionModifier({ levels: 1 })
+const dispMod = new DisplacementModifier({
+  strength: 0.2,
+  noiseFunction: (x, y, z) => {
+    // Simple multi-octave noise
+    const f = (a, b, c) => Math.sin(a * 3.1) * Math.cos(b * 2.7) * Math.sin(c * 3.9)
+    return f(x, y, z) * 0.5 + f(x*2, y*2, z*2) * 0.25 + f(x*4, y*4, z*4) * 0.125
+  },
+})
+const normMod = new NormalRecalculateModifier()
+
+const stack = new ModifierStack(baseGeo)
+stack.add(subMod)
+stack.add(dispMod)
+stack.add(normMod)
+
+// ── Base mesh (visual reference) ──────────────────────────────────────────────
+const baseMat  = new THREE.MeshPhongMaterial({ color: 0x3366aa, wireframe: false, transparent: true, opacity: 0.4 })
+const baseMesh = new THREE.Mesh(stack.apply(), baseMat)
+scene.add(baseMesh)
+
+// ── Particle system ───────────────────────────────────────────────────────────
+// Make a dot texture for the particles
+const dotCanvas = document.createElement('canvas')
+dotCanvas.width = dotCanvas.height = 32
+const ctx = dotCanvas.getContext('2d')
+const grad = ctx.createRadialGradient(16,16,0,16,16,16)
+grad.addColorStop(0, 'rgba(255,255,255,1)')
+grad.addColorStop(1, 'rgba(255,255,255,0)')
+ctx.fillStyle = grad
+ctx.beginPath(); ctx.arc(16,16,16,0,Math.PI*2); ctx.fill()
+const dotTex = new THREE.CanvasTexture(dotCanvas)
+
+const emitter = new MeshEmitter({ emitFrom: 'faces', evenDistribution: true, normalVelocity: 0.5, randomVelocity: 0.3 })
+const partRen = new BillboardRenderer({ maxCount: 2000, color: 0x88ccff, map: dotTex, additive: true })
+
+const system = new ParticleSystem({
+  count:    500,
+  lifetime: 3,
+  lifetimeRandom: 0.4,
+  gravity:  -0.5,
+  size:     0.06,
+})
+
+// ── THE KEY: wire modifier stack → particle emitter via callback ──────────────
+// No cross-package import — just a plain () => BufferGeometry callback.
+system.setGeometryProvider(() => stack.apply())
+
+system.addEmitter(emitter)
+system.addForce(new GravityForce({ strength: 0.3 }))
+system.addForce(new DragForce({ strength: 0.8 }))
+system.setRenderer(partRen)
+scene.add(partRen.object3D)
+
+// ── UI ────────────────────────────────────────────────────────────────────────
+document.getElementById('subLevels').addEventListener('input', e => {
+  subMod.parameters.levels = +e.target.value
+  document.getElementById('subVal').textContent = e.target.value
+  baseMesh.geometry.dispose()
+  baseMesh.geometry = stack.apply()
+})
+
+document.getElementById('disp').addEventListener('input', e => {
+  dispMod.parameters.strength = +e.target.value
+  document.getElementById('dispVal').textContent = (+e.target.value).toFixed(2)
+  baseMesh.geometry.dispose()
+  baseMesh.geometry = stack.apply()
+})
+
+document.getElementById('count').addEventListener('input', e => {
+  document.getElementById('countVal').textContent = e.target.value
+  // Rebuild system with new count
+  system.parameters.count = +e.target.value
+})
+
+document.getElementById('showBase').addEventListener('change', e => {
+  baseMesh.visible = e.target.checked
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.033)
+  system.update(dt)
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

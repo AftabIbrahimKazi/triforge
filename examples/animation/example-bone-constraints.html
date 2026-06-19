@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-animation-core — Bone Constraints</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080810; overflow: hidden; font-family: monospace; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px;
+    color: #ccc; font-size: 12px; line-height: 1.9;
+    background: rgba(0,0,0,0.65); padding: 12px 16px; border-radius: 6px;
+    min-width: 240px; pointer-events: none;
+  }
+  #ui h3 { color: #fff; margin-bottom: 4px; font-size: 13px; }
+  .sep { border-top: 1px solid #333; margin: 6px 0; }
+  .row { display: flex; justify-content: space-between; gap: 14px; }
+  .val { color: #7df; }
+  .tip { color: #aaa; font-size: 11px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h3>Bone Constraints</h3>
+  <div class="row"><span>TrackTo (head bone)</span></div>
+  <div class="row"><span>  tracking sphere</span><span class="val" id="v-track">active</span></div>
+  <div class="sep"></div>
+  <div class="row"><span>CopyRotation (right arm)</span></div>
+  <div class="row"><span>  source: left arm</span><span class="val" id="v-copyrot">active</span></div>
+  <div class="sep"></div>
+  <div class="row"><span>CopyLocation (follower)</span></div>
+  <div class="row"><span>  source: orbiting bone</span><span class="val" id="v-copyloc">active</span></div>
+  <div class="sep"></div>
+  <div class="row"><span>Time</span><span class="val" id="v-time">0.00</span></div>
+  <p class="tip">Orbit: left-drag | Zoom: scroll</p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ─── Inline BoneConstraints (no build step) ───────────────────────────────────
+// Implements TrackToConstraint, CopyRotationConstraint, CopyLocationConstraint
+// using the same logic as BoneConstraints.ts
+
+function axisToVec(axis) {
+  switch (axis) {
+    case  'X': return new THREE.Vector3( 1, 0, 0)
+    case '-X': return new THREE.Vector3(-1, 0, 0)
+    case  'Y': return new THREE.Vector3( 0, 1, 0)
+    case '-Y': return new THREE.Vector3( 0,-1, 0)
+    case  'Z': return new THREE.Vector3( 0, 0, 1)
+    case '-Z': return new THREE.Vector3( 0, 0,-1)
+    default:   return new THREE.Vector3( 0, 1, 0)
+  }
+}
+
+function lookRotation(worldTarget, localTrackDir, localUpDir) {
+  const q1 = new THREE.Quaternion().setFromUnitVectors(localTrackDir, worldTarget)
+  const rotatedUp = localUpDir.clone().applyQuaternion(q1)
+  const worldUp = new THREE.Vector3(0, 1, 0)
+  const upHint  = Math.abs(worldTarget.dot(worldUp)) > 0.999 ? new THREE.Vector3(0,0,1) : worldUp
+  const desiredUp = upHint.clone().sub(worldTarget.clone().multiplyScalar(worldTarget.dot(upHint))).normalize()
+  if (desiredUp.lengthSq() < 1e-6) return q1
+  const currentUp = rotatedUp.clone().sub(worldTarget.clone().multiplyScalar(worldTarget.dot(rotatedUp))).normalize()
+  if (currentUp.lengthSq() < 1e-6) return q1
+  return new THREE.Quaternion().setFromUnitVectors(currentUp, desiredUp).multiply(q1)
+}
+
+class TrackToConstraint {
+  constructor(bone, opts) {
+    this._targetPosition = opts.targetPosition
+    this._trackAxis = opts.trackAxis ?? 'Y'
+    this._upAxis    = opts.upAxis    ?? 'Z'
+    this.parameters = { influence: opts.influence ?? 1.0 }
+  }
+  apply(bone, parentWorldMatrix) {
+    const inf = Math.max(0, Math.min(1, this.parameters.influence))
+    if (inf === 0) return
+    const target = typeof this._targetPosition === 'function' ? this._targetPosition() : this._targetPosition
+    const boneWorldPos = new THREE.Vector3().setFromMatrixPosition(bone.worldMatrix)
+    const toTarget = target.clone().sub(boneWorldPos)
+    if (toTarget.lengthSq() < 1e-12) return
+    toTarget.normalize()
+    const trackDir  = axisToVec(this._trackAxis)
+    const upDir     = axisToVec(this._upAxis)
+    const desiredQ  = lookRotation(toTarget, trackDir, upDir)
+    const currentQ  = bone.getQuaternion()
+    currentQ.slerp(desiredQ, inf)
+    bone.setQuaternion(currentQ)
+  }
+}
+
+class CopyRotationConstraint {
+  constructor(sourceBone, opts = {}) {
+    this._sourceBone = sourceBone
+    this.parameters  = {
+      influence: opts.influence ?? 1.0,
+      mix:       opts.mix === 'add' ? 1 : 0,
+      invert:    opts.invert ? 1 : 0,
+    }
+  }
+  apply(bone) {
+    const inf = Math.max(0, Math.min(1, this.parameters.influence))
+    if (inf === 0) return
+    let sourceQ = new THREE.Quaternion().setFromRotationMatrix(this._sourceBone.worldMatrix)
+    if (this.parameters.invert) sourceQ.invert()
+    const currentQ = bone.getQuaternion()
+    const targetQ  = this.parameters.mix
+      ? currentQ.clone().multiply(sourceQ)
+      : sourceQ.clone()
+    currentQ.slerp(targetQ, inf)
+    bone.setQuaternion(currentQ)
+  }
+}
+
+class CopyLocationConstraint {
+  constructor(sourceBone, opts = {}) {
+    this._sourceBone = sourceBone
+    const axes       = opts.axes ?? [true, true, true]
+    this.parameters  = {
+      influence: opts.influence ?? 1.0,
+      offset:    opts.offset ? 1 : 0,
+      axisX: axes[0] ? 1 : 0,
+      axisY: axes[1] ? 1 : 0,
+      axisZ: axes[2] ? 1 : 0,
+    }
+  }
+  apply(bone, parentWorldMatrix) {
+    const inf = Math.max(0, Math.min(1, this.parameters.influence))
+    if (inf === 0) return
+    const srcWorld  = new THREE.Vector3().setFromMatrixPosition(this._sourceBone.worldMatrix)
+    const cur       = new THREE.Vector3(bone.parameters.locationX, bone.parameters.locationY, bone.parameters.locationZ)
+    const parentInv = parentWorldMatrix.clone().invert()
+    const srcLocal  = srcWorld.clone().applyMatrix4(parentInv)
+    const masked = new THREE.Vector3(
+      this.parameters.axisX ? srcLocal.x : cur.x,
+      this.parameters.axisY ? srcLocal.y : cur.y,
+      this.parameters.axisZ ? srcLocal.z : cur.z,
+    )
+    const target = this.parameters.offset
+      ? new THREE.Vector3(
+          this.parameters.axisX ? cur.x + masked.x : cur.x,
+          this.parameters.axisY ? cur.y + masked.y : cur.y,
+          this.parameters.axisZ ? cur.z + masked.z : cur.z,
+        )
+      : masked
+    cur.lerp(target, inf)
+    bone.parameters.locationX = cur.x
+    bone.parameters.locationY = cur.y
+    bone.parameters.locationZ = cur.z
+  }
+}
+
+// ─── Inline Armature / PoseBone (minimal — matches the package) ───────────────
+
+class PoseBone {
+  constructor(name) {
+    this.name        = name
+    this.parameters  = { locationX:0, locationY:0, locationZ:0, rotationX:0, rotationY:0, rotationZ:0, scaleX:1, scaleY:1, scaleZ:1 }
+    this.worldMatrix = new THREE.Matrix4()
+    this.localMatrix = new THREE.Matrix4()
+  }
+  setQuaternion(q) {
+    const e = new THREE.Euler().setFromQuaternion(q, 'XYZ')
+    this.parameters.rotationX = e.x
+    this.parameters.rotationY = e.y
+    this.parameters.rotationZ = e.z
+  }
+  getQuaternion(out = new THREE.Quaternion()) {
+    return out.setFromEuler(new THREE.Euler(this.parameters.rotationX, this.parameters.rotationY, this.parameters.rotationZ, 'XYZ'))
+  }
+  buildLocalMatrix() {
+    const p = this.parameters
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rotationX, p.rotationY, p.rotationZ, 'XYZ'))
+    this.localMatrix.compose(new THREE.Vector3(p.locationX, p.locationY, p.locationZ), q, new THREE.Vector3(p.scaleX, p.scaleY, p.scaleZ))
+  }
+}
+
+function topoSort(bones) {
+  const visited = new Set(), order = []
+  function visit(name) {
+    if (visited.has(name)) return
+    visited.add(name)
+    const d = bones.find(b => b.name === name)
+    if (d?.parent) visit(d.parent)
+    order.push(name)
+  }
+  for (const b of bones) visit(b.name)
+  return order
+}
+
+class Armature {
+  constructor(defs) {
+    this._defs = defs
+    this._order = topoSort(defs)
+    this._rest = new Map()
+    this._restInv = new Map()
+    this.pose = {}
+    this.constraints = new Map()
+    for (const d of defs) this.pose[d.name] = new PoseBone(d.name)
+    this._buildRest()
+  }
+  _buildRest() {
+    for (const name of this._order) {
+      const d = this._defs.find(b => b.name === name)
+      const parent = d.parent ? this._rest.get(d.parent) : null
+      const dir = d.tail.clone().sub(d.head).normalize()
+      const up  = new THREE.Vector3(0,1,0)
+      const q   = new THREE.Quaternion()
+      if (Math.abs(dir.dot(up)) < 0.999) { q.setFromUnitVectors(up, dir) }
+      else if (dir.y < 0) { q.setFromAxisAngle(new THREE.Vector3(1,0,0), Math.PI) }
+      const rest = new THREE.Matrix4().compose(d.head.clone(), q, new THREE.Vector3(1,1,1))
+      if (parent) rest.premultiply(parent)
+      this._rest.set(name, rest)
+      this._restInv.set(name, rest.clone().invert())
+    }
+  }
+  addConstraint(boneName, constraint) {
+    if (!this.constraints.has(boneName)) this.constraints.set(boneName, [])
+    this.constraints.get(boneName).push(constraint)
+  }
+  update() {
+    for (const name of this._order) {
+      const def  = this._defs.find(b => b.name === name)
+      const bone = this.pose[name]
+      bone.buildLocalMatrix()
+      const rest    = this._rest.get(name)
+      const restInv = this._restInv.get(name)
+      const world   = rest.clone().multiply(bone.localMatrix)
+      if (def.parent) {
+        const pw = this.pose[def.parent].worldMatrix
+        world.premultiply(pw).premultiply(restInv)
+        bone.worldMatrix.copy(world)
+      } else {
+        bone.worldMatrix.copy(world.multiply(restInv))
+      }
+      const cs = this.constraints.get(name)
+      if (cs && cs.length > 0) {
+        const parentWorld = def.parent ? this.pose[def.parent].worldMatrix : new THREE.Matrix4()
+        for (const c of cs) {
+          if (c instanceof CopyRotationConstraint) c.apply(bone)
+          else c.apply(bone, parentWorld)
+        }
+        bone.buildLocalMatrix()
+        const cw = rest.clone().multiply(bone.localMatrix)
+        if (def.parent) {
+          cw.premultiply(this.pose[def.parent].worldMatrix).premultiply(restInv)
+          bone.worldMatrix.copy(cw)
+        } else {
+          bone.worldMatrix.copy(cw.multiply(restInv))
+        }
+      }
+    }
+  }
+}
+
+// ─── Scene Setup ──────────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x080810)
+scene.fog = new THREE.Fog(0x080810, 20, 60)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 100)
+camera.position.set(0, 4, 12)
+camera.lookAt(0, 2, 0)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 2, 0)
+controls.update()
+
+// Lights
+scene.add(new THREE.AmbientLight(0x223366, 2))
+const sun = new THREE.DirectionalLight(0xffeedd, 3)
+sun.position.set(5, 10, 5)
+sun.castShadow = true
+scene.add(sun)
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(30, 30),
+  new THREE.MeshStandardMaterial({ color: 0x111122 })
+)
+ground.rotation.x = -Math.PI / 2
+ground.receiveShadow = true
+scene.add(ground)
+
+// ─── Helper: draw a stick-figure bone ────────────────────────────────────────
+function makeBoneViz(length = 1, color = 0x88aaff) {
+  const g = new THREE.CylinderGeometry(0.04, 0.12, length, 6)
+  g.translate(0, length / 2, 0)
+  return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, roughness: 0.5 }))
+}
+
+function makeSphere(r = 0.15, color = 0xffdd55) {
+  return new THREE.Mesh(
+    new THREE.SphereGeometry(r, 12, 8),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.4 })
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Demo 1: TrackToConstraint
+// A "neck" + "head" bone chain. The head bone tracks an orbiting sphere.
+// ─────────────────────────────────────────────────────────────────────────────
+const trackArm = new Armature([
+  { name: 'neck', head: new THREE.Vector3(-4, 0, 0), tail: new THREE.Vector3(-4, 1, 0) },
+  { name: 'head', head: new THREE.Vector3(-4, 1, 0), tail: new THREE.Vector3(-4, 2, 0), parent: 'neck' },
+])
+
+// Orbiting target sphere
+const targetSphere = makeSphere(0.2, 0xffaa33)
+scene.add(targetSphere)
+
+// Constraint: head bone tracks the sphere
+const trackTarget = () => targetSphere.position.clone()
+trackArm.addConstraint('head', new TrackToConstraint(trackArm.pose.head, {
+  targetPosition: trackTarget,
+  trackAxis: 'Y',
+  upAxis: 'Z',
+  influence: 1.0,
+}))
+
+// Visualize neck + head bones
+const neckViz = makeBoneViz(1.0, 0x4466cc)
+const headViz = makeBoneViz(1.0, 0x66aaff)
+scene.add(neckViz, headViz)
+
+// Base marker
+const trackBase = makeSphere(0.18, 0x334488)
+trackBase.position.set(-4, 0, 0)
+scene.add(trackBase)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Demo 2: CopyRotationConstraint
+// Two arm bones side by side. Left arm rotates; right arm copies its rotation.
+// ─────────────────────────────────────────────────────────────────────────────
+const copyRotArm = new Armature([
+  { name: 'arm_left',  head: new THREE.Vector3(-0.5, 1.5, 0), tail: new THREE.Vector3(-0.5, 2.5, 0) },
+  { name: 'arm_right', head: new THREE.Vector3( 0.5, 1.5, 0), tail: new THREE.Vector3( 0.5, 2.5, 0) },
+])
+
+// Constraint: right arm copies left arm rotation
+copyRotArm.addConstraint('arm_right', new CopyRotationConstraint(copyRotArm.pose.arm_left, {
+  influence: 1.0,
+  mix: 'replace',
+}))
+
+const armLeftViz  = makeBoneViz(1.0, 0x55cc77)
+const armRightViz = makeBoneViz(1.0, 0xee7733)
+scene.add(armLeftViz, armRightViz)
+
+// Base markers
+const armLBase = makeSphere(0.15, 0x225533)
+armLBase.position.set(-0.5, 1.5, 0)
+const armRBase = makeSphere(0.15, 0x773311)
+armRBase.position.set( 0.5, 1.5, 0)
+scene.add(armLBase, armRBase)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Demo 3: CopyLocationConstraint
+// An "orbiter" bone moves in a circle. A "follower" bone copies only the X/Z
+// position (not Y), so it slides on the ground plane below the orbiter.
+// ─────────────────────────────────────────────────────────────────────────────
+const copyLocArm = new Armature([
+  { name: 'orbiter',  head: new THREE.Vector3(4, 3, 0), tail: new THREE.Vector3(4, 4, 0) },
+  { name: 'follower', head: new THREE.Vector3(4, 0.5, 0), tail: new THREE.Vector3(4, 1.5, 0) },
+])
+
+// Constraint: follower copies only X/Z from orbiter, stays at Y=0.5
+copyLocArm.addConstraint('follower', new CopyLocationConstraint(copyLocArm.pose.orbiter, {
+  influence: 1.0,
+  axes: [true, false, true],  // copy X and Z only
+}))
+
+const orbiterViz  = makeBoneViz(1.0, 0xcc44cc)
+const followerViz = makeBoneViz(1.0, 0xff99ff)
+scene.add(orbiterViz, followerViz)
+
+// A line connecting orbiter to follower (shadow line)
+const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()])
+const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x664466 }))
+scene.add(line)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Animation loop
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: extract world position and rotation from a bone's worldMatrix
+function applyWorldMatrixToMesh(mesh, bone, headPos) {
+  const bonePos = new THREE.Vector3().setFromMatrixPosition(bone.worldMatrix)
+  const boneQ   = new THREE.Quaternion().setFromRotationMatrix(bone.worldMatrix)
+  // Position at head
+  mesh.position.copy(headPos)
+  // Apply the bone's world rotation as the mesh rotation
+  mesh.quaternion.copy(boneQ)
+}
+
+// For visualization: we simply position each bone viz at its head,
+// oriented by the bone's world quaternion.
+function updateBoneViz(viz, bone, headWorldPos) {
+  viz.position.copy(headWorldPos)
+  const q = new THREE.Quaternion().setFromRotationMatrix(bone.worldMatrix)
+  viz.quaternion.copy(q)
+}
+
+const clock = new THREE.Clock()
+
+function animate() {
+  requestAnimationFrame(animate)
+  const t = clock.getElapsedTime()
+
+  // ── Demo 1: TrackTo ──
+  // Orbit the target sphere around the neck bone head
+  targetSphere.position.set(
+    -4 + Math.cos(t * 0.8) * 2.5,
+    1.5 + Math.sin(t * 1.2) * 1.2,
+    Math.sin(t * 0.6) * 2.0
+  )
+  trackArm.update()
+  updateBoneViz(neckViz, trackArm.pose.neck, new THREE.Vector3(-4, 0, 0))
+  updateBoneViz(headViz, trackArm.pose.head, new THREE.Vector3(-4, 1, 0))
+
+  // ── Demo 2: CopyRotation ──
+  // Rotate the left arm with an oscillating pitch
+  copyRotArm.pose.arm_left.parameters.rotationZ = Math.sin(t * 1.5) * 0.9
+  copyRotArm.pose.arm_left.parameters.rotationX = Math.sin(t * 0.7) * 0.5
+  copyRotArm.update()
+  updateBoneViz(armLeftViz,  copyRotArm.pose.arm_left,  new THREE.Vector3(-0.5, 1.5, 0))
+  updateBoneViz(armRightViz, copyRotArm.pose.arm_right, new THREE.Vector3( 0.5, 1.5, 0))
+
+  // ── Demo 3: CopyLocation ──
+  // Move the orbiter bone in a circular path
+  const orbitR = 1.8
+  const orbitX = 4 + Math.cos(t * 0.7) * orbitR
+  const orbitZ = Math.sin(t * 0.7) * orbitR
+  copyLocArm.pose.orbiter.parameters.locationX = orbitX - 4  // offset from bone head
+  copyLocArm.pose.orbiter.parameters.locationZ = orbitZ
+  copyLocArm.pose.orbiter.parameters.locationY = 1.5 + Math.sin(t * 1.3) * 0.8
+  copyLocArm.update()
+
+  updateBoneViz(orbiterViz,  copyLocArm.pose.orbiter,  new THREE.Vector3().setFromMatrixPosition(copyLocArm.pose.orbiter.worldMatrix))
+  updateBoneViz(followerViz, copyLocArm.pose.follower, new THREE.Vector3().setFromMatrixPosition(copyLocArm.pose.follower.worldMatrix))
+
+  // Update shadow line
+  const op = new THREE.Vector3().setFromMatrixPosition(copyLocArm.pose.orbiter.worldMatrix)
+  const fp = new THREE.Vector3().setFromMatrixPosition(copyLocArm.pose.follower.worldMatrix)
+  lineGeo.setFromPoints([op, fp])
+
+  // Update UI
+  document.getElementById('v-time').textContent = t.toFixed(2)
+
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

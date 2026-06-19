@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Procedural Sun — @st-shader-core</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    canvas { display: block; }
+    #hint {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.2); font: 11px/1 monospace; letter-spacing: 0.08em;
+      pointer-events: none;
+    }
+    #controls {
+      position: absolute; top: 12px; right: 12px; bottom: 12px;
+      color: #ccc; font: 11px/2.2 monospace;
+      background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+      min-width: 260px; overflow-y: auto;
+    }
+    #controls::-webkit-scrollbar { width: 4px; }
+    #controls::-webkit-scrollbar-track { background: transparent; }
+    #controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+    #controls label { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    #controls input[type=range] { width: 100px; }
+    #controls span { min-width: 42px; text-align: right; color: #fff; }
+    #controls hr { border: none; border-top: 1px solid #333; margin: 4px 0; }
+    .col-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; line-height: 2.2; }
+    .col-row input[type=color] {
+      width: 60px; height: 20px; border: 1px solid #444; border-radius: 3px;
+      background: none; cursor: pointer; padding: 0;
+    }
+    .col-note { font-size: 9px; color: #556; }
+    .ctl-btn {
+      flex: 1; padding: 3px 0; border: 1px solid #333; border-radius: 3px;
+      background: rgba(255,255,255,0.05); color: #aac; font: 10px monospace;
+      cursor: pointer; letter-spacing: 0.04em;
+    }
+    .ctl-btn:hover { background: rgba(255,255,255,0.1); }
+    #import-file { display: none; }
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(20,10,0,0.9); color: #ffd; font: 11px monospace;
+      padding: 7px 18px; border-radius: 20px; pointer-events: none;
+      opacity: 0; transition: opacity 0.3s;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+<div id="hint">DRAG TO ORBIT &nbsp;·&nbsp; SCROLL TO ZOOM</div>
+<div id="toast"></div>
+
+<div id="controls">
+  <b style="color:#ffcc44">Procedural Sun</b>
+  <hr>
+
+  <b style="color:#ffaa44">Surface</b>
+  <label>Star scale         <input type="range" id="starsize" min="0.2"   max="3"     step="0.05"  value="1">     <span id="starsizeV">1.00</span></label>
+  <label>Temperature (K)    <input type="range" id="temp"     min="2000"  max="12000"  step="100"   value="12000"> <span id="tempV">12000</span></label>
+  <div class="col-row">
+    <span>Star colour</span>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="col-note">live · syncs corona</span>
+      <input type="color" id="startint" value="#ffffff">
+    </div>
+  </div>
+  <div class="col-row">
+    <span>Corona colour</span>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="col-note">live · independent</span>
+      <input type="color" id="coronatint" value="#ff8800">
+    </div>
+  </div>
+  <label>Gran. scale        <input type="range" id="gransc"   min="5"     max="60"    step="1"     value="5">     <span id="granscV">5</span></label>
+  <label>Gran. shadow       <input type="range" id="gransh"   min="0"     max="0.8"   step="0.01"  value="0.8">   <span id="granshV">0.80</span></label>
+  <label>Turb. scale        <input type="range" id="turbsc"   min="1"     max="20"    step="0.5"   value="1">     <span id="turbscV">1.0</span></label>
+  <label>Turb. roughness    <input type="range" id="turbro"   min="0"     max="1"     step="0.01"  value="0">     <span id="turbroV">0.00</span></label>
+  <label>Spot density       <input type="range" id="spotsc"   min="1"     max="10"    step="0.25"  value="10">    <span id="spotscV">10.0</span></label>
+  <label>Spot size          <input type="range" id="spotsi"   min="0.05"  max="0.6"   step="0.01"  value="0.6">   <span id="spotsiV">0.60</span></label>
+  <label>Spot darkness      <input type="range" id="spotdk"   min="0"     max="1"     step="0.01"  value="1">     <span id="spotdkV">1.00</span></label>
+  <label>Limb edge bright   <input type="range" id="limb"     min="0"     max="0.95"  step="0.01"  value="0.95">  <span id="limbV">0.95</span></label>
+  <label>Surface emission   <input type="range" id="semit"    min="0"     max="15"    step="0.25"  value="3.25">  <span id="semitV">3.25</span></label>
+  <hr>
+
+  <b style="color:#ffeeaa">Chromosphere Rim</b>
+  <label>Rim start          <input type="range" id="chrst"    min="0.5"   max="0.99"  step="0.01"  value="0.95">  <span id="chrstV">0.95</span></label>
+  <label>Rim width          <input type="range" id="chrwd"    min="0.001" max="0.2"   step="0.001" value="0.155"> <span id="chrwdV">0.155</span></label>
+  <label>Rim strength       <input type="range" id="chrbri"   min="0"     max="40"    step="0.5"   value="1">     <span id="chrbriV">1.0</span></label>
+  <hr>
+
+  <b style="color:#ff8833">Corona Glow</b>
+  <label>Glow radius        <input type="range" id="glrad"    min="1"     max="8"     step="0.1"   value="5">     <span id="glradV">5.0</span></label>
+  <label>Glow falloff       <input type="range" id="glfall"   min="0.5"   max="6"     step="0.1"   value="5">     <span id="glfallV">5.0</span></label>
+  <label>Glow brightness    <input type="range" id="glbri"    min="0"     max="10"    step="0.25"  value="10">    <span id="glbriV">10.00</span></label>
+  <hr>
+
+  <b style="color:#88ccff">Global</b>
+  <label>Exposure           <input type="range" id="expo"     min="0.1"   max="2"     step="0.05"  value="0.1">   <span id="expoV">0.10</span></label>
+  <label>Auto-rotate        <input type="range" id="rotat"    min="0"     max="0.5"   step="0.01"  value="0.5">   <span id="rotatV">0.50</span></label>
+  <hr>
+
+  <div style="display:flex; gap:6px; padding:2px 0">
+    <button class="ctl-btn" id="btn-export">⬇ Export JSON</button>
+    <button class="ctl-btn" id="btn-code">{ } Copy Code</button>
+    <button class="ctl-btn" id="btn-import">⬆ Import JSON</button>
+  </div>
+  <input type="file" id="import-file" accept=".json">
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ShaderConfig, MaterialOutput, Emission, AddShader,
+  MixRGB, ColorRamp, CombineRGB,
+  NoiseTexture, VoronoiTexture, Blackbody,
+  MapRange, ShaderMath, VectorMath,
+  TextureCoordinate, LayerWeight
+} from '@st-shader-core'
+
+ShaderConfig.errorLevel = 'verbose'
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 0.1
+renderer.outputColorSpace = THREE.SRGBColorSpace
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x000000)
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 500)
+camera.position.set(0, 0, 4)
+
+const orbitCtrl = new OrbitControls(camera, renderer.domElement)
+orbitCtrl.enableDamping   = true
+orbitCtrl.dampingFactor   = 0.06
+orbitCtrl.enablePan       = false
+orbitCtrl.minDistance     = 1.4
+orbitCtrl.maxDistance     = 30
+orbitCtrl.autoRotate      = true
+orbitCtrl.autoRotateSpeed = 0.5
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SUN SURFACE NODE GRAPH
+// ──────────────────────────────────────────────────────────────────────────────
+const tc = new TextureCoordinate()
+
+// Blackbody: temperature → physically accurate star colour
+const bbody = new Blackbody({ temperature: 12000 })
+
+// ── Star colour tint — MixRGB with colorB as '#ffffff' string becomes a
+//   live vec3 uniform (per CLAUDE.md: "Color inputs are live uniform vec3").
+//   Picker updates tinted.parameters.colorB = [r, g, b] — no recompile needed.
+const tinted = new MixRGB({ mode: 'MULTIPLY', fac: 1, colorA: bbody.output('Color'), colorB: '#ffffff' })
+
+// ── Granulation ── VoronoiTexture DISTANCE_TO_EDGE ────────────────────────────
+const gran  = new VoronoiTexture({ vector: tc.output('Normal'), scale: 5, feature: 'DISTANCE_TO_EDGE' })
+const granR = new MapRange({ value: gran.output('Distance'), fromMin: 0.05, fromMax: 0.45, toMin: 0.8, toMax: 1, clamp: true })
+
+// ── Surface turbulence ────────────────────────────────────────────────────────
+const surf  = new NoiseTexture({ vector: tc.output('Normal'), scale: 1, detail: 5, roughness: 0 })
+const surfR = new MapRange({ value: surf.output('Fac'), fromMin: 0.25, fromMax: 0.75, toMin: 0.5, toMax: 1, clamp: true })
+
+// Combined luminance mask
+const lumMul = new ShaderMath({ mode: 'MULTIPLY', a: granR.output('Result'), b: surfR.output('Result') })
+
+// ── Sunspots ──────────────────────────────────────────────────────────────────
+const spots  = new VoronoiTexture({ vector: tc.output('Normal'), scale: 10, feature: 'F1' })
+const spotM  = new MapRange({ value: spots.output('Distance'), fromMin: 0, fromMax: 0.6, toMin: 1, toMax: 0, clamp: true })
+const spotDk = new ShaderMath({ mode: 'MULTIPLY', a: spotM.output('Result'), b: 1.0 })
+const noSpot = new ShaderMath({ mode: 'SUBTRACT', a: 1.0, b: spotDk.output('Value') })
+const finLum = new ShaderMath({ mode: 'MULTIPLY', a: lumMul.output('Value'), b: noSpot.output('Value') })
+
+// Apply luminance mask to tinted colour
+const lumRGB  = new CombineRGB({ r: finLum.output('Value'), g: finLum.output('Value'), b: finLum.output('Value') })
+const colored = new MixRGB({ mode: 'MULTIPLY', fac: 1, colorA: tinted.output('Color'), colorB: lumRGB.output('Color') })
+
+// ── Limb darkening ────────────────────────────────────────────────────────────
+const lw       = new LayerWeight({ blend: 1.5 })
+const limbFac  = new MapRange({ value: lw.output('Fresnel'), fromMin: 0, fromMax: 1, toMin: 1.0, toMax: 0.95, clamp: true })
+const limbRGB  = new CombineRGB({ r: limbFac.output('Result'), g: limbFac.output('Result'), b: limbFac.output('Result') })
+const withLimb = new MixRGB({ mode: 'MULTIPLY', fac: 1, colorA: colored.output('Color'), colorB: limbRGB.output('Color') })
+
+// ── Chromosphere rim ──────────────────────────────────────────────────────────
+//   Fresnel threshold 0.95 → truly at the silhouette edge only.
+//   fromMax = fromMin + rimWidth (updated together in bind()).
+//   strength = 0 → chromEmit outputs vec3(0) → rim is completely gone.
+const chromoFac  = new MapRange({ value: lw.output('Fresnel'), fromMin: 0.95, fromMax: 1.0, toMin: 0, toMax: 1, clamp: true })
+const chromoRGB  = new CombineRGB({ r: chromoFac.output('Result'), g: chromoFac.output('Result'), b: chromoFac.output('Result') })
+// Rim shares the tinted colour so the picker affects it too
+const chromoCol  = new MixRGB({ mode: 'MULTIPLY', fac: 1, colorA: tinted.output('Color'), colorB: chromoRGB.output('Color') })
+
+const surfEmit  = new Emission({ color: withLimb.output('Color'), strength: 3.25 })
+const chromEmit = new Emission({ color: chromoCol.output('Color'), strength: 1.0 })
+const combined  = new AddShader({ shader1: surfEmit.output('BSDF'), shader2: chromEmit.output('BSDF') })
+
+const sunOut = new MaterialOutput({ surface: combined.output('BSDF') })
+sunOut.compile()
+
+const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), sunOut.material)
+scene.add(sunMesh)
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CORONA GLOW BILLBOARD  (simple radial, always faces camera)
+// ──────────────────────────────────────────────────────────────────────────────
+const gtc       = new TextureCoordinate()
+const dist      = new VectorMath({ mode: 'LENGTH', vector: gtc.output('Generated') })
+const glowRange = new MapRange({ value: dist.output('Value'), fromMin: 0, fromMax: 5, toMin: 1.0, toMax: 0.0, clamp: true })
+const glowPow   = new ShaderMath({ mode: 'POWER', a: glowRange.output('Result'), b: 5 })
+// Neutral grey ramp — luminance shape only, all colour comes from glowTint.
+// This is the only way the colour picker can produce any hue (including blue):
+// orange_ramp × blue ≈ black (complementary cancellation), but
+// grey_ramp  × blue = vivid blue.  Default corona colour '#ff8800' restores
+// the original warm orange look.
+const glowColor = new ColorRamp({
+  fac:   glowPow.output('Value'),
+  stops: ['#000000', '#111111', '#444444', '#888888', '#cccccc', '#ffffff'],
+})
+// Live vec3 colour uniform — default warm orange reproduces the original look.
+const glowTint = new MixRGB({ mode: 'MULTIPLY', fac: 1, colorA: glowColor.output('Color'), colorB: '#ff8800' })
+const glowEmit = new Emission({ color: glowTint.output('Color'), strength: 10.0 })
+const glowOut  = new MaterialOutput({ surface: glowEmit.output('BSDF') })
+glowOut.compile()
+glowOut.material.transparent = true
+glowOut.material.blending    = THREE.AdditiveBlending
+glowOut.material.depthTest   = false
+glowOut.material.depthWrite  = false
+glowOut.material.side        = THREE.DoubleSide
+
+const glowMesh = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), glowOut.material)
+glowMesh.renderOrder = 1
+scene.add(glowMesh)
+
+// ── Star scale + proportional glow tracking ───────────────────────────────────
+let baseGlowRadius = 5    // user's glow radius at scale = 1
+let starScale      = 1.0
+
+// ── UI wiring — same bind() pattern as example-ocean.html ─────────────────────
+function bind(id, valId, dec, fn) {
+  const input = document.getElementById(id)
+  const vEl   = document.getElementById(valId)
+  input.addEventListener('input', () => {
+    const v = parseFloat(input.value)
+    vEl.textContent = v.toFixed(dec)
+    fn(v)
+  })
+}
+
+// Surface
+bind('starsize', 'starsizeV', 2, v => {
+  starScale = v
+  sunMesh.scale.setScalar(v)
+  // Scale the corona proportionally without touching the user's glow radius slider
+  glowRange.parameters.fromMax = baseGlowRadius * v
+})
+bind('temp',   'tempV',   0, v => bbody.parameters.temperature      = v)
+bind('gransc', 'granscV', 0, v => gran.parameters.scale             = v)
+bind('gransh', 'granshV', 2, v => granR.parameters.toMin            = v)
+bind('turbsc', 'turbscV', 1, v => surf.parameters.scale             = v)
+bind('turbro', 'turbroV', 2, v => surf.parameters.roughness         = v)
+bind('spotsc', 'spotscV', 2, v => spots.parameters.scale            = v)
+bind('spotsi', 'spotsiV', 2, v => spotM.parameters.fromMax          = v)
+bind('spotdk', 'spotdkV', 2, v => spotDk.parameters.b               = v)
+bind('limb',   'limbV',   2, v => limbFac.parameters.toMax          = v)
+bind('semit',  'semitV',  2, v => surfEmit.parameters.strength      = v)
+
+// Chromosphere rim — fromMax stays = fromMin + rimWidth
+bind('chrst',  'chrstV',  2, v => {
+  chromoFac.parameters.fromMin = v
+  chromoFac.parameters.fromMax = v + parseFloat(document.getElementById('chrwd').value)
+})
+bind('chrwd',  'chrwdV',  3, v => {
+  chromoFac.parameters.fromMax = parseFloat(document.getElementById('chrst').value) + v
+})
+bind('chrbri', 'chrbriV', 1, v => chromEmit.parameters.strength     = v)
+
+// Corona glow — glow radius updates the base; scale multiplier applied on top
+bind('glrad',  'glradV',  1, v => {
+  baseGlowRadius = v
+  glowRange.parameters.fromMax = v * starScale
+})
+bind('glfall', 'glfallV', 1, v => glowPow.parameters.b              = v)
+bind('glbri',  'glbriV',  2, v => glowEmit.parameters.strength      = v)
+
+// Global
+bind('expo',   'expoV',   2, v => renderer.toneMappingExposure      = v)
+bind('rotat',  'rotatV',  2, v => { orbitCtrl.autoRotateSpeed = v; orbitCtrl.autoRotate = v > 0 })
+
+// ── Colour pickers — live vec3 uniforms via MixRGB colorB string convention ────
+//   Per CLAUDE.md: unconnected color inputs (hex strings) are live vec3 uniforms.
+//   Setting node.parameters.colorB = [r,g,b] writes directly to the GPU uniform.
+function hexToFloats(hex) {
+  return [
+    parseInt(hex.slice(1,3), 16) / 255,
+    parseInt(hex.slice(3,5), 16) / 255,
+    parseInt(hex.slice(5,7), 16) / 255,
+  ]
+}
+// Star colour — updates surface tint AND auto-syncs corona so one pick changes
+// the whole star.  The corona picker can then be used to override independently.
+document.getElementById('startint').addEventListener('input', e => {
+  const rgb = hexToFloats(e.target.value)
+  tinted.parameters.colorB    = rgb        // star disk surface
+  glowTint.parameters.colorB  = rgb        // corona follows star
+  el('coronatint').value = e.target.value  // keep corona picker in sync
+})
+// Corona colour — independent override after the star picker has synced it.
+document.getElementById('coronatint').addEventListener('input', e => {
+  glowTint.parameters.colorB = hexToFloats(e.target.value)
+})
+
+// ── Settings serialise / apply ─────────────────────────────────────────────────
+function el(id) { return document.getElementById(id) }
+
+function getSettings() {
+  return {
+    starsize:   +el('starsize').value,  temp:       +el('temp').value,
+    startint:   el('startint').value,   coronatint: el('coronatint').value,
+    gransc:     +el('gransc').value,    gransh:     +el('gransh').value,
+    turbsc:   +el('turbsc').value,    turbro:   +el('turbro').value,
+    spotsc:   +el('spotsc').value,    spotsi:   +el('spotsi').value,
+    spotdk:   +el('spotdk').value,    limb:     +el('limb').value,
+    semit:    +el('semit').value,
+    chrst:    +el('chrst').value,     chrwd:    +el('chrwd').value,
+    chrbri:   +el('chrbri').value,
+    glrad:    +el('glrad').value,     glfall:   +el('glfall').value,
+    glbri:    +el('glbri').value,
+    expo:     +el('expo').value,      rotat:    +el('rotat').value,
+  }
+}
+
+function applySettings(s) {
+  // Apply coronatint first so it has its value before startint may sync over it.
+  // If coronatint is absent from the JSON, keep its HTML default ('#ff8800').
+  if (s.coronatint) {
+    el('coronatint').value = s.coronatint
+    el('coronatint').dispatchEvent(new Event('input'))
+  }
+  // startint fires last — it auto-syncs corona, which overrides the above only
+  // when both pickers are meant to track the same colour.
+  if (s.startint) {
+    el('startint').value = s.startint
+    el('startint').dispatchEvent(new Event('input'))
+  }
+  Object.keys(s).forEach(id => {
+    if (id === 'startint' || id === 'coronatint') return
+    const input = document.getElementById(id)
+    if (!input) return
+    input.value = s[id]
+    input.dispatchEvent(new Event('input'))
+  })
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer
+function toast(msg) {
+  const t = document.getElementById('toast')
+  t.textContent = msg; t.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200)
+}
+
+// ── Export JSON ───────────────────────────────────────────────────────────────
+el('btn-export').addEventListener('click', () => {
+  const a = Object.assign(document.createElement('a'), {
+    href:     URL.createObjectURL(new Blob([JSON.stringify(getSettings(), null, 2)], { type: 'application/json' })),
+    download: 'sun-settings.json',
+  })
+  a.click()
+  toast('Exported sun-settings.json')
+})
+
+// ── Copy as code ──────────────────────────────────────────────────────────────
+el('btn-code').addEventListener('click', () => {
+  const s  = getSettings()
+  const rgb  = hexToFloats(s.startint)
+  const crgb = hexToFloats(s.coronatint || '#ffffff')
+  const lines = [
+    '// Procedural Sun — parameter snapshot',
+    `sunMesh.scale.setScalar(${s.starsize})`,
+    `bbody.parameters.temperature     = ${s.temp}`,
+    `tinted.parameters.colorB         = [${rgb.map(v=>v.toFixed(4)).join(', ')}]`,
+    `glowTint.parameters.colorB       = [${crgb.map(v=>v.toFixed(4)).join(', ')}]`,
+    `gran.parameters.scale            = ${s.gransc}`,
+    `granR.parameters.toMin           = ${s.gransh}`,
+    `surf.parameters.scale            = ${s.turbsc}`,
+    `surf.parameters.roughness        = ${s.turbro}`,
+    `spots.parameters.scale           = ${s.spotsc}`,
+    `spotM.parameters.fromMax         = ${s.spotsi}`,
+    `spotDk.parameters.b              = ${s.spotdk}`,
+    `limbFac.parameters.toMax         = ${s.limb}`,
+    `surfEmit.parameters.strength     = ${s.semit}`,
+    `chromoFac.parameters.fromMin     = ${s.chrst}`,
+    `chromoFac.parameters.fromMax     = ${(+s.chrst + +s.chrwd).toFixed(3)}`,
+    `chromEmit.parameters.strength    = ${s.chrbri}`,
+    `baseGlowRadius = ${s.glrad}; glowRange.parameters.fromMax = ${s.glrad} * starScale`,
+    `glowPow.parameters.b             = ${s.glfall}`,
+    `glowEmit.parameters.strength     = ${s.glbri}`,
+    `renderer.toneMappingExposure     = ${s.expo}`,
+    `orbitCtrl.autoRotateSpeed        = ${s.rotat}`,
+  ]
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => toast('Code snippet copied to clipboard'))
+    .catch(() => toast('Clipboard unavailable'))
+})
+
+// ── Import JSON ───────────────────────────────────────────────────────────────
+el('btn-import').addEventListener('click', () => el('import-file').click())
+el('import-file').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return
+  const reader = new FileReader()
+  reader.onload = ev => {
+    try { applySettings(JSON.parse(ev.target.result)); toast(`Loaded ${file.name}`) }
+    catch { toast('Invalid JSON file') }
+  }
+  reader.readAsText(file)
+  e.target.value = ''
+})
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+;(function loop() {
+  requestAnimationFrame(loop)
+  sunMesh.rotation.y += 0.0008
+  glowMesh.lookAt(camera.position)
+  orbitCtrl.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

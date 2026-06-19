@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CurveToMesh · ResampleCurve · SetCurveRadius — @st-geometry-nodes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    max-width: 310px; line-height: 1.8;
+  }
+  #info h3 { color: #fff; font-size: 12px; margin-bottom: 4px; }
+  .code { color: #7df; }
+  #tabs {
+    position: absolute; top: 12px; right: 14px;
+    display: flex; gap: 6px;
+  }
+  .tab {
+    background: rgba(0,0,0,0.6); border: 1px solid #333;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer;
+    color: #aaa; font: 11px monospace;
+  }
+  .tab.active { border-color: #4488ff; color: #88bbff; }
+  #panel {
+    position: absolute; bottom: 14px; left: 14px;
+    background: rgba(0,0,0,0.65); padding: 10px 14px; border-radius: 4px;
+    display: flex; flex-direction: column; gap: 5px; min-width: 240px;
+  }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  input[type=range] { width: 120px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <h3>Curve Geometry Nodes</h3>
+  Works with any object that has <span class="code">getPoint(t)</span><br>
+  — compatible with <span class="code">@st-curve-core</span><br><br>
+  <span class="code">ResampleCurve</span> → point cloud<br>
+  <span class="code">SetCurveRadius</span> → tapered tube radius<br>
+  <span class="code">CurveToMesh</span>   → tube mesh
+</div>
+<div id="tabs"></div>
+<div id="panel"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":      "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-geometry-nodes": "../../st-geometry-nodes/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CurveToMesh, ResampleCurve, SetCurveRadius } from '@st-geometry-nodes'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x060810)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1, 9)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5))
+const sun = new THREE.DirectionalLight(0xfff0ee, 1.5)
+sun.position.set(3, 6, 4); scene.add(sun)
+scene.add(new THREE.GridHelper(12, 12, 0x111122, 0x0a0a18))
+
+// ── Scene object tracking ────────────────────────────────────────────────────
+let objects = []
+function clearScene() {
+  objects.forEach(o => {
+    scene.remove(o)
+    o.geometry?.dispose()
+    if (Array.isArray(o.material)) o.material.forEach(m => m.dispose())
+    else o.material?.dispose()
+  })
+  objects = []
+}
+function add(obj) { scene.add(obj); objects.push(obj); return obj }
+
+// ── Curves ───────────────────────────────────────────────────────────────────
+function makeHelix(turns = 2, radius = 1.5, height = 3) {
+  return {
+    getPoint(t, target) {
+      const a = t * Math.PI * 2 * turns
+      const x = Math.cos(a) * radius
+      const y = (t - 0.5) * height
+      const z = Math.sin(a) * radius
+      if (target) { target.set(x, y, z); return target }
+      return new THREE.Vector3(x, y, z)
+    },
+    getTangent(t) {
+      const eps = 0.0005
+      const a = this.getPoint(Math.max(0, t - eps))
+      const b = this.getPoint(Math.min(1, t + eps))
+      return b.clone().sub(a).normalize()
+    },
+  }
+}
+
+function makeLemniscate() {
+  return {
+    getPoint(t, target) {
+      const a = t * Math.PI * 2
+      const d = 1 + Math.sin(a) ** 2
+      const x = 2 * Math.cos(a) / d
+      const y = 0
+      const z = 2 * Math.sin(a) * Math.cos(a) / d
+      if (target) { target.set(x, y, z); return target }
+      return new THREE.Vector3(x, y, z)
+    },
+  }
+}
+
+// ── Build a tapered tube from a decorated curve (reads getRadius) ─────────────
+function taperedTube(decoratedCurve, tubularSegs = 64, radialSegs = 10) {
+  // Rotation-minimising frames (double-reflection)
+  const count = tubularSegs + 1
+  const frames = []
+  const step = 1 / (count - 1)
+
+  function perp(v) {
+    const u = new THREE.Vector3(1, 0, 0)
+    if (Math.abs(v.dot(u)) > 0.9) u.set(0, 1, 0)
+    return u.clone().sub(v.clone().multiplyScalar(v.dot(u))).normalize()
+  }
+
+  const p0 = decoratedCurve.getPoint(0)
+  const t0 = decoratedCurve.getPoint(0.0005).clone().sub(decoratedCurve.getPoint(0)).normalize()
+  const n0 = perp(t0)
+  const b0 = new THREE.Vector3().crossVectors(t0, n0).normalize()
+  frames.push({ p: p0, n: n0, b: b0 })
+
+  for (let i = 1; i < count; i++) {
+    const t_ = i * step
+    const p1 = decoratedCurve.getPoint(t_)
+    const t1 = decoratedCurve.getPoint(Math.min(1, t_ + 0.0005)).clone().sub(decoratedCurve.getPoint(Math.max(0, t_ - 0.0005))).normalize()
+    const prev = frames[i - 1]
+    const v1 = p1.clone().sub(prev.p)
+    const c1 = v1.dot(v1)
+    const riL = c1 > 1e-10 ? prev.n.clone().sub(v1.clone().multiplyScalar(2 / c1 * v1.dot(prev.n))) : prev.n.clone()
+    const tiL = c1 > 1e-10 ? prev.n.clone().sub(v1.clone().multiplyScalar(2 / c1 * v1.dot(prev.n))) : t1.clone()
+    const v2 = t1.clone().sub(tiL)
+    const c2 = v2.dot(v2)
+    const n1 = c2 > 1e-10 ? riL.clone().sub(v2.clone().multiplyScalar(2 / c2 * v2.dot(riL))) : riL.clone()
+    n1.normalize()
+    const b1 = new THREE.Vector3().crossVectors(t1, n1).normalize()
+    frames.push({ p: p1, n: n1, b: b1 })
+  }
+
+  const vCount = count * (radialSegs + 1)
+  const pos = new Float32Array(vCount * 3)
+  const nor = new Float32Array(vCount * 3)
+  let vi = 0
+
+  for (let i = 0; i < count; i++) {
+    const { p, n, b } = frames[i]
+    const r = decoratedCurve.getRadius(i / (count - 1))
+    for (let j = 0; j <= radialSegs; j++) {
+      const angle = (j / radialSegs) * Math.PI * 2
+      const cos = Math.cos(angle), sin = Math.sin(angle)
+      const nx = n.x * cos + b.x * sin
+      const ny = n.y * cos + b.y * sin
+      const nz = n.z * cos + b.z * sin
+      pos[vi] = p.x + nx * r; pos[vi + 1] = p.y + ny * r; pos[vi + 2] = p.z + nz * r
+      nor[vi] = nx; nor[vi + 1] = ny; nor[vi + 2] = nz
+      vi += 3
+    }
+  }
+
+  const idx = []
+  for (let i = 0; i < tubularSegs; i++) {
+    for (let j = 0; j < radialSegs; j++) {
+      const a = (radialSegs + 1) * i + j
+      const b = (radialSegs + 1) * (i + 1) + j
+      const c = (radialSegs + 1) * (i + 1) + j + 1
+      const d = (radialSegs + 1) * i + j + 1
+      idx.push(a, b, d, b, c, d)
+    }
+  }
+
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3))
+  geo.setIndex(idx)
+  return geo
+}
+
+// ── Demo builders ─────────────────────────────────────────────────────────────
+
+function demoResample(count) {
+  clearScene()
+  const curve = makeHelix()
+  const node  = new ResampleCurve({ curve, count })
+  const ptGeo = node.output('Geometry').evaluate()
+  if (!ptGeo) return
+
+  // Render point cloud
+  const pts = add(new THREE.Points(
+    ptGeo,
+    new THREE.PointsMaterial({ color: 0x44aaff, size: 0.12, sizeAttenuation: true }),
+  ))
+
+  // Connect with a line
+  const posAttr = ptGeo.getAttribute('position')
+  const verts = []
+  for (let i = 0; i < posAttr.count; i++) verts.push(new THREE.Vector3().fromBufferAttribute(posAttr, i))
+  add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(verts),
+    new THREE.LineBasicMaterial({ color: 0x2255aa }),
+  ))
+}
+
+function demoCurveToMesh(radius, radialSegs) {
+  clearScene()
+  const curve = makeHelix()
+  const node  = new CurveToMesh({ curve, radius, tubularSegments: 64, radialSegments: radialSegs })
+  const geo   = node.output('Geometry').evaluate()
+  if (geo) add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x55cc88, roughness: 0.3, metalness: 0.2 })))
+
+  const curve2 = makeLemniscate()
+  const node2  = new CurveToMesh({ curve: curve2, radius: radius * 0.6, tubularSegments: 64, radialSegments: radialSegs })
+  const geo2   = node2.output('Geometry').evaluate()
+  if (geo2) {
+    const m = new THREE.Mesh(geo2, new THREE.MeshStandardMaterial({ color: 0xff6633, roughness: 0.3 }))
+    m.position.y = 1.8
+    add(m)
+  }
+}
+
+function demoSetRadius(baseR, tipScale) {
+  clearScene()
+  const curve      = makeHelix(3, 1.5, 4)
+  const setCurve   = new SetCurveRadius({ curve, radiusFn: (t) => baseR * (1 - t * (1 - tipScale)) })
+  const decorated  = setCurve.output('Curve').evaluate()
+  if (!decorated || typeof decorated.getPoint !== 'function') return
+
+  const geo = taperedTube(decorated, 64, 10)
+  add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xeeaa44, roughness: 0.3, metalness: 0.1 })))
+}
+
+// ── Preset / tab system ───────────────────────────────────────────────────────
+const presets = [
+  {
+    name: 'ResampleCurve',
+    knobs: [
+      { label: 'count', key: 'count', min: 4, max: 128, step: 4, def: 32 },
+    ],
+    fn: (v) => demoResample(v.count),
+  },
+  {
+    name: 'CurveToMesh',
+    knobs: [
+      { label: 'radius',        key: 'radius',     min: 0.02, max: 0.4, step: 0.01, def: 0.12 },
+      { label: 'radial segs',   key: 'radialSegs', min: 3,    max: 16,  step: 1,    def: 8    },
+    ],
+    fn: (v) => demoCurveToMesh(v.radius, v.radialSegs),
+  },
+  {
+    name: 'SetCurveRadius',
+    knobs: [
+      { label: 'base radius', key: 'baseR',     min: 0.05, max: 0.5,  step: 0.01,  def: 0.25 },
+      { label: 'tip scale',   key: 'tipScale',  min: 0,    max: 1,    step: 0.01,  def: 0.05 },
+    ],
+    fn: (v) => demoSetRadius(v.baseR, v.tipScale),
+  },
+]
+
+const panelEl = document.getElementById('panel')
+const tabsEl  = document.getElementById('tabs')
+
+function activatePreset(i) {
+  document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i))
+  const preset = presets[i]
+
+  // Collect defaults
+  const v = {}
+  preset.knobs.forEach(k => { v[k.key] = k.def })
+
+  // Build panel
+  panelEl.innerHTML = ''
+  for (const k of preset.knobs) {
+    const row = document.createElement('label')
+    const val = document.createElement('span')
+    const inp = document.createElement('input')
+    inp.type = 'range'; inp.min = k.min; inp.max = k.max; inp.step = k.step; inp.value = k.def
+    val.textContent = (+inp.value).toFixed(2)
+    inp.addEventListener('input', () => {
+      v[k.key] = +inp.value
+      val.textContent = (+inp.value).toFixed(2)
+      preset.fn(v)
+    })
+    row.innerHTML = `<span>${k.label}</span>`
+    row.appendChild(inp); row.appendChild(val)
+    panelEl.appendChild(row)
+  }
+
+  preset.fn(v)
+}
+
+presets.forEach((p, i) => {
+  const btn = document.createElement('div')
+  btn.className = 'tab'
+  btn.textContent = p.name
+  btn.addEventListener('click', () => activatePreset(i))
+  tabsEl.appendChild(btn)
+})
+activatePreset(0)
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime()
+  objects.forEach(o => { o.rotation.y = t * 0.2 })
+  controls.update()
+  renderer.render(scene, camera)
+})
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

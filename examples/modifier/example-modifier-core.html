@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-modifier-core — example</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:monospace; }
+  #info { position:absolute; top:10px; left:10px; color:#aaa; font-size:12px; line-height:1.6; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="info">
+  st-modifier-core — ModifierStack<br>
+  Left: SubdivisionModifier + DisplacementModifier (noise)<br>
+  Centre: OceanModifier (animated)<br>
+  Right: MirrorModifier + ArrayModifier
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ModifierStack,
+  SubdivisionModifier,
+  DisplacementModifier,
+  OceanModifier,
+  MirrorModifier,
+  ArrayModifier,
+} from '../../st-modifier-core/dist/index.js'
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a1520)
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 5, 14)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0x334466, 0.8))
+const sun = new THREE.DirectionalLight(0xffffff, 1.2)
+sun.position.set(5, 10, 5)
+scene.add(sun)
+
+// ── 1. SubdivisionModifier + DisplacementModifier ─────────────────────────────
+const baseGeo = new THREE.PlaneGeometry(3, 3, 4, 4)
+baseGeo.rotateX(-Math.PI / 2)
+const stack1 = new ModifierStack(baseGeo)
+stack1.add(new SubdivisionModifier({ levels: 3 }))
+stack1.add(new DisplacementModifier({
+  strength: 0.6,
+  noiseFunction: (x, _y, z) => {
+    const f = Math.sin(x*3.1)*Math.cos(z*2.7)*0.5+0.5
+    return f * 2 - 1
+  },
+}))
+const geo1 = stack1.apply()
+geo1.computeVertexNormals()
+const mesh1 = new THREE.Mesh(geo1, new THREE.MeshStandardMaterial({ color: 0x8866ff, wireframe: false, side: THREE.DoubleSide }))
+mesh1.position.set(-5, 0, 0)
+scene.add(mesh1)
+
+// ── 2. OceanModifier (animated) ───────────────────────────────────────────────
+const oceanBase = new THREE.PlaneGeometry(4, 4, 32, 32)
+oceanBase.rotateX(-Math.PI / 2)
+const oceanMod = new OceanModifier({ amplitude: 0.35, speed: 1.0, choppy: 1.5 })
+const oceanStack = new ModifierStack(oceanBase)
+oceanStack.add(oceanMod)
+let oceanGeo = oceanStack.apply()
+oceanGeo.computeVertexNormals()
+const oceanMesh = new THREE.Mesh(oceanGeo,
+  new THREE.MeshStandardMaterial({ color: 0x0077cc, metalness: 0.1, roughness: 0.2, side: THREE.DoubleSide }))
+oceanMesh.position.set(0, 0, 0)
+scene.add(oceanMesh)
+
+// ── 3. MirrorModifier + ArrayModifier ────────────────────────────────────────
+const halfGeo = new THREE.BoxGeometry(0.6, 0.8, 0.6)
+halfGeo.translate(0.5, 0, 0)  // offset so mirror makes a symmetric shape
+const stack3 = new ModifierStack(halfGeo)
+stack3.add(new MirrorModifier({ axis: 'x' }))
+stack3.add(new ArrayModifier({ count: 4, offset: [0, 0.9, 0] }))
+const geo3 = stack3.apply()
+geo3.computeVertexNormals()
+const mesh3 = new THREE.Mesh(geo3, new THREE.MeshStandardMaterial({ color: 0xffaa44 }))
+mesh3.position.set(5, -1.5, 0)
+scene.add(mesh3)
+
+// ── Animate ocean ─────────────────────────────────────────────────────────────
+const clock = new THREE.Clock()
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+;(function animate() {
+  requestAnimationFrame(animate)
+  const t = clock.getElapsedTime()
+  oceanMod.parameters.time = t
+  const newGeo = oceanStack.apply()
+  newGeo.computeVertexNormals()
+  oceanMesh.geometry.dispose()
+  oceanMesh.geometry = newGeo
+
+  controls.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

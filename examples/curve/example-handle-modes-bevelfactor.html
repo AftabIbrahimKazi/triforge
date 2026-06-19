@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>st-curve-core · Handle Modes + BevelFactor | st-keyframe · QuaternionTrack</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0d14; color: #ccc; font-family: monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 12px; left: 12px; z-index: 10;
+      background: rgba(0,0,0,0.65); border: 1px solid #333;
+      padding: 14px 18px; border-radius: 8px; width: 270px; font-size: 12px;
+      line-height: 1.8;
+    }
+    #ui h2 { color: #7af; margin-bottom: 8px; font-size: 13px; }
+    #ui h3 { color: #fa7; margin: 8px 0 4px; font-size: 12px; }
+    label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    input[type=range] { flex: 1; }
+    .val { width: 36px; text-align: right; color: #aef; }
+    select { background: #222; color: #ccc; border: 1px solid #444; padding: 2px 4px; border-radius: 3px; width: 100%; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h2>st-curve-core + st-keyframe</h2>
+
+  <h3>Bezier Handle Mode</h3>
+  <select id="handleMode">
+    <option value="auto">AUTO (Catmull-Rom style)</option>
+    <option value="vector">VECTOR (toward neighbor)</option>
+    <option value="aligned">ALIGNED (mirrored user handles)</option>
+    <option value="free">FREE (fully custom)</option>
+  </select>
+
+  <h3>BevelFactor (Trim)</h3>
+  <label>
+    Start
+    <input type="range" id="bfStart" min="0" max="1" step="0.01" value="0" />
+    <span class="val" id="bfStartVal">0.00</span>
+  </label>
+  <label>
+    End
+    <input type="range" id="bfEnd" min="0" max="1" step="0.01" value="1" />
+    <span class="val" id="bfEndVal">1.00</span>
+  </label>
+
+  <h3>QuaternionTrack (bone rotation)</h3>
+  <label>
+    t <input type="range" id="qtTime" min="0" max="2" step="0.01" value="0" />
+    <span class="val" id="qtVal">0.00</span>
+  </label>
+
+  <h3>Legend</h3>
+  <div><span class="dot" style="background:#4af"></span>AUTO</div>
+  <div><span class="dot" style="background:#fa4"></span>VECTOR</div>
+  <div><span class="dot" style="background:#a4f"></span>ALIGNED</div>
+  <div><span class="dot" style="background:#4fa"></span>FREE</div>
+  <div style="margin-top:6px; color:#888; font-size:11px">
+    Orbit: left drag &nbsp;|&nbsp; Zoom: scroll
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ─── Minimal inline implementations (no build step) ──────────────────────────
+// We implement the features inline so the demo is fully self-contained.
+
+// ── QuaternionTrack ──────────────────────────────────────────────────────────
+function slerpQuat(a, b, t) {
+  let { x: bx, y: by, z: bz, w: bw } = b
+  let dot = a.x*bx + a.y*by + a.z*bz + a.w*bw
+  if (dot < 0) { bx=-bx; by=-by; bz=-bz; bw=-bw; dot=-dot }
+  if (dot > 0.9995) {
+    const len = Math.sqrt((a.x+t*(bx-a.x))**2+(a.y+t*(by-a.y))**2+(a.z+t*(bz-a.z))**2+(a.w+t*(bw-a.w))**2)||1
+    return { x:(a.x+t*(bx-a.x))/len, y:(a.y+t*(by-a.y))/len, z:(a.z+t*(bz-a.z))/len, w:(a.w+t*(bw-a.w))/len }
+  }
+  const theta0 = Math.acos(dot), theta = theta0*t, sinT0 = Math.sin(theta0)
+  const s1 = Math.sin(theta)/sinT0, s0 = Math.cos(theta)-dot*s1
+  return { x:s0*a.x+s1*bx, y:s0*a.y+s1*by, z:s0*a.z+s1*bz, w:s0*a.w+s1*bw }
+}
+
+class QuaternionTrack {
+  constructor(target, keyframes=[]) {
+    this.target = target
+    this._kfs = [...keyframes].sort((a,b)=>a.time-b.time)
+  }
+  evaluate(t) {
+    const kfs = this._kfs
+    if (!kfs.length) return
+    if (kfs.length===1 || t<=kfs[0].time) { Object.assign(this.target, kfs[0].value); return }
+    if (t>=kfs[kfs.length-1].time) { Object.assign(this.target, kfs[kfs.length-1].value); return }
+    let lo=0, hi=kfs.length-2
+    while (lo<hi) { const mid=(lo+hi)>>1; if(kfs[mid+1].time<=t) lo=mid+1; else hi=mid }
+    const kf0=kfs[lo], kf1=kfs[lo+1]
+    const alpha=(kf1.time===kf0.time)?0:(t-kf0.time)/(kf1.time-kf0.time)
+    Object.assign(this.target, slerpQuat(kf0.value, kf1.value, alpha))
+  }
+}
+
+// ── Bezier helpers ────────────────────────────────────────────────────────────
+function deCasteljau(p0,p1,p2,p3,t) {
+  const mt=1-t
+  return new THREE.Vector3(
+    mt**3*p0.x+3*mt**2*t*p1.x+3*mt*t**2*p2.x+t**3*p3.x,
+    mt**3*p0.y+3*mt**2*t*p1.y+3*mt*t**2*p2.y+t**3*p3.y,
+    mt**3*p0.z+3*mt**2*t*p1.z+3*mt*t**2*p2.z+t**3*p3.z,
+  )
+}
+
+function buildAutoHandles(anchors, tension=0.5) {
+  const n=anchors.length, pts=[]
+  for (let i=0;i<n;i++) {
+    const prev=anchors[(i-1+n)%n], cur=anchors[i], next=anchors[(i+1)%n]
+    const isFirst=i===0, isLast=i===n-1
+    const dx=isFirst?(next.x-cur.x):isLast?(cur.x-prev.x):(next.x-prev.x)*tension
+    const dy=isFirst?(next.y-cur.y):isLast?(cur.y-prev.y):(next.y-prev.y)*tension
+    const dz=isFirst?(next.z-cur.z):isLast?(cur.z-prev.z):(next.z-prev.z)*tension
+    const s=1/3
+    const hl=new THREE.Vector3(cur.x-dx*s,cur.y-dy*s,cur.z-dz*s)
+    const hr=new THREE.Vector3(cur.x+dx*s,cur.y+dy*s,cur.z+dz*s)
+    if(i===0) pts.push(cur.clone(),hr)
+    else if(i===n-1) pts.push(hl,cur.clone())
+    else pts.push(hl,cur.clone(),hr)
+  }
+  return pts
+}
+
+function buildVectorHandles(anchors) {
+  const n=anchors.length, pts=[], s=1/3
+  for (let i=0;i<n;i++) {
+    const cur=anchors[i], prev=anchors[(i-1+n)%n], next=anchors[(i+1)%n]
+    const isFirst=i===0, isLast=i===n-1
+    const hr=isLast?cur.clone():new THREE.Vector3(cur.x+(next.x-cur.x)*s,cur.y+(next.y-cur.y)*s,cur.z+(next.z-cur.z)*s)
+    const hl=isFirst?cur.clone():new THREE.Vector3(cur.x+(prev.x-cur.x)*s,cur.y+(prev.y-cur.y)*s,cur.z+(prev.z-cur.z)*s)
+    if(i===0) pts.push(cur.clone(),hr)
+    else if(i===n-1) pts.push(hl,cur.clone())
+    else pts.push(hl,cur.clone(),hr)
+  }
+  return pts
+}
+
+function buildAlignedHandles(anchors, rights) {
+  const n=anchors.length, pts=[]
+  for (let i=0;i<n;i++) {
+    const cur=anchors[i], hr=rights[i]
+    const hl=new THREE.Vector3(2*cur.x-hr.x,2*cur.y-hr.y,2*cur.z-hr.z)
+    if(i===0) pts.push(cur.clone(),hr.clone())
+    else if(i===n-1) pts.push(hl,cur.clone())
+    else pts.push(hl,cur.clone(),hr.clone())
+  }
+  return pts
+}
+
+function buildFreeHandles(anchors, lefts, rights) {
+  const n=anchors.length, pts=[]
+  for (let i=0;i<n;i++) {
+    const cur=anchors[i]
+    if(i===0) pts.push(cur.clone(),rights[i].clone())
+    else if(i===n-1) pts.push(lefts[i].clone(),cur.clone())
+    else pts.push(lefts[i].clone(),cur.clone(),rights[i].clone())
+  }
+  return pts
+}
+
+// Evaluate a multi-segment cubic Bezier at global t∈[0,1]
+function evalBezier(pts, t) {
+  const segCount = (pts.length - 1) / 3
+  t = Math.max(0, Math.min(1, t))
+  const seg = Math.min(Math.floor(t * segCount), segCount - 1)
+  const local = t * segCount - seg
+  const base = seg * 3
+  return deCasteljau(pts[base], pts[base+1], pts[base+2], pts[base+3], local)
+}
+
+// Sample a bezier control-point array into a THREE.BufferGeometry line
+function bezierToLineGeo(pts, samples=120, factorStart=0, factorEnd=1) {
+  const positions = []
+  const tS = Math.max(0,Math.min(1,factorStart))
+  const tE = Math.max(tS,Math.min(1,factorEnd))
+  for (let i=0; i<=samples; i++) {
+    const u = tS + (tE-tS)*(i/samples)
+    const p = evalBezier(pts, u)
+    positions.push(p.x, p.y, p.z)
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  return geo
+}
+
+// ─── Scene setup ─────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.1
+document.body.appendChild(renderer.domElement)
+
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x0d0d14)
+scene.fog = new THREE.Fog(0x0d0d14, 20, 40)
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.01, 100)
+camera.position.set(0, 3, 10)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+// Lights
+scene.add(new THREE.AmbientLight(0x334466, 2))
+const dir = new THREE.DirectionalLight(0xffffff, 3)
+dir.position.set(5, 8, 6)
+scene.add(dir)
+
+// Grid
+const grid = new THREE.GridHelper(20, 20, 0x222233, 0x1a1a2a)
+scene.add(grid)
+
+// ─── Anchor points (shared by all handle modes) ───────────────────────────────
+const anchors = [
+  new THREE.Vector3(-4, 0, 0),
+  new THREE.Vector3(-1.5, 2.5, 0),
+  new THREE.Vector3(1,  -1.5, 0),
+  new THREE.Vector3(3.5, 1.5, 0),
+  new THREE.Vector3(5.5, 0, 0),
+]
+
+// RIGHT handles for ALIGNED mode (user-supplied, giving the curve a nice shape)
+const alignedRights = [
+  new THREE.Vector3(-3.2, 0.6, 0),
+  new THREE.Vector3(-0.7, 3.1, 0),
+  new THREE.Vector3(1.8, -1.0, 0),
+  new THREE.Vector3(4.3, 2.2, 0),
+  new THREE.Vector3(6.3, 0.4, 0),
+]
+
+// FREE handles
+const freeLefts = [
+  new THREE.Vector3(-4.8, -0.3, 0),
+  new THREE.Vector3(-2.3, 1.8, 0),
+  new THREE.Vector3(0.2,  -2.1, 0),
+  new THREE.Vector3(2.7,  0.8, 0),
+  new THREE.Vector3(4.8, -0.4, 0),
+]
+const freeRights = [
+  new THREE.Vector3(-3.2, 0.3, 0),
+  new THREE.Vector3(-0.8, 3.2, 0),
+  new THREE.Vector3(1.8,  -0.9, 0),
+  new THREE.Vector3(4.2,  2.4, 0),
+  new THREE.Vector3(6.3, 0.4, 0),
+]
+
+// Precompute all four handle sets
+const handleSets = {
+  auto:    buildAutoHandles(anchors),
+  vector:  buildVectorHandles(anchors),
+  aligned: buildAlignedHandles(anchors, alignedRights),
+  free:    buildFreeHandles(anchors, freeLefts, freeRights),
+}
+
+const colors = { auto: 0x44aaff, vector: 0xffaa44, aligned: 0xaa44ff, free: 0x44ffaa }
+
+// Active curve line
+let curveLine = null
+function rebuildCurve() {
+  if (curveLine) { scene.remove(curveLine); curveLine.geometry.dispose() }
+  const mode  = document.getElementById('handleMode').value
+  const bfS   = parseFloat(document.getElementById('bfStart').value)
+  const bfE   = parseFloat(document.getElementById('bfEnd').value)
+  const pts   = handleSets[mode]
+  const geo   = bezierToLineGeo(pts, 200, bfS, bfE)
+  const mat   = new THREE.LineBasicMaterial({ color: colors[mode], linewidth: 2 })
+  curveLine   = new THREE.Line(geo, mat)
+  scene.add(curveLine)
+}
+
+// Anchor spheres
+const anchorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.1 })
+anchors.forEach(a => {
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), anchorMat)
+  sphere.position.copy(a)
+  scene.add(sphere)
+})
+
+// ─── QuaternionTrack demo: spinning bone ─────────────────────────────────────
+// Simulate a skeletal "bone" (a capsule-like shape) whose rotation is driven
+// by a QuaternionTrack.
+const boneGeo = new THREE.CapsuleGeometry(0.08, 0.9, 6, 8)
+const boneMat = new THREE.MeshStandardMaterial({ color: 0xff6666, roughness: 0.3, metalness: 0.5, emissive: 0x330000 })
+const boneMesh = new THREE.Mesh(boneGeo, boneMat)
+boneMesh.position.set(0, 2.5, 2)
+scene.add(boneMesh)
+
+// Label sphere at bone origin
+const boneOrigin = new THREE.Mesh(new THREE.SphereGeometry(0.1,12,12), new THREE.MeshStandardMaterial({ color: 0xff4444, emissive: 0xaa0000 }))
+boneOrigin.position.copy(boneMesh.position)
+scene.add(boneOrigin)
+
+// QuaternionTrack: keyframes 0→2 seconds — rotate 180° around Y then 90° around Z
+const q0 = new THREE.Quaternion()
+const q1 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI / 2)
+const q2 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), Math.PI / 2)
+
+// boneMesh.quaternion IS our target (has x,y,z,w)
+const quatTrack = new QuaternionTrack(boneMesh.quaternion, [
+  { time: 0, value: { x:q0.x, y:q0.y, z:q0.z, w:q0.w } },
+  { time: 1, value: { x:q1.x, y:q1.y, z:q1.z, w:q1.w } },
+  { time: 2, value: { x:q2.x, y:q2.y, z:q2.z, w:q2.w } },
+])
+
+// ─── UI wiring ───────────────────────────────────────────────────────────────
+function wireSlider(id, valId, cb) {
+  const el = document.getElementById(id)
+  const vl = document.getElementById(valId)
+  el.addEventListener('input', () => { vl.textContent = parseFloat(el.value).toFixed(2); cb() })
+}
+
+document.getElementById('handleMode').addEventListener('change', rebuildCurve)
+wireSlider('bfStart', 'bfStartVal', rebuildCurve)
+wireSlider('bfEnd',   'bfEndVal',   rebuildCurve)
+wireSlider('qtTime',  'qtVal', () => {
+  const t = parseFloat(document.getElementById('qtTime').value)
+  quatTrack.evaluate(t)
+  // boneMesh.quaternion is the target — THREE updates automatically on next render
+})
+
+rebuildCurve()
+
+// ─── Resize ───────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+// ─── Render loop ─────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+</script>
+</body>
+</html>

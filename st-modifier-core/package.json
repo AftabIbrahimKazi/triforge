@@ -1,0 +1,38 @@
+{
+  "name": "@st-modifier-core",
+  "version": "0.1.0",
+  "description": "Blender-matched non-destructive geometry modifier stack for Three.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node test/run-tests.js"
+  },
+  "keywords": [
+    "modifier",
+    "geometry",
+    "three.js",
+    "blender",
+    "procedural"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "three": ">=0.128.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.156.0",
+    "three": "^0.165.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "three-bvh-csg": "^0.0.18",
+    "three-mesh-bvh": "^0.9.10"
+  }
+}

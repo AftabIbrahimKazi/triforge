@@ -1,0 +1,205 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>st-particle-core — Source Vertex Groups (Phase A6)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0f; color: #eee; font-family: sans-serif; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.6); padding: 14px 18px; border-radius: 8px;
+      display: flex; flex-direction: column; gap: 10px; min-width: 240px;
+    }
+    #ui h2 { font-size: 14px; font-weight: 600; color: #adf; margin-bottom: 2px; }
+    label { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+    input[type=range] { width: 100%; accent-color: #4af; }
+    .val { float: right; color: #4af; font-weight: 600; }
+    p { font-size: 11px; color: #888; line-height: 1.5; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <h2>Source Vertex Groups — A6</h2>
+  <label>
+    Weight Strength
+    <span class="val" id="wsVal">1.00</span>
+    <input type="range" id="weightStrength" min="0" max="1" step="0.01" value="1" />
+  </label>
+  <label>
+    Emission Rate
+    <span class="val" id="rateVal">200</span>
+    <input type="range" id="rate" min="10" max="600" step="10" value="200" />
+  </label>
+  <p>
+    Left half of the plane has weight&nbsp;1.0 (full density).<br>
+    Right half has weight&nbsp;0.0 (no emission).<br>
+    Slide Weight Strength to blend from clustered → uniform.
+  </p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-particle-core": "../../st-particle-core/dist/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  ParticleSystem, MeshEmitter, BillboardRenderer,
+} from '@st-particle-core'
+
+// ── Renderer setup ───────────────────────────────────────────────────────────
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x0a0a0f)
+scene.fog = new THREE.Fog(0x0a0a0f, 30, 80)
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200)
+camera.position.set(0, 18, 22)
+camera.lookAt(0, 0, 0)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+// ── Geometry — two equal-area triangles (plane split left/right) ─────────────
+// Left half (x < 0):  vertices at (-10,0,-10), (0,0,-10), (-10,0,10), (0,0,10)
+// Right half (x > 0): vertices at (0,0,-10), (10,0,-10), (0,0,10), (10,0,10)
+
+const geo = new THREE.BufferGeometry()
+
+const positions = new Float32Array([
+  // Left quad (2 triangles)
+  -10, 0, -10,
+    0, 0, -10,
+  -10, 0,  10,
+    0, 0, -10,
+    0, 0,  10,
+  -10, 0,  10,
+  // Right quad (2 triangles)
+    0, 0, -10,
+   10, 0, -10,
+    0, 0,  10,
+   10, 0, -10,
+   10, 0,  10,
+    0, 0,  10,
+])
+
+// Vertex weights: left half = 1, right half = 0
+const weights = new Float32Array([
+  1, 1, 1, 1, 1, 1,  // left quad
+  0, 0, 0, 0, 0, 0,  // right quad
+])
+
+geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+geo.setAttribute('density',  new THREE.Float32BufferAttribute(weights, 1))
+geo.computeVertexNormals()
+
+// Show the plane surface (subtle, so particles stand out)
+const planeMat = new THREE.MeshBasicMaterial({
+  color: 0x223344, side: THREE.DoubleSide, transparent: true, opacity: 0.25,
+})
+scene.add(new THREE.Mesh(geo, planeMat))
+
+// Grid to give spatial reference
+const grid = new THREE.GridHelper(20, 20, 0x334455, 0x223344)
+scene.add(grid)
+
+// Left/right zone labels via simple planes with color tint
+const leftZone = new THREE.Mesh(
+  new THREE.PlaneGeometry(10, 20),
+  new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.06, side: THREE.DoubleSide }),
+)
+leftZone.rotation.x = -Math.PI / 2
+leftZone.position.set(-5, 0.01, 0)
+scene.add(leftZone)
+
+// ── Particle system ──────────────────────────────────────────────────────────
+
+const emitter = new MeshEmitter({
+  emitFrom: 'faces',
+  evenDistribution: true,
+  normalVelocity: 0.8,
+  randomVelocity: 0.3,
+})
+emitter.weightAttribute = 'density'
+
+const billboardRenderer = new BillboardRenderer({ maxCount: 2000, fadeOut: true })
+billboardRenderer.parameters.size    = 0.35
+billboardRenderer.parameters.opacity = 0.85
+
+const sys = new ParticleSystem({
+  count:    2000,
+  lifetime: 2.5,
+  lifetimeRandom: 0.4,
+  seed:     42,
+  start:    0,
+  end:      9999,
+  physics:  'newtonian',
+  gravity:  2.5,
+})
+sys.addEmitter(emitter)
+sys.setRenderer(billboardRenderer)
+sys.setGeometry(geo)
+
+scene.add(billboardRenderer.object3D)
+
+// ── UI wiring ────────────────────────────────────────────────────────────────
+
+const wsSlider  = document.getElementById('weightStrength')
+const wsVal     = document.getElementById('wsVal')
+const rateSlider = document.getElementById('rate')
+const rateVal    = document.getElementById('rateVal')
+
+wsSlider.addEventListener('input', () => {
+  const v = parseFloat(wsSlider.value)
+  wsVal.textContent = v.toFixed(2)
+  emitter.parameters.weightStrength = v
+  // Force CDF rebuild by toggling the attribute reference
+  const tmp = emitter.weightAttribute
+  emitter.weightAttribute = null
+  emitter.weightAttribute = tmp
+})
+
+rateSlider.addEventListener('input', () => {
+  const v = parseInt(rateSlider.value)
+  rateVal.textContent = v
+  sys.parameters.count = v * 2.5  // count ≈ rate × lifetime
+})
+
+// ── Animation loop ───────────────────────────────────────────────────────────
+
+let last = performance.now()
+function animate() {
+  requestAnimationFrame(animate)
+  const now = performance.now()
+  const dt  = Math.min((now - last) / 1000, 0.05)
+  last = now
+
+  controls.update()
+  sys.update(dt)
+  billboardRenderer.update(sys['_pool'], sys['_aliveCount'])
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

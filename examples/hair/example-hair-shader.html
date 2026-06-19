@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>st-hair-core + st-shader-core — PrincipledHair BSDF</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #080810; color: #ddd; font-family: monospace; overflow: hidden; }
+  canvas { display: block; }
+  #ui {
+    position: fixed; top: 16px; left: 16px; width: 230px;
+    background: rgba(0,0,0,0.75); border: 1px solid #333; border-radius: 6px;
+    padding: 12px; font-size: 12px; user-select: none;
+  }
+  #ui h2 { font-size: 13px; color: #c8a060; margin-bottom: 8px; }
+  .group { margin-bottom: 8px; }
+  .group label { display: block; color: #888; margin-bottom: 3px; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+  .row { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
+  .row span { width: 115px; color: #bbb; font-size: 11px; }
+  .row input[type=range] { flex: 1; accent-color: #c8a060; }
+  .row .val { width: 38px; text-align: right; color: #c8a060; font-size: 11px; }
+  .row input[type=color] { width: 36px; height: 18px; border: none; background: none; cursor: pointer; }
+  #info { position: fixed; bottom: 12px; left: 16px; font-size: 11px; color: #555; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h2>PrincipledHair BSDF</h2>
+
+  <div class="group">
+    <label>Light</label>
+    <div class="row"><span>Sun Elevation</span><input type="range" id="sunEl" min="0" max="90" step="1" value="45"><span class="val" id="sunElV">45°</span></div>
+    <div class="row"><span>Sun Azimuth</span><input type="range" id="sunAz" min="0" max="360" step="1" value="60"><span class="val" id="sunAzV">60°</span></div>
+    <div class="row"><span>Intensity</span><input type="range" id="sunInt" min="0" max="3" step="0.05" value="1.5"><span class="val" id="sunIntV">1.50</span></div>
+  </div>
+
+  <div class="group">
+    <label>Hair Color</label>
+    <div class="row"><span>Color</span><input type="color" id="hairColor" value="#8b5a38"></div>
+    <div class="row"><span>Random Color</span><input type="range" id="randColor" min="0" max="1" step="0.01" value="0.2"><span class="val" id="randColorV">0.20</span></div>
+  </div>
+
+  <div class="group">
+    <label>Specular</label>
+    <div class="row"><span>Roughness</span><input type="range" id="rough" min="0.02" max="1" step="0.01" value="0.25"><span class="val" id="roughV">0.25</span></div>
+    <div class="row"><span>Radial Roughness</span><input type="range" id="radRough" min="0.02" max="1" step="0.01" value="0.4"><span class="val" id="radRoughV">0.40</span></div>
+    <div class="row"><span>Coat</span><input type="range" id="coat" min="0" max="1" step="0.01" value="0.3"><span class="val" id="coatV">0.30</span></div>
+    <div class="row"><span>IOR</span><input type="range" id="ior" min="1.1" max="2.0" step="0.01" value="1.55"><span class="val" id="iorV">1.55</span></div>
+    <div class="row"><span>Offset</span><input type="range" id="offset" min="-0.3" max="0.3" step="0.01" value="0.04"><span class="val" id="offsetV">0.04</span></div>
+  </div>
+
+  <div class="group">
+    <label>Strand</label>
+    <div class="row"><span>Count</span><input type="range" id="count" min="100" max="600" step="50" value="300"><span class="val" id="countV">300</span></div>
+    <div class="row"><span>Length</span><input type="range" id="length" min="0.1" max="1.2" step="0.05" value="0.5"><span class="val" id="lengthV">0.50</span></div>
+    <div class="row"><span>Gravity</span><input type="range" id="gravity" min="0" max="1" step="0.05" value="0.35"><span class="val" id="gravityV">0.35</span></div>
+  </div>
+</div>
+<div id="info">Orbit: left-drag · Zoom: scroll</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ── Minimal st-hair-core inline ───────────────────────────────────────────────
+function _cr(p0,p1,p2,p3,t){return 0.5*(2*p1+(-p0+p2)*t+(2*p0-5*p1+4*p2-p3)*t*t+(-p0+3*p1-3*p2+p3)*t*t*t)}
+function sampleSpline(pts,t){if(pts.length===1)return[...pts[0]];const n=pts.length-1;const s=Math.min(Math.max(t,0),1)*n;const i=Math.min(Math.floor(s),n-1);const u=s-i;const i0=Math.max(i-1,0),i1=i,i2=Math.min(i+1,n),i3=Math.min(i+2,n);return[_cr(pts[i0][0],pts[i1][0],pts[i2][0],pts[i3][0],u),_cr(pts[i0][1],pts[i1][1],pts[i2][1],pts[i3][1],u),_cr(pts[i0][2],pts[i1][2],pts[i2][2],pts[i3][2],u)]}
+function sampleTangent(pts,t,eps=1e-4){const a=sampleSpline(pts,Math.max(0,t-eps));const b=sampleSpline(pts,Math.min(1,t+eps));const dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2];const l=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;return[dx/l,dy/l,dz/l]}
+const cross3=([ax,ay,az],[bx,by,bz])=>[ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx]
+const dot3=([ax,ay,az],[bx,by,bz])=>ax*bx+ay*by+az*bz
+const sub3=([ax,ay,az],[bx,by,bz])=>[ax-bx,ay-by,az-bz]
+const len3=([x,y,z])=>Math.sqrt(x*x+y*y+z*z)
+const norm3=v=>{const l=len3(v)||1;return[v[0]/l,v[1]/l,v[2]/l]}
+
+function computeRMFrames(pts,steps){
+  const frames=[]
+  let tan=sampleTangent(pts,0)
+  let ref=Math.abs(tan[1])<0.9?[0,1,0]:[1,0,0]
+  let n=norm3(cross3(tan,ref)); n=norm3(cross3(cross3(tan,n),tan))
+  for(let i=0;i<=steps;i++){
+    const tt=i/steps,T=sampleTangent(pts,tt),pos=sampleSpline(pts,tt)
+    if(i>0){
+      const prev=frames[i-1],v1=sub3(pos,prev.pos),l1=len3(v1)||1,v1n=[v1[0]/l1,v1[1]/l1,v1[2]/l1]
+      const c1=dot3(v1n,prev.normal),nL=sub3(prev.normal,[2*c1*v1n[0],2*c1*v1n[1],2*c1*v1n[2]])
+      const c2=dot3(v1n,T),tL=sub3(T,[2*c2*v1n[0],2*c2*v1n[1],2*c2*v1n[2]])
+      const c3=dot3(tL,nL);n=sub3(nL,[2*c3*tL[0],2*c3*tL[1],2*c3*tL[2]]);const nl2=len3(n)||1;n=[n[0]/nl2,n[1]/nl2,n[2]/nl2]
+    }
+    const b=norm3(cross3(T,n))
+    frames.push({pos,tangent:T,normal:n,binormal:b})
+  }
+  return frames
+}
+
+// Build tube geometry WITH strandTangent + strandRandom attributes
+function buildTubeGeometry(strands,steps,cs,rRoot,rTip){
+  const allPos=[],allNor=[],allUvs=[],allTan=[],allRnd=[],allIdx=[]
+  let base=0
+  for(let si=0;si<strands.length;si++){
+    const strand=strands[si]
+    const frames=computeRMFrames(strand.points,steps)
+    const cols=cs+1
+    const rnd=(si*2654435761)%0x100000000/0x100000000
+    for(let i=0;i<=steps;i++){
+      const{pos:p,tangent:T,normal:n,binormal:b}=frames[i]
+      const t=i/steps,r=rRoot+(rTip-rRoot)*t
+      for(let c=0;c<=cs;c++){
+        const a=c/cs*Math.PI*2,cos=Math.cos(a),sin=Math.sin(a)
+        const nx=n[0]*cos+b[0]*sin,ny=n[1]*cos+b[1]*sin,nz=n[2]*cos+b[2]*sin
+        allPos.push(p[0]+nx*r,p[1]+ny*r,p[2]+nz*r)
+        allNor.push(nx,ny,nz)
+        allUvs.push(c/cs,t)
+        allTan.push(T[0],T[1],T[2])
+        allRnd.push(rnd)
+      }
+    }
+    for(let i=0;i<steps;i++){const rowA=i*cols,rowB=rowA+cols;for(let c=0;c<cs;c++){const a=rowA+c,b=rowB+c;allIdx.push(a+base,b+base,a+1+base,b+base,b+1+base,a+1+base)}}
+    base+=(steps+1)*cols
+  }
+  const geo=new THREE.BufferGeometry()
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(allPos),3))
+  geo.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(allNor),3))
+  geo.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(allUvs),2))
+  geo.setAttribute('strandTangent',new THREE.BufferAttribute(new Float32Array(allTan),3))
+  geo.setAttribute('strandRandom',new THREE.BufferAttribute(new Float32Array(allRnd),1))
+  geo.setIndex(allIdx)
+  return geo
+}
+
+// StrandGenerator (simplified from st-hair-core)
+function generateStrands({count,length,segments,seed=42,gravity=0,spread=0}){
+  const sphereGeo=new THREE.SphereGeometry(0.6,32,16)
+  const posAttr=sphereGeo.getAttribute('position'),norAttr=sphereGeo.getAttribute('normal'),idx=sphereGeo.getIndex()
+  const tris=[]
+  const gp=i=>[posAttr.getX(i),posAttr.getY(i),posAttr.getZ(i)]
+  const gn=i=>[norAttr.getX(i),norAttr.getY(i),norAttr.getZ(i)]
+  const nrm=([x,y,z])=>{const l=Math.sqrt(x*x+y*y+z*z)||1;return[x/l,y/l,z/l]}
+  for(let i=0;i<idx.count;i+=3){const ia=idx.getX(i),ib=idx.getX(i+1),ic=idx.getX(i+2);const a=gp(ia),b=gp(ib),c=gp(ic);const na=gn(ia),nb=gn(ib),nc=gn(ic);const avgN=nrm([(na[0]+nb[0]+nc[0])/3,(na[1]+nb[1]+nc[1])/3,(na[2]+nb[2]+nc[2])/3]);tris.push({a,b,c,n:avgN})}
+  const areas=tris.map(({a,b,c})=>{const abx=b[0]-a[0],aby=b[1]-a[1],abz=b[2]-a[2],acx=c[0]-a[0],acy=c[1]-a[1],acz=c[2]-a[2];const cx=aby*acz-abz*acy,cy=abz*acx-abx*acz,cz=abx*acy-aby*acx;return Math.sqrt(cx*cx+cy*cy+cz*cz)*0.5})
+  const totalArea=areas.reduce((s,a)=>s+a,0);let s=0;const cdf=areas.map(a=>(s+=a))
+  const perpTo=([x,y,z])=>{const v=Math.abs(x)<0.9?[1,0,0]:[0,1,0];const d=x*v[0]+y*v[1]+z*v[2];return nrm([v[0]-d*x,v[1]-d*y,v[2]-d*z])}
+  let lcg=(seed|0)^0xdeadbeef;const rand=()=>{lcg=(Math.imul(lcg,1664525)+1013904223)>>>0;return lcg/0x100000000}
+  const strands=[]
+  for(let i=0;i<count;i++){
+    const r=rand()*totalArea;let ti=cdf.findIndex(c=>c>=r);if(ti<0)ti=tris.length-1
+    const{a,b,c,n}=tris[ti];let u=rand(),v2=rand();if(u+v2>1){u=1-u;v2=1-v2};const w=1-u-v2
+    const root=[a[0]*w+b[0]*u+c[0]*v2,a[1]*w+b[1]*u+c[1]*v2+0.6,a[2]*w+b[2]*u+c[2]*v2]
+    const perp=perpTo(n),bino=[n[1]*perp[2]-n[2]*perp[1],n[2]*perp[0]-n[0]*perp[2],n[0]*perp[1]-n[1]*perp[0]]
+    const ang=rand()*Math.PI*2,ca=Math.cos(ang),sa=Math.sin(ang)
+    const sd=[perp[0]*ca+bino[0]*sa,perp[1]*ca+bino[1]*sa,perp[2]*ca+bino[2]*sa]
+    const ndg=-n[1];const grav=[-n[0]*ndg,-1-n[1]*ndg,-n[2]*ndg]
+    const pts=[];for(let j=0;j<=segments;j++){const t=j/segments;const sag=gravity*t*t*length;pts.push([root[0]+n[0]*length*t+sd[0]*spread*t+grav[0]*sag,root[1]+n[1]*length*t+sd[1]*spread*t+grav[1]*sag,root[2]+n[2]*length*t+sd[2]*spread*t+grav[2]*sag])}
+    strands.push({points:pts,normal:n})
+  }
+  return strands
+}
+
+// ── PrincipledHair GLSL shader ─────────────────────────────────────────────
+const vertexShader = `
+varying vec2 vUv;
+varying vec3 vNormal;
+varying vec3 vPosition;
+attribute vec3 strandTangent;
+varying vec3 vStrandTangent;
+attribute float strandRandom;
+varying float vStrandRandom;
+
+void main() {
+  vUv           = uv;
+  vNormal       = normalize(mat3(transpose(inverse(modelMatrix))) * normal);
+  vPosition     = (modelMatrix * vec4(position, 1.0)).xyz;
+  vStrandTangent = normalize(mat3(transpose(inverse(modelMatrix))) * strandTangent);
+  vStrandRandom  = strandRandom;
+  gl_Position   = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`
+
+const fragmentShader = `
+precision mediump float;
+varying vec2  vUv;
+varying vec3  vNormal;
+varying vec3  vPosition;
+varying vec3  vStrandTangent;
+varying float vStrandRandom;
+
+uniform vec3  uSunDirection;
+uniform vec3  uSunColor;
+uniform vec3  uAmbientColor;
+uniform vec3  uHairColor;
+uniform float uRoughness;
+uniform float uRadialRoughness;
+uniform float uCoat;
+uniform float uIOR;
+uniform float uOffset;
+uniform float uRandomColor;
+
+float hairHash(float n) {
+  return fract(sin(n * 127.1 + 311.7) * 43758.5453);
+}
+
+void main() {
+  vec3  T    = normalize(vStrandTangent);
+  vec3  V    = normalize(cameraPosition - vPosition);
+  vec3  L    = normalize(uSunDirection);
+  vec3  H    = normalize(L + V);
+  vec3  N    = normalize(vNormal);
+  float rnd  = vStrandRandom;
+
+  // Per-strand color variation
+  float rc   = hairHash(rnd * 1.3731 + 0.1);
+  vec3  col  = mix(uHairColor, uHairColor * (0.6 + 0.8 * rc), uRandomColor);
+
+  // Roughness
+  float rough = uRoughness;
+
+  // Kajiya-Kay diffuse
+  float cosT = dot(T, L);
+  float sinT = sqrt(max(1.0 - cosT*cosT, 0.0));
+  float diff = sinT * max(dot(N, L) * 0.5 + 0.5, 0.0);
+
+  // R lobe — primary specular (white, IOR tinted)
+  float f0   = pow(clamp((1.0 - uIOR) / (1.0 + uIOR), 0.0, 1.0), 2.0);
+  vec3  T1   = normalize(T + uOffset * N);
+  float cTH1 = dot(T1, H);
+  float sTH1 = sqrt(max(1.0 - cTH1*cTH1, 0.0));
+  float exp1 = max(1.0 / max(rough*rough, 0.001), 1.0);
+  float sp1  = pow(sTH1, exp1);
+  vec3  F1   = vec3(f0) + (1.0 - f0) * pow(1.0 - max(dot(H,V), 0.0), 5.0);
+
+  // TRT lobe — secondary specular (colored, wider)
+  vec3  T2   = normalize(T - 2.0 * uOffset * N);
+  float cTH2 = dot(T2, H);
+  float sTH2 = sqrt(max(1.0 - cTH2*cTH2, 0.0));
+  float rr2  = clamp(uRadialRoughness, 0.02, 1.0);
+  float exp2 = max(1.0 / max(rr2*rr2, 0.001), 1.0);
+  float sp2  = pow(sTH2, exp2) * 0.25;
+
+  // Coat
+  float cTHc   = dot(T, H);
+  float sTHc   = sqrt(max(1.0 - cTHc*cTHc, 0.0));
+  float coatSp = pow(sTHc, 128.0) * uCoat;
+
+  // Root-to-tip gradient
+  float tip = vUv.y;
+  vec3  tipColor = col * vec3(1.05, 0.9, 0.7);
+  col = mix(col, tipColor, tip * 0.4);
+
+  vec3 diffuse  = col * (uSunColor * diff + uAmbientColor);
+  vec3 specular = uSunColor * (F1 * sp1 + vec3(coatSp)) + col * uSunColor * sp2;
+
+  gl_FragColor = vec4(diffuse + specular, 1.0);
+}`
+
+// ── Scene setup ───────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x080810)
+scene.fog = new THREE.Fog(0x080810, 4, 12)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.01, 20)
+camera.position.set(0, 1.2, 3.5)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0.6, 0)
+controls.enableDamping = true
+
+// Ground
+scene.add(Object.assign(new THREE.Mesh(
+  new THREE.PlaneGeometry(8, 8),
+  new THREE.MeshStandardMaterial({ color: 0x111118, roughness: 1 })
+), { rotation: { x: -Math.PI/2, y: 0, z: 0 }, receiveShadow: true }))
+
+// Head sphere
+const headMat = new THREE.MeshStandardMaterial({ color: 0x3a2015, roughness: 0.9 })
+const head = new THREE.Mesh(new THREE.SphereGeometry(0.6, 32, 16), headMat)
+head.position.y = 0.6
+scene.add(head)
+
+// Hair material
+const hairUniforms = {
+  uSunDirection:   { value: new THREE.Vector3(1, 1.2, 0.8).normalize() },
+  uSunColor:       { value: new THREE.Vector3(1.3, 1.25, 1.1) },
+  uAmbientColor:   { value: new THREE.Vector3(0.08, 0.06, 0.12) },
+  uHairColor:      { value: new THREE.Vector3(0.545, 0.353, 0.22) },
+  uRoughness:      { value: 0.25 },
+  uRadialRoughness:{ value: 0.4 },
+  uCoat:           { value: 0.3 },
+  uIOR:            { value: 1.55 },
+  uOffset:         { value: 0.04 },
+  uRandomColor:    { value: 0.2 },
+}
+const hairMat = new THREE.ShaderMaterial({
+  vertexShader, fragmentShader, uniforms: hairUniforms, side: THREE.DoubleSide
+})
+
+// Build and add hair
+let hairMesh = null
+function buildHair() {
+  if (hairMesh) { scene.remove(hairMesh); hairMesh.geometry.dispose() }
+  const count   = parseInt(document.getElementById('count').value)
+  const length  = parseFloat(document.getElementById('length').value)
+  const gravity = parseFloat(document.getElementById('gravity').value)
+  const strands = generateStrands({ count, length, segments: 7, gravity, spread: 0.04 })
+  const geo = buildTubeGeometry(strands, 10, 4, 0.012, 0.003)
+  hairMesh = new THREE.Mesh(geo, hairMat)
+  hairMesh.position.y = 0
+  scene.add(hairMesh)
+}
+
+// ── UI wiring ─────────────────────────────────────────────────────────────────
+function hexToRGB(hex) {
+  const h = hex.replace('#','')
+  return new THREE.Vector3(parseInt(h.slice(0,2),16)/255, parseInt(h.slice(2,4),16)/255, parseInt(h.slice(4,6),16)/255)
+}
+function getSunDir(elDeg, azDeg) {
+  const el = elDeg * Math.PI/180, az = azDeg * Math.PI/180
+  return new THREE.Vector3(Math.cos(el)*Math.sin(az), Math.sin(el), Math.cos(el)*Math.cos(az)).normalize()
+}
+
+document.querySelectorAll('input[type=range]').forEach(el => {
+  const valEl = document.getElementById(el.id + 'V')
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value)
+    const dec = el.step.includes('.') ? (el.step.split('.')[1]?.length ?? 2) : 0
+    valEl.textContent = el.id === 'sunEl' || el.id === 'sunAz' ? v + '°' : v.toFixed(dec)
+
+    switch(el.id) {
+      case 'sunEl': case 'sunAz':
+        hairUniforms.uSunDirection.value = getSunDir(parseFloat(document.getElementById('sunEl').value), parseFloat(document.getElementById('sunAz').value))
+        break
+      case 'sunInt': hairUniforms.uSunColor.value.setScalar(parseFloat(el.value)); break
+      case 'randColor':    hairUniforms.uRandomColor.value = v; break
+      case 'rough':        hairUniforms.uRoughness.value = v; break
+      case 'radRough':     hairUniforms.uRadialRoughness.value = v; break
+      case 'coat':         hairUniforms.uCoat.value = v; break
+      case 'ior':          hairUniforms.uIOR.value = v; break
+      case 'offset':       hairUniforms.uOffset.value = v; break
+      case 'count': case 'length': case 'gravity': buildHair(); break
+    }
+  })
+})
+document.getElementById('hairColor').addEventListener('input', e => {
+  const c = hexToRGB(e.target.value)
+  hairUniforms.uHairColor.value.set(c.x, c.y, c.z)
+})
+
+buildHair()
+
+function animate() {
+  requestAnimationFrame(animate)
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

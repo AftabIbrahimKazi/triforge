@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Attribute + AmbientOcclusion — @st-shader-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d0d0d; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #info {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(0,0,0,0.65); padding: 8px 14px; border-radius: 4px;
+  }
+  #labels { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .label {
+    position: absolute; transform: translateX(-50%);
+    background: rgba(0,0,0,0.6); padding: 2px 7px;
+    border-radius: 3px; font: 10px monospace; color: #eee; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div id="info">
+  Attribute &amp; AmbientOcclusion — @st-shader-core<br>
+  Left: Attribute (vec3 custom paint) &nbsp;|&nbsp; Right: AmbientOcclusion (approximate SSAO)
+</div>
+<div id="labels"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "@st-shader-core": "../../st-shader-core/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {
+  Attribute, AmbientOcclusion,
+  PrincipledBSDF, Emission, MaterialOutput,
+  ColorRamp, RGB, Value, MixShader, LayerWeight
+} from '@st-shader-core'
+
+// ── Renderer ──────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+renderer.shadowMap.enabled = true
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color('#1a1a2e')
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 6)
+
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0, 0)
+controls.update()
+
+// ── Lighting ──────────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight('#ffffff', 0.3))
+const sun = new THREE.DirectionalLight('#fff5e0', 1.2)
+sun.position.set(4, 8, 5)
+sun.castShadow = true
+scene.add(sun)
+
+// ── Helper: create a sphere with a custom "paint" BufferAttribute ─────────────
+function makePaintedSphere() {
+  const geo = new THREE.SphereGeometry(1, 48, 32)
+
+  // Add a vec3 attribute called "paint" that varies colour by vertex normal
+  const positions = geo.attributes.position
+  const paintData = new Float32Array(positions.count * 3)
+  for (let i = 0; i < positions.count; i++) {
+    const nx = positions.getX(i)
+    const ny = positions.getY(i)
+    const nz = positions.getZ(i)
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1
+    // Map normal hemisphere to a warm-to-cool gradient
+    paintData[i * 3 + 0] = Math.max(nx / len, 0)             // Red   — +X faces
+    paintData[i * 3 + 1] = Math.max(ny / len, 0)             // Green — +Y faces (top)
+    paintData[i * 3 + 2] = Math.max(-nz / len * 0.8, 0)      // Blue  — -Z faces
+  }
+  geo.setAttribute('paint', new THREE.BufferAttribute(paintData, 3))
+  return geo
+}
+
+// ── Helper: create a sphere with a scalar "heat" float attribute ──────────────
+function makeHeatSphere() {
+  const geo = new THREE.SphereGeometry(1, 48, 32)
+  const positions = geo.attributes.position
+  const heatData = new Float32Array(positions.count)
+  for (let i = 0; i < positions.count; i++) {
+    const ny = positions.getY(i)
+    // Heat increases toward the top of the sphere
+    heatData[i] = (ny + 1) * 0.5   // [0..1]
+  }
+  geo.setAttribute('heat', new THREE.BufferAttribute(heatData, 1))
+  return geo
+}
+
+// ── Mesh 1: Attribute node reading a vec3 "paint" attribute ──────────────────
+{
+  const attr   = new Attribute('paint', 'vec3')
+  // Wire Vector output (the raw vec3 colour) into an Emission node
+  const emit   = new Emission({ color: attr.output('Vector'), strength: 1.0 })
+  const bsdf   = new PrincipledBSDF({ baseColor: attr.output('Vector'), roughness: 0.6 })
+  const layer  = new LayerWeight(0.5)
+  const mix    = new MixShader({ fac: layer.output('Fresnel'), shader1: bsdf.output('BSDF'), shader2: emit.output('BSDF') })
+  const mat    = new MaterialOutput({ surface: mix.output('BSDF') })
+  mat.compile()
+
+  const sphere = new THREE.Mesh(makePaintedSphere(), mat.material)
+  sphere.position.set(-2.2, 0, 0)
+  sphere.castShadow = true
+  scene.add(sphere)
+}
+
+// ── Mesh 2: Attribute node reading a float "heat" attribute ───────────────────
+{
+  const attr   = new Attribute('heat', 'float')
+  // Use the Fac output (the raw float) in a ColorRamp to map 0→cool, 1→hot
+  const ramp   = new ColorRamp({ fac: attr.output('Fac'), stops: ['#1a237e', '#e53935', '#ff6f00', '#fff9c4'] })
+  const bsdf   = new PrincipledBSDF({ baseColor: ramp.output('Color'), roughness: 0.4, metallic: 0.1 })
+  const mat    = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+
+  const sphere = new THREE.Mesh(makeHeatSphere(), mat.material)
+  sphere.position.set(0, 0, 0)
+  sphere.castShadow = true
+  scene.add(sphere)
+}
+
+// ── Mesh 3: AmbientOcclusion node ────────────────────────────────────────────
+{
+  // AmbientOcclusion approximates SSAO in the fragment shader.
+  // We pass an input color and it darkens it by the computed AO factor.
+  const ao   = new AmbientOcclusion({ color: '#c8d0e0' })
+  ao.parameters.samples  = 12
+  ao.parameters.distance = 0.4
+
+  // Use the Color output (AO-attenuated) for the base color
+  const bsdf = new PrincipledBSDF({ baseColor: ao.output('Color'), roughness: 0.7 })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+
+  const geo    = new THREE.TorusKnotGeometry(0.8, 0.28, 128, 24)
+  const sphere = new THREE.Mesh(geo, mat.material)
+  sphere.position.set(2.2, 0, 0)
+  sphere.castShadow = true
+  scene.add(sphere)
+}
+
+// ── Floor ─────────────────────────────────────────────────────────────────────
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 20),
+  new THREE.MeshStandardMaterial({ color: '#1e1e2a', roughness: 0.9 })
+)
+floor.rotation.x = -Math.PI / 2
+floor.position.y = -1.2
+floor.receiveShadow = true
+scene.add(floor)
+
+// ── Labels ────────────────────────────────────────────────────────────────────
+const labelData = [
+  { text: 'Attribute (vec3 "paint")',  pos: new THREE.Vector3(-2.2, -1.3, 0) },
+  { text: 'Attribute (float "heat")',  pos: new THREE.Vector3( 0,   -1.3, 0) },
+  { text: 'AmbientOcclusion',          pos: new THREE.Vector3( 2.2, -1.3, 0) },
+]
+const labelsEl = document.getElementById('labels')
+function updateLabels() {
+  labelsEl.innerHTML = ''
+  for (const { text, pos } of labelData) {
+    const projected = pos.clone().project(camera)
+    const x = (projected.x *  0.5 + 0.5) * innerWidth
+    const y = (projected.y * -0.5 + 0.5) * innerHeight
+    const div = document.createElement('div')
+    div.className = 'label'
+    div.style.left = `${x}px`
+    div.style.top  = `${y}px`
+    div.textContent = text
+    labelsEl.appendChild(div)
+  }
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate)
+  updateLabels()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>

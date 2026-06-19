@@ -1,0 +1,28 @@
+{
+  "name": "@st-core-types",
+  "version": "0.1.0",
+  "description": "Shared TypeScript interfaces for the st- Three.js ecosystem",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "build": "tsc",
+    "test": "node test/run-tests.js"
+  },
+  "devDependencies": {
+    "@types/three": "^0.165.0",
+    "three": "^0.165.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "three": ">=0.159.0"
+  },
+  "license": "MIT"
+}
