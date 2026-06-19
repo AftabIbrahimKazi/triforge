@@ -1,6 +1,0 @@
-export { HumanGenerator }                        from './HumanGenerator.js'
-export { DEFAULT_PARAMETERS }                    from './core/HumanParameters.js'
-export type { HumanParameters }                  from './core/HumanParameters.js'
-export { buildBodyGeometry }                     from './geometry/BodyGeometry.js'
-export type { BodyGeometryResult }               from './geometry/BodyGeometry.js'
-export { buildSkinMaterial, buildEyeMaterial }   from './material/SkinMaterial.js'

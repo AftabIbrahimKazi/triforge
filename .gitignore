@@ -3,6 +3,9 @@ node_modules/
 # Personal coding standards — local only, never pushed
 My-Coding-Standards/
 
+# Addons — not ready for release yet
+addons/
+
 # Compiled output (each package builds its own dist)
 dist/
 
