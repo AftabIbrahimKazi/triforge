@@ -1,6 +1,6 @@
 {
   "name": "@triforge/animation-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Blender-matched shape keys, armature/bones, and NLA animation for Three.js",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,5 +42,11 @@
   "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   }
 }

@@ -10,6 +10,9 @@ import { GeometryNode, OutputRef, type Inputs, type SocketValue } from '../../co
 export class DistributePointsOnFaces extends GeometryNode {
   readonly nodeType = 'DistributePointsOnFaces'
 
+  /** Output socket names — use these instead of raw strings to avoid runtime surprises. */
+  static readonly SOCKETS = { Points: 'Points' } as const
+
   parameters: {
     /** Points per unit area (approximately). Blender: Density. */
     density: number

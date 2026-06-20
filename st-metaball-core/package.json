@@ -1,6 +1,6 @@
 {
   "name": "@triforge/metaball-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Blender-style metaball system for Three.js — organic blobs with live field evaluation",
   "type": "module",
   "main": "./dist/index.js",
@@ -32,5 +32,11 @@
   "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   }
 }

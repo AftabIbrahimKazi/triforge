@@ -1,6 +1,6 @@
 {
   "name": "@triforge/particle-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Blender-matched particle system for Three.js — Newtonian physics, force fields, emitters, render modes",
   "type": "module",
   "main": "./dist/index.js",
@@ -41,5 +41,11 @@
   "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   }
 }
