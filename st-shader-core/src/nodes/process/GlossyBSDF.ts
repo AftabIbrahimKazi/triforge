@@ -63,6 +63,6 @@ vec3 _st_glossyBSDF(vec3 color, float roughness, vec3 N) {
     const normal    = this._inputs.normal.isConnected()
       ? ctx.outputVar(this._inputs.normal.connection!.node, this._inputs.normal.connection!.name)
       : 'normalize(vNormal)'
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_glossyBSDF(${color}, ${roughness}, ${normal});`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = vec4(_st_glossyBSDF(${color}, ${roughness}, ${normal}), 1.0);`
   }
 }

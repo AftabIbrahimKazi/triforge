@@ -7,10 +7,12 @@ import type { InputSocket } from './InputSocket.js'
 import type { OutputNode } from './OutputNode.js'
 
 export interface CompiledMaterial {
-  vertexShader:   string
-  fragmentShader: string
-  uniforms:       Record<string, { value: unknown }>
-  nodes:          ShaderNode[]
+  vertexShader:      string
+  fragmentShader:    string
+  uniforms:          Record<string, { value: unknown }>
+  nodes:             ShaderNode[]
+  /** True when any node in the graph carries alpha that can read below 1.0 (see ShaderNode.wantsTransparency). */
+  needsTransparency: boolean
 }
 
 /**
@@ -44,10 +46,11 @@ export class CompileContext {
     this.emit()
 
     return {
-      vertexShader:   this.buildVertexShader(),
-      fragmentShader: this.buildFragmentShader(),
-      uniforms:       this._uniforms,
-      nodes:          this.order,
+      vertexShader:      this.buildVertexShader(),
+      fragmentShader:    this.buildFragmentShader(),
+      uniforms:          this._uniforms,
+      nodes:             this.order,
+      needsTransparency: this.order.some(node => node.wantsTransparency()),
     }
   }
 
@@ -68,14 +71,28 @@ export class CompileContext {
    */
   resolveInput(socket: InputSocket<unknown>): string {
     if (socket.connection) {
-      const varName = this.outputVar(socket.connection.node, socket.connection.name)
-      // vec3 (color/shader) → vec2 (vector) implicit conversion, e.g. Mapping.Vector → ImageTexture.vector
-      if (socket.type === 'vector' && socket.connection.type !== 'vector') {
+      const varName  = this.outputVar(socket.connection.node, socket.connection.name)
+      const fromType = socket.connection.type
+      const toType   = socket.type
+      // vec3/vec4 (color/shader) → vec2 (vector) implicit narrowing, e.g. Mapping.Vector → ImageTexture.vector
+      if (toType === 'vector' && fromType !== 'vector') {
         return `(${varName}).xy`
       }
-      // vec2 (vector) → vec3 (color) implicit conversion, e.g. TextureCoordinate.UV → Mapping.vector
-      if (socket.type === 'color' && socket.connection.type === 'vector') {
+      // vec2 (vector) → vec3 (color) implicit widening, e.g. TextureCoordinate.UV → Mapping.vector
+      if (toType === 'color' && fromType === 'vector') {
         return `vec3(${varName}, 0.0)`
+      }
+      // vec4 (shader) → vec3 (color) implicit narrowing — drop alpha, e.g. ShaderToRGB-style consumption
+      if (toType === 'color' && fromType === 'shader') {
+        return `(${varName}).rgb`
+      }
+      // vec3 (color) → vec4 (shader) implicit widening — opaque alpha
+      if (toType === 'shader' && fromType === 'color') {
+        return `vec4(${varName}, 1.0)`
+      }
+      // vec2 (vector) → vec4 (shader) implicit widening — opaque alpha
+      if (toType === 'shader' && fromType === 'vector') {
+        return `vec4(${varName}, 0.0, 1.0)`
       }
       return varName
     }
@@ -226,13 +243,13 @@ export class CompileContext {
 
   private typesCompatible(from: string, to: string): boolean {
     if (from === to) return true
-    // shader and color are both vec3 — compatible
+    // shader (vec4) and color (vec3) freely convert — narrow via .rgb, widen via vec4(v, 1.0)
     if ((from === 'shader' || from === 'color') && (to === 'shader' || to === 'color')) return true
-    // vec3 (color/shader) implicitly narrows to vec2 (vector) via .xy, mirroring Blender's
+    // vec3/vec4 (color/shader) implicitly narrows to vec2 (vector) via .xy, mirroring Blender's
     // Mapping (vector output) → Image Texture Vector panning graph
     if ((from === 'color' || from === 'shader') && to === 'vector') return true
-    // vec2 (vector) implicitly widens to vec3 (color), e.g. Texture Coordinate UV → Mapping.vector
-    if (from === 'vector' && to === 'color') return true
+    // vec2 (vector) implicitly widens to vec3 (color) or vec4 (shader)
+    if (from === 'vector' && (to === 'color' || to === 'shader')) return true
     return false
   }
 
@@ -311,7 +328,7 @@ ${callsBlock}
         return 'vec2(vUv)'
 
       case 'shader':
-        return 'vec3(0.0)'
+        return 'vec4(0.0, 0.0, 0.0, 1.0)'
 
       default:
         return 'vec3(1.0)'

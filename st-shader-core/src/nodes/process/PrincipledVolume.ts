@@ -85,6 +85,6 @@ vec3 _st_principledVolume(
     const emissionStrength  = ctx.resolveInput(this._inputs.emissionStrength)
     const blackbodyIntensity = ctx.resolveInput(this._inputs.blackbodyIntensity)
     const temperature       = ctx.resolveInput(this._inputs.temperature)
-    return `vec3 ${ctx.outputVar(this, 'Volume')} = _st_principledVolume(${color}, ${density}, ${anisotropy}, ${absorptionColor}, ${emissionColor}, ${emissionStrength}, ${blackbodyIntensity}, ${temperature});`
+    return `vec4 ${ctx.outputVar(this, 'Volume')} = vec4(_st_principledVolume(${color}, ${density}, ${anisotropy}, ${absorptionColor}, ${emissionColor}, ${emissionStrength}, ${blackbodyIntensity}, ${temperature}), 1.0);`
   }
 }

@@ -41,8 +41,8 @@ export class ShaderToRGB extends ProcessNode {
     const cv     = ctx.outputVar(this, 'Color')
     const av     = ctx.outputVar(this, 'Alpha')
     return [
-      `vec3  ${cv} = ${shader};`,
-      `float ${av} = 1.0;`,
+      `vec3  ${cv} = (${shader}).rgb;`,
+      `float ${av} = (${shader}).a;`,
     ].join('\n  ')
   }
 }
