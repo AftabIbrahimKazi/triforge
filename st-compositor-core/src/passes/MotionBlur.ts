@@ -1,5 +1,6 @@
 import { BasePass } from '../core/BasePass.js'
 import type { PassRegistry } from '../core/BasePass.js'
+import { glslLoopBound } from '../core/glslLoopBound.js'
 
 export interface MotionBlurOptions {
   /** Number of accumulation samples. Higher = smoother but slower. Default 8. */
@@ -45,7 +46,9 @@ export class MotionBlur extends BasePass {
     if (!ShaderPass) throw new Error('MotionBlur: ShaderPass not found.')
 
     const { samples, velocityScale, maxRadius } = this.parameters
-    const n = Math.max(1, Math.round(samples))
+    // Cap the baked loop bound: finite, integer, 1..64 (matches typical
+    // real-time motion-blur sample budgets; guards against NaN / huge values).
+    const n = glslLoopBound(samples, 1, 64)
 
     const shader = {
       uniforms: {

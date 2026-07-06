@@ -11,6 +11,7 @@ import {
   Vignette, FilmGrain, ColorBalance, HueSaturation,
   BrightnessContrast, Gamma, Exposure, Mix, Pixelate, Sharpen,
   AlphaOver, SetAlpha, ZCombine, SeparateRGBA, CombineRGBA, SSAO, SSR,
+  MotionBlur, LensFlare, GlareStreaks,
 } from '../dist/index.js'
 
 let passed = 0
@@ -374,6 +375,54 @@ test('SSR enabled flag works', () => {
   const p = new SSR()
   p.enabled = false
   assert.strictEqual(p.enabled, false)
+})
+
+// ── SECURITY: GLSL loop bounds are capped to compile-time constants ───────────
+
+console.log('\nSecurity — GLSL loop-bound capping')
+
+// Mock ShaderPass that captures the shader object it is constructed with, so we
+// can read the generated fragmentShader and assert on the baked loop bound.
+function captureFragmentShader(pass) {
+  let captured = null
+  const MockShaderPass = class { constructor(shader) { captured = shader } }
+  pass._buildThree(1920, 1080, { ShaderPass: MockShaderPass })
+  return captured.fragmentShader
+}
+
+// Extract every integer literal used as a `for (... i <= N ...)` / `i < N` bound.
+function loopBounds(src) {
+  const bounds = []
+  const re = /for\s*\(\s*int\s+\w+\s*=\s*\d+\s*;\s*\w+\s*[<>]=?\s*(\d+)\s*;/g
+  let m
+  while ((m = re.exec(src)) !== null) bounds.push(Number(m[1]))
+  return bounds
+}
+
+test('MotionBlur caps a huge samples value into the shader loop bound', () => {
+  const src = captureFragmentShader(new MotionBlur({ samples: 1e9 }))
+  const bounds = loopBounds(src)
+  assert.ok(bounds.length > 0, 'expected a baked loop bound')
+  assert.ok(bounds.every((b) => b <= 64), `loop bound not capped: ${bounds}`)
+})
+
+test('MotionBlur NaN samples does not produce NaN in the shader', () => {
+  const src = captureFragmentShader(new MotionBlur({ samples: NaN }))
+  assert.ok(!/NaN/.test(src), 'NaN leaked into generated GLSL')
+  assert.ok(loopBounds(src).every((b) => b >= 1))
+})
+
+test('LensFlare caps a huge ghosts value into the shader loop bound', () => {
+  const src = captureFragmentShader(new LensFlare({ ghosts: 1e9 }))
+  const bounds = loopBounds(src)
+  assert.ok(bounds.length > 0)
+  assert.ok(bounds.every((b) => b <= 32), `loop bound not capped: ${bounds}`)
+})
+
+test('GlareStreaks caps huge length and streaks values', () => {
+  const src = captureFragmentShader(new GlareStreaks({ length: 1e9, streaks: 1e9 }))
+  assert.ok(loopBounds(src).every((b) => b <= 128), 'length loop not capped')
+  assert.ok(!/NaN|Infinity/.test(src), 'NaN/Infinity leaked into generated GLSL')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { BasePass } from '../core/BasePass.js'
 import type { PassRegistry } from '../core/BasePass.js'
+import { glslLoopBound } from '../core/glslLoopBound.js'
 
 export interface LensFlareOptions {
   /** Number of flare ghosts. Default 6. */
@@ -42,7 +43,8 @@ export class LensFlare extends BasePass {
     if (!ShaderPass) throw new Error('LensFlare: ShaderPass not found.')
 
     const { ghosts, strength, threshold, haloWidth, chromatic } = this.parameters
-    const n = Math.max(1, Math.round(ghosts))
+    // Cap the baked loop bound: finite, integer, 1..32 ghost reflections.
+    const n = glslLoopBound(ghosts, 1, 32)
 
     const shader = {
       uniforms: {

@@ -14,6 +14,7 @@ export { InputSocket }      from './core/InputSocket.js'
 export { OutputSocket }     from './core/OutputSocket.js'
 export { SOCKET_GLSL_TYPE } from './core/SocketType.js'
 export type { SocketType }  from './core/SocketType.js'
+export { isValidGlslIdentifier, assertGlslIdentifier } from './core/glslIdentifier.js'
 
 // ── Compiler ──────────────────────────────────────────────────────────────────
 export { CompileContext }        from './core/CompileContext.js'

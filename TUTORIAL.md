@@ -44,6 +44,20 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 
 ---
 
+## Addons (Local Only — `addons/`, Never Pushed)
+
+Paid, higher-level domain-specific generators built on top of the core packages above.
+Each works with Three.js alone; core packages are optional constructor-injected upgrades.
+See each addon's own `TUTORIAL.md` for full usage.
+
+| Addon | What It Does | Tests |
+|---|---|---|
+| `addons/st-addon-cellfracture` | Blender Cell Fracture — Voronoi/Grid/Radial mesh shattering, impact system, shard mass/volume/CoM, animation presets | 29 |
+| `addons/st-addon-weather` | Procedural weather + day/night — rain, snow, fog, wind, clouds, storm/lightning, hail, sandstorm, blizzard, rainbow, 4 sky modes, wetness/snowCoverage material hooks | 102 |
+| `addons/st-addon-terrain` | Chunked, streaming, LOD terrain — noise/heightmap land shape, seam-free multi-chunk stitching (edge-clamped, not just skirts — exact edge match, not approximate), Web Worker generation, slope/altitude material blend, heightmap edit API. Stage 1 of the 4-package terrain suite (trees/rocks/vegetation next). | 59 |
+
+---
+
 ## Quick Start — Shape + Material
 
 The most common pattern: create a parametric shape and apply a procedural material.
