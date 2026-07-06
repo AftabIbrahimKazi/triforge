@@ -1,6 +1,7 @@
 import { ProcessNode } from '../../core/ProcessNode.js'
 import { ShaderNodeError } from '../../core/ShaderNodeError.js'
 import { ShaderConfig } from '../../core/ShaderConfig.js'
+import { assertGlslIdentifier } from '../../core/glslIdentifier.js'
 import type { NodeMetadata } from '../../core/ShaderNode.js'
 import type { CompileContext } from '../../core/CompileContext.js'
 import type { OutputSocket } from '../../core/OutputSocket.js'
@@ -46,6 +47,7 @@ export class ImageTexture extends ProcessNode {
       })
     }
 
+    assertGlslIdentifier(inputs.uniformName, 'ImageTexture uniformName')
     this.uniformName = inputs.uniformName
     this._inputs     = this.createInputs(inputs as unknown as Record<string, unknown>, { vector: ['vector', null] })
     this._outputs    = this.createOutputs({ Color: 'color', Alpha: 'float' })

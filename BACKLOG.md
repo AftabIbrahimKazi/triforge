@@ -222,6 +222,18 @@ future audits don't re-flag it.
 got a surface pass (grep for `eval`/`Function`/uncapped loops — all clean). A
 fuller review of those is still open.
 
+### Follow-up (2026-07-06) — GLSL injection via texture `uniformName`
+
+FINDINGS.md (Planetarium project) flagged that the `Attribute` fix above missed
+a same-class sibling: `ImageTexture` and `EnvironmentTexture` interpolated their
+required `uniformName` option verbatim into shader source (`uniform sampler2D
+${uniformName};` / `uniform samplerCube ${uniformName};`) with no validation —
+a hostile `uniformName` could inject arbitrary GLSL. **Fixed** — both now call
+`assertGlslIdentifier` at construction, mirroring the `Attribute` fix. 4 new
+security regression tests added to `st-shader-core/test/run-tests.js` (62/62
+passing). Only exploitable if an app passes untrusted input as `uniformName`;
+all current consumers use hardcoded literals.
+
 ---
 
 ## Ecosystem-Wide — Remaining

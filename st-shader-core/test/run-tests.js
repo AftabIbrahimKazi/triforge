@@ -12,6 +12,7 @@ import {
   HairInfo,
   PrincipledHair,
   EnvironmentTexture,
+  ImageTexture,
   Attribute,
   isValidGlslIdentifier,
 } from '../dist/index.js'
@@ -589,6 +590,38 @@ test('SECURITY: Attribute rejects a GLSL-injecting attribute name at constructio
 test('SECURITY: Attribute still accepts a normal attribute name', () => {
   const a = new Attribute('windWeight', 'float')
   if (a.attributeName !== 'windWeight') throw new Error('valid name was mangled/rejected')
+})
+
+test('SECURITY: ImageTexture rejects a GLSL-injecting uniformName at construction', () => {
+  let threw = false
+  try {
+    // eslint-disable-next-line no-new
+    new ImageTexture({ uniformName: 'uTex; } /* pwned */ void main(){' })
+  } catch { threw = true }
+  if (!threw) throw new Error('ImageTexture accepted an injecting uniformName — GLSL injection possible')
+})
+
+test('SECURITY: ImageTexture still accepts a normal uniformName', () => {
+  const it = new ImageTexture({ uniformName: 'uAlbedo' })
+  const mat = new MaterialOutput({ surface: new Emission({ color: it.output('Color') }).output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('uAlbedo')) throw new Error('valid uniformName was mangled/rejected')
+})
+
+test('SECURITY: EnvironmentTexture rejects a GLSL-injecting uniformName at construction', () => {
+  let threw = false
+  try {
+    // eslint-disable-next-line no-new
+    new EnvironmentTexture({ uniformName: 'uEnv; } /* pwned */ void main(){' })
+  } catch { threw = true }
+  if (!threw) throw new Error('EnvironmentTexture accepted an injecting uniformName — GLSL injection possible')
+})
+
+test('SECURITY: EnvironmentTexture still accepts a normal uniformName', () => {
+  const env = new EnvironmentTexture({ uniformName: 'uEnv' })
+  const mat = new MaterialOutput({ surface: new Emission({ color: env.output('Color') }).output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('uEnv')) throw new Error('valid uniformName was mangled/rejected')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────
