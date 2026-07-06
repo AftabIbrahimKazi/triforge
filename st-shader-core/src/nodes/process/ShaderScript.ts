@@ -1,4 +1,5 @@
 import { ProcessNode } from '../../core/ProcessNode.js'
+import { assertGlslIdentifier } from '../../core/glslIdentifier.js'
 import type { NodeMetadata } from '../../core/ShaderNode.js'
 import type { CompileContext } from '../../core/CompileContext.js'
 import type { OutputSocket } from '../../core/OutputSocket.js'
@@ -113,6 +114,7 @@ export class ShaderScript extends ProcessNode {
     const supplied: Record<string, unknown>               = {}
 
     for (const [name, spec] of Object.entries(config.inputs ?? {})) {
+      assertGlslIdentifier(name, 'ShaderScript input name')
       if (Array.isArray(spec)) {
         // ['float'|'color'|'vector'|'shader', defaultValue]
         const [type, defaultVal] = spec
@@ -124,6 +126,10 @@ export class ShaderScript extends ProcessNode {
         defs[name]     = [sock.type, null]
         supplied[name] = sock
       }
+    }
+
+    for (const name of Object.keys(this._outputDecl)) {
+      assertGlslIdentifier(name, 'ShaderScript output name')
     }
 
     this._inputs  = this.createInputs(supplied, defs)

@@ -25,6 +25,11 @@ Color inputs (hex or [r,g,b] array, unconnected) are live uniform vec3 — anima
 Normal map outputs MUST use 'color' type (vec3), NOT 'vector' (vec2).
 Any node input that accepts a normal map MUST be typed 'color', not 'vector'.
 
+'color'/'shader' (vec3) and 'vector' (vec2) sockets are connection-compatible: the
+CompileContext implicitly converts at the connection point (`.xy` narrowing vec3→vec2,
+`vec3(v, 0.0)` widening vec2→vec3), so e.g. `Mapping.Vector` (vec3) can drive
+`ImageTexture.vector` (vec2) directly — no manual conversion node needed.
+
 ---
 
 ## Core Pattern
@@ -137,7 +142,7 @@ MixRGB modes: 'MIX' | 'DARKEN' | 'MULTIPLY' | 'BURN' | 'LIGHTEN' | 'SCREEN' |
 
 | Node | Key Inputs | Outputs |
 |---|---|---|
-| `NormalMap` | fac (float), strength | Normal (color) |
+| `NormalMap` | color (color, from ImageTexture RGB), strength | Normal (color) — tangent-space texture decode, derivative-based TBN |
 | `Bump` | height (float), strength, distance, normal | Normal (color) |
 | `Mapping` | vector, location, rotation (deg), scale | Vector (color) |
 | `VectorMath` | mode, vector, vectorB, scale | Vector (color), Value (float) |

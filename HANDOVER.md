@@ -29,7 +29,7 @@ Paid addons live under `addons/` — gitignored, never pushed until ready.
 
 | Package | Version |
 |---|---|
-| `@triforge/shader-core` | 0.1.1 |
+| `@triforge/shader-core` | 0.2.0 |
 | `@triforge/geometry-nodes` | 0.1.1 |
 | `@triforge/modifier-core` | 0.1.1 |
 | `@triforge/curve-core` | 0.1.1 |

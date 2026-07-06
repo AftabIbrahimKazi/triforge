@@ -252,14 +252,21 @@ const curves = new RGBCurves({ color: ramp.output('Color'), fac: 1.0 })
 ### Vector Nodes
 
 ```javascript
-// NormalMap — convert a color map to surface normals
-const nmap = new NormalMap({ fac: noise.output('Fac'), strength: 1.0 })
+// NormalMap — decode a tangent-space normal texture into a surface normal
+// (no vertex tangent attribute needed — uses a derivative-based TBN frame)
+const normalTex = new ImageTexture({ uniformName: 'uNormalMap' })
+const nmap = new NormalMap({ color: normalTex.output('Color'), strength: 1.0 })
+// mat.compile(); mat.material.uniforms.uNormalMap = { value: normalMapTexture }
 
-// Bump — generate normals from a height map
+// Bump — generate normals from a height map (procedural height, not a texture)
 const bump = new Bump({ height: bw.output('Val'), strength: 1.5, distance: 0.1 })
 
-// Mapping — transform UV coordinates (location, rotation, scale)
+// Mapping — transform UV coordinates (location, rotation, scale). Output type (vec3)
+// is auto-converted when connected into a vector (vec2) input like ImageTexture.vector,
+// so this is also how UV panning works — no separate "UV pan" node required.
+// location/rotation/scale are live uniforms: map.parameters.location = [x, y, 0] to animate.
 const map = new Mapping({ vector: texCoord.output('UV'), scale: [2, 2, 1] })
+const pannedTex = new ImageTexture({ uniformName: 'uAlbedo', vector: map.output('Vector') })
 
 // VectorMath — math operations on vectors
 const vm = new VectorMath({ mode: 'NORMALIZE', vector: geom.output('Normal') })
