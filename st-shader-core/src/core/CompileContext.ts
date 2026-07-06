@@ -86,9 +86,11 @@ export class CompileContext {
           const rgb: number[] = typeof raw === 'string'
             ? CompileContext.hexToRgbArray(raw)
             : (Array.isArray(raw) ? raw as number[] : [1, 1, 1])
-          this._uniforms[socket.uniformName] = { value: rgb }
+          // Guard against NaN/Infinity reaching the GPU uniform.
+          this._uniforms[socket.uniformName] = { value: rgb.map(n => Number.isFinite(n) ? n : 0) }
         } else {
-          this._uniforms[socket.uniformName] = { value: socket.defaultValue as number }
+          const n = socket.defaultValue as number
+          this._uniforms[socket.uniformName] = { value: Number.isFinite(n) ? n : 0 }
         }
       }
       return socket.uniformName
@@ -294,8 +296,11 @@ ${callsBlock}
 
   private toLiteral(value: unknown, type: string): string {
     switch (type) {
-      case 'float':
-        return (typeof value === 'number' ? value : 0).toFixed(4)
+      case 'float': {
+        // Guard against NaN/Infinity reaching the shader source as an invalid GLSL literal.
+        const n = typeof value === 'number' && Number.isFinite(value) ? value : 0
+        return n.toFixed(4)
+      }
 
       case 'color':
         return typeof value === 'string'

@@ -563,6 +563,39 @@ test('NormalMap strength=0 zeroes out the xy perturbation, leaving geometry norm
   if (result.uniforms[strengthUniform].value !== 0) throw new Error('strength value wrong')
 })
 
+// ── Finite-Number Guard Tests ─────────────────────────────────────────────────
+
+test('SECURITY: NaN float parameter is sanitized to 0 rather than reaching GLSL as "NaN"', () => {
+  const coord   = new TextureCoordinate()
+  const mapping = new Mapping({ vector: coord.output('UV'), location: [NaN, 0, 0] })
+  const tex     = new ImageTexture({ uniformName: 'uNanTest', vector: mapping.output('Vector') })
+  const bsdf    = new PrincipledBSDF({ baseColor: tex.output('Color') })
+  const mat     = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result  = mat.compile()
+  if (result.fragmentShader.includes('NaN')) throw new Error('NaN literal leaked into shader source')
+  const locUniform = Object.keys(result.uniforms).find(k => k.includes('location'))
+  if (!locUniform) throw new Error('location uniform missing')
+  if (!Number.isFinite(result.uniforms[locUniform].value[0])) throw new Error('NaN uniform value leaked')
+})
+
+test('SECURITY: Infinity strength parameter is sanitized rather than reaching GLSL uniform', () => {
+  const nm = new NormalMap({ strength: Infinity })
+  const bsdf = new PrincipledBSDF({ normal: nm.output('Normal') })
+  const mat = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  const strengthUniform = Object.keys(result.uniforms).find(k => k.includes('strength'))
+  if (!Number.isFinite(result.uniforms[strengthUniform].value)) throw new Error('Infinity uniform value leaked')
+})
+
+test('SECURITY: setting parameters.value to NaN post-compile is sanitized, not passed through to the GPU uniform', () => {
+  const noise = new NoiseTexture({ scale: 2.0 })
+  const bsdf  = new PrincipledBSDF({ baseColor: noise.output('Color') })
+  const mat   = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+  noise.parameters.scale = NaN
+  if (!Number.isFinite(noise.parameters.scale)) throw new Error('NaN parameter value leaked through live setter')
+})
+
 // ── Color Uniform Tests ───────────────────────────────────────────────────────
 
 test('color input creates uniform vec3 declaration in fragment shader', () => {
