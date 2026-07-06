@@ -97,6 +97,14 @@ export abstract class ShaderNode {
   }
 
   /**
+   * Whether this node's contribution to the compiled material requires
+   * `transparent: true` on the resulting THREE.ShaderMaterial (e.g. a
+   * `shader`-socket alpha channel that can read below 1.0).
+   * Override in nodes that carry alpha semantics — see PrincipledBSDF.
+   */
+  wantsTransparency(): boolean { return false }
+
+  /**
    * Returns the named output socket.
    * Throws ShaderNodeError if the socket does not exist.
    */

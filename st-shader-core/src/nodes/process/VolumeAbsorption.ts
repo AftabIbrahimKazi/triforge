@@ -48,6 +48,6 @@ vec3 _st_volumeAbsorption(vec3 color, float density) {
   compileCall(ctx: CompileContext): string {
     const color   = ctx.resolveInput(this._inputs.color)
     const density = ctx.resolveInput(this._inputs.density)
-    return `vec3 ${ctx.outputVar(this, 'Volume')} = _st_volumeAbsorption(${color}, ${density});`
+    return `vec4 ${ctx.outputVar(this, 'Volume')} = vec4(_st_volumeAbsorption(${color}, ${density}), 1.0);`
   }
 }

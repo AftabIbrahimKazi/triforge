@@ -55,6 +55,6 @@ vec3 _st_volumeScatter(vec3 color, float density, float anisotropy) {
     const color      = ctx.resolveInput(this._inputs.color)
     const density    = ctx.resolveInput(this._inputs.density)
     const anisotropy = ctx.resolveInput(this._inputs.anisotropy)
-    return `vec3 ${ctx.outputVar(this, 'Volume')} = _st_volumeScatter(${color}, ${density}, ${anisotropy});`
+    return `vec4 ${ctx.outputVar(this, 'Volume')} = vec4(_st_volumeScatter(${color}, ${density}, ${anisotropy}), 1.0);`
   }
 }

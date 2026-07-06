@@ -12,7 +12,7 @@ import type { SocketType } from '../../core/SocketType.js'
  *   'float'  → float   (uniform or literal)
  *   'color'  → vec3    (uniform or literal hex / [r,g,b])
  *   'vector' → vec2    (UV coordinates)
- *   'shader' → vec3    (BSDF connection)
+ *   'shader' → vec4    (BSDF connection, rgb + alpha)
  */
 export type ScriptInputDecl = ['float' | 'color' | 'vector' | 'shader', unknown]
 
@@ -63,7 +63,7 @@ export interface ShaderScriptConfig {
  * Inside the GLSL body:
  *   • Input sockets are available as local variables with the exact name you declared.
  *   • Output sockets must be assigned by name before the block ends.
- *   • GLSL types: 'float' → float, 'color'/'shader' → vec3, 'vector' → vec2
+ *   • GLSL types: 'float' → float, 'color' → vec3, 'shader' → vec4, 'vector' → vec2
  *
  * @example
  * const ripple = new ShaderScript({
@@ -186,12 +186,14 @@ export class ShaderScript extends ProcessNode {
   private _socketGlslType(type: SocketType): string {
     if (type === 'float')  return 'float'
     if (type === 'vector') return 'vec2'
-    return 'vec3'  // 'color' | 'shader'
+    if (type === 'shader') return 'vec4'
+    return 'vec3'  // 'color'
   }
 
   private _declGlslType(type: string): string {
     if (type === 'float')  return 'float'
     if (type === 'vector') return 'vec2'
-    return 'vec3'  // 'color' | 'shader'
+    if (type === 'shader') return 'vec4'
+    return 'vec3'  // 'color'
   }
 }
