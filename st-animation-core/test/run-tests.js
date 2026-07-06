@@ -8,6 +8,7 @@ import {
   SkinBinding, computeEnvelopeWeights,
   NLATrack, NLAEditor,
   TrackToConstraint, CopyRotationConstraint, CopyLocationConstraint,
+  ExpressionDriver,
 } from '../dist/index.js'
 import * as THREE from 'three'
 
@@ -678,6 +679,104 @@ test('CopyLocationConstraint: partial influence interpolates', () => {
   c.apply(dst, new THREE.Matrix4())
 
   approx(dst.parameters.locationX, 5, 0.01)
+})
+
+// ── ExpressionDriver (SafeExpression, no eval/Function) ───────────────────────
+console.log('\nExpressionDriver')
+
+test('ExpressionDriver: basic arithmetic and precedence', () => {
+  const target = { x: 0 }
+  const d = new ExpressionDriver(target, 'x', '2 + 3 * 4')
+  d.update(0)
+  approx(target.x, 14)
+})
+
+test('ExpressionDriver: uses t, and Math functions/constants work', () => {
+  const target = { y: 0 }
+  const d = new ExpressionDriver(target, 'y', 'sin(t * PI)')
+  d.update(0.5) // sin(0.5*PI) = 1
+  approx(target.y, 1)
+})
+
+test('ExpressionDriver: reads current value v', () => {
+  const target = { v0: 10 }
+  const d = new ExpressionDriver(target, 'v0', 'v + 5')
+  d.update(0)
+  approx(target.v0, 15)
+  d.update(0) // now v = 15
+  approx(target.v0, 20)
+})
+
+test('ExpressionDriver: custom variables injected', () => {
+  const target = { z: 0 }
+  const d = new ExpressionDriver(target, 'z', 'amp * cos(0)', { variables: { amp: 3 } })
+  d.update(0)
+  approx(target.z, 3)
+})
+
+test('ExpressionDriver: frame variable uses fps', () => {
+  const target = { f: 0 }
+  const d = new ExpressionDriver(target, 'f', 'frame', { fps: 24 })
+  d.update(2) // 2s * 24fps = 48
+  approx(target.f, 48)
+})
+
+test('ExpressionDriver: ternary and comparison', () => {
+  const target = { g: 0 }
+  const d = new ExpressionDriver(target, 'g', 't > 1 ? 100 : 0')
+  d.update(0.5); approx(target.g, 0)
+  d.update(2);   approx(target.g, 100)
+})
+
+test('ExpressionDriver: setExpression recompiles', () => {
+  const target = { h: 0 }
+  const d = new ExpressionDriver(target, 'h', '1')
+  d.update(0); approx(target.h, 1)
+  d.setExpression('2 * 5')
+  d.update(0); approx(target.h, 10)
+})
+
+test('ExpressionDriver: enabled=0 leaves target untouched', () => {
+  const target = { k: 7 }
+  const d = new ExpressionDriver(target, 'k', '999')
+  d.parameters.enabled = 0
+  d.update(0)
+  approx(target.k, 7)
+})
+
+// SECURITY: arbitrary code / global access must NOT execute — driver goes inert.
+
+test('SECURITY: property access on globals does not execute (driver inert)', () => {
+  globalThis.__pwned = false
+  const target = { s: 5 }
+  // Would set __pwned via comma/assignment if this were new Function().
+  const d = new ExpressionDriver(target, 's', 'globalThis.__pwned = true')
+  d.update(0)
+  assert(globalThis.__pwned === false, 'global was mutated — code executed!')
+  assert(target.s === 5, 'target changed on an invalid expression')
+  delete globalThis.__pwned
+})
+
+test('SECURITY: unknown identifier is a compile error (inert), not a runtime lookup', () => {
+  const target = { s: 5 }
+  const d = new ExpressionDriver(target, 's', 'fetch')
+  d.update(0)
+  approx(target.s, 5) // unchanged — expression rejected
+})
+
+test('SECURITY: function calls to non-whitelisted names rejected', () => {
+  const target = { s: 5 }
+  const d = new ExpressionDriver(target, 's', 'constructor("return 1")')
+  d.update(0)
+  approx(target.s, 5)
+})
+
+test('SECURITY: malicious variable name cannot inject code', () => {
+  const target = { s: 0 }
+  // Previously the variable KEYS were interpolated into generated source.
+  const d = new ExpressionDriver(target, 's', 't', { variables: { 'a=1;globalThis.y': 9 } })
+  d.update(1)
+  approx(target.s, 1) // 't' still evaluates; the bad var name is simply never referenced
 })
 
 // ── Summary ──────────────────────────────────────────────────────────────────

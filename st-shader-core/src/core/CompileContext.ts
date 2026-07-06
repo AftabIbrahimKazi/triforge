@@ -1,6 +1,7 @@
 import { ShaderNodeError } from './ShaderNodeError.js'
 import { ShaderConfig } from './ShaderConfig.js'
 import { SOCKET_GLSL_TYPE } from './SocketType.js'
+import { assertGlslIdentifier } from './glslIdentifier.js'
 import type { ShaderNode } from './ShaderNode.js'
 import type { InputSocket } from './InputSocket.js'
 import type { OutputNode } from './OutputNode.js'
@@ -123,8 +124,13 @@ export class CompileContext {
       this.emitDefs(node)
       const call = node.compileCall(this).trim()
       if (call) this.calls.push(call)
-      // Collect vertex attribute injections from this node
+      // Collect vertex attribute injections from this node. Both the attribute
+      // name and the varying name are emitted verbatim into GLSL source, so
+      // both must be validated here — this is the single chokepoint covering
+      // every current and future vertexInjections() implementor.
       for (const inj of node.vertexInjections()) {
+        assertGlslIdentifier(inj.attrName, `${node.nodeType} vertex attribute name`)
+        assertGlslIdentifier(inj.varyingName, `${node.nodeType} varying name`)
         if (!this._vertexInjections.has(inj.varyingName)) {
           this._vertexInjections.set(inj.varyingName, { attrName: inj.attrName, attrType: inj.attrType })
         }

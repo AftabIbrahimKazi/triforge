@@ -1,6 +1,7 @@
 import { InputNode } from '../../core/InputNode.js'
 import type { NodeMetadata } from '../../core/ShaderNode.js'
 import type { CompileContext } from '../../core/CompileContext.js'
+import { assertGlslIdentifier } from '../../core/glslIdentifier.js'
 
 /**
  * Attribute — Blender "Attribute" input node equivalent.
@@ -38,7 +39,13 @@ export class Attribute extends InputNode {
   constructor(attributeName: string, attributeType: 'float' | 'vec3' = 'vec3') {
     super('Attribute')
 
-    // SECURITY: sanitize the attribute name for safe use in GLSL identifiers
+    // SECURITY: the attribute name is emitted verbatim into the vertex shader
+    // (`attribute <type> <attributeName>;` and `<varying> = <attributeName>;`),
+    // so it must be a valid GLSL identifier — reject anything else here for a
+    // clear early error. CompileContext re-validates at emit time as the
+    // authoritative boundary. The varying name uses a sanitized copy so it is
+    // always safe regardless.
+    assertGlslIdentifier(attributeName, 'Attribute name')
     this._safeAttrName = attributeName.replace(/[^a-zA-Z0-9_]/g, '_')
     this.attributeName = attributeName
     this.parameters.attributeType = attributeType === 'float' ? 1 : 0

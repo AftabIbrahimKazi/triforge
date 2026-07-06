@@ -12,6 +12,8 @@ import {
   HairInfo,
   PrincipledHair,
   EnvironmentTexture,
+  Attribute,
+  isValidGlslIdentifier,
 } from '../dist/index.js'
 
 ShaderConfig.errorLevel = 'verbose'
@@ -562,6 +564,31 @@ test('connected color input does not create a uniform (baked literal path)', () 
   const result = mat.compile()
   const colorUniforms = Object.keys(result.uniforms).filter(k => k.includes('baseColor'))
   if (colorUniforms.length > 0) throw new Error('Connected color input should not create a uniform')
+})
+
+// ── SECURITY: GLSL identifier validation (attribute-name injection) ───────────
+
+test('isValidGlslIdentifier accepts plain identifiers, rejects unsafe ones', () => {
+  if (!isValidGlslIdentifier('foam')) throw new Error('rejected a valid name')
+  if (!isValidGlslIdentifier('my_attr2')) throw new Error('rejected a valid name')
+  if (isValidGlslIdentifier('gl_Position')) throw new Error('accepted gl_ reserved')
+  if (isValidGlslIdentifier('a__b')) throw new Error('accepted double underscore')
+  if (isValidGlslIdentifier('2bad')) throw new Error('accepted digit-start')
+  if (isValidGlslIdentifier('a; } void main(){')) throw new Error('accepted injection')
+})
+
+test('SECURITY: Attribute rejects a GLSL-injecting attribute name at construction', () => {
+  let threw = false
+  try {
+    // eslint-disable-next-line no-new
+    new Attribute('x; } void main() { gl_FragColor = vec4(1.0); //', 'float')
+  } catch { threw = true }
+  if (!threw) throw new Error('Attribute accepted an injecting name — GLSL injection possible')
+})
+
+test('SECURITY: Attribute still accepts a normal attribute name', () => {
+  const a = new Attribute('windWeight', 'float')
+  if (a.attributeName !== 'windWeight') throw new Error('valid name was mangled/rejected')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────

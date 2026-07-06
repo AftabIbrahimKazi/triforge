@@ -1,5 +1,6 @@
 import { BasePass } from '../core/BasePass.js'
 import type { PassRegistry } from '../core/BasePass.js'
+import { glslLoopBound } from '../core/glslLoopBound.js'
 
 export interface GlareStreaksOptions {
   /** Luminance threshold — pixels below this don't streak. Blender: Glare → Threshold. Default 0.8. */
@@ -45,7 +46,12 @@ export class GlareStreaks extends BasePass {
     const ShaderPass = reg['ShaderPass'] as (new (s: unknown) => unknown) | undefined
     if (!ShaderPass) throw new Error('GlareStreaks: ShaderPass not found.')
 
-    const { threshold, strength, streaks, length, angle, fade } = this.parameters
+    const { threshold, strength, length, angle, fade } = this.parameters
+    // Cap both baked loop bounds: streak count (1..16) and per-streak sample
+    // length (1..128) — both are interpolated into generated GLSL / unrolled
+    // JS below, so both must be finite compile-time-bounded integers.
+    const streaks = glslLoopBound(this.parameters.streaks, 1, 16)
+    const sampleLength = glslLoopBound(length, 1, 128)
 
     // Build direction vectors for each streak
     const dirs: string[] = []
@@ -82,7 +88,7 @@ export class GlareStreaks extends BasePass {
           vec4 acc  = vec4(0.0);
           float att = 1.0;
           vec2 step = dir / resolution;
-          for (int i = 1; i <= ${Math.max(1, Math.round(length))}; i++) {
+          for (int i = 1; i <= ${sampleLength}; i++) {
             vec2 uv   = vUv + step * float(i) * strength;
             vec4 samp = texture2D(tDiffuse, clamp(uv, 0.0, 1.0));
             float lum = luminance(samp.rgb);

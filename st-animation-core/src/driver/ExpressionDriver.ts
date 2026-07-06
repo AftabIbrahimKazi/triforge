@@ -1,16 +1,22 @@
+import { compileExpression, type CompiledExpression } from './SafeExpression.js'
+
 /**
  * ExpressionDriver — drives any numeric parameter with a math expression.
  * Blender: Drivers panel (F-Curve > Driver type: Scripted Expression).
  *
- * The expression is a JS math string that may reference:
+ * The expression is a math string that may reference:
  *   - `t`       — current time (seconds)
  *   - `v`       — current value of the target parameter at eval time
  *   - `frame`   — current frame (t * fps)
  *   - Any key from `variables` map passed in the constructor
- *   - All Math functions (sin, cos, abs, floor, ceil, etc.)
+ *   - Whitelisted Math functions (sin, cos, abs, floor, ceil, min, max, ...)
+ *     and constants (PI, E, ...)
  *
- * Security: expressions are compiled with `new Function` in a closure that
- * only exposes the listed bindings — global scope is not accessible.
+ * Security: expressions are compiled by SafeExpression — a self-contained
+ * math parser with a whitelist of functions/variables. Arbitrary JavaScript
+ * (property access, assignment, globals) is a compile error, never executed.
+ * This mirrors Blender, which likewise restricts scripted-expression drivers
+ * to a safe namespace rather than evaluating arbitrary Python.
  *
  * Usage:
  *   const driver = new ExpressionDriver(mesh.rotation, 'y', 'sin(t * 2) * 0.5')
@@ -35,8 +41,10 @@ export class ExpressionDriver {
 
   private _target:   Record<string, number>
   private _prop:     string
-  private _fn:       ((math: typeof Math, t: number, v: number, frame: number, vars: Record<string, number>) => number) | null = null
+  private _fn:       CompiledExpression | null = null
   private _expr:     string
+  /** Reused per-frame scope object — no allocation inside update(). */
+  private _scope:    Record<string, number> = { t: 0, v: 0, frame: 0 }
 
   constructor(
     target:     Record<string, number>,
@@ -71,24 +79,21 @@ export class ExpressionDriver {
    */
   update(t: number): void {
     if (this.parameters.enabled < 0.5 || this._fn === null) return
-    const frame = t * this.parameters.fps
-    const v     = this._target[this._prop] ?? 0
-    this._target[this._prop] = this._fn(Math, t, v, frame, this.variables)
+    const scope = this._scope
+    scope.t     = t
+    scope.v     = this._target[this._prop] ?? 0
+    scope.frame = t * this.parameters.fps
+    for (const key in this.variables) {
+      scope[key] = this.variables[key]
+    }
+    this._target[this._prop] = this._fn(scope)
   }
 
   private _compile(expr: string): void {
     try {
-      // Expose Math, t, v, frame, and each variable key
-      const mathKeys = Object.getOwnPropertyNames(Math).join(',')
-      // eslint-disable-next-line no-new-func
-      this._fn = new Function(
-        'Math', 't', 'v', 'frame', 'vars',
-        // Expose all Math methods (sin, cos, abs, floor...) and custom vars as bare names
-        `const {${mathKeys}} = Math;` +
-        (Object.keys(this.variables).length ? `const {${Object.keys(this.variables).join(',')}} = vars;` : '') +
-        `return (${expr});`,
-      ) as unknown as (math: typeof Math, t: number, v: number, frame: number, vars: Record<string, number>) => number
+      this._fn = compileExpression(expr, ['t', 'v', 'frame', ...Object.keys(this.variables)])
     } catch {
+      // Invalid expression → driver is inert (same behavior as before).
       this._fn = null
     }
   }
