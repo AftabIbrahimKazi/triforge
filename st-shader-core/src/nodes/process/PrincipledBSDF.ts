@@ -47,7 +47,7 @@ float _st_geo(float NdotX, float r) {
   float k = (r + 1.0) * (r + 1.0) / 8.0;
   return NdotX / max(NdotX * (1.0 - k) + k, 1e-7);
 }
-vec3 _st_principledBSDF(vec3 base, float metallic, float roughness, float ior, float alpha, vec3 N) {
+vec3 _st_principledBSDF(vec3 base, float metallic, float roughness, float ior, vec3 N) {
   vec3  V     = normalize(cameraPosition - vPosition);
   vec3  L     = normalize(uSunDirection);
   vec3  H     = normalize(L + V);
@@ -87,10 +87,25 @@ vec3 _st_principledBSDF(vec3 base, float metallic, float roughness, float ior, f
   getOutputSockets() { return this._outputs }
   compileDefs()      { return this.glslFunction ?? PrincipledBSDF.glslFunction }
 
+  /**
+   * Alpha has no channel of its own in the underlying vec3 lighting function —
+   * it's applied as the vec4 alpha component at the call site instead (see
+   * compileCall). transparent:true is needed whenever alpha can read below 1.0:
+   * a non-default literal, or any live/connected value (conservatively true).
+   */
+  wantsTransparency(): boolean {
+    const alphaSocket = this._inputs.alpha
+    if (alphaSocket.isConnected()) return true
+    const v = alphaSocket.defaultValue
+    return typeof v === 'number' && v < 1.0
+  }
+
   compileCall(ctx: CompileContext): string {
     const normal = this._inputs.normal.isConnected()
       ? ctx.outputVar(this._inputs.normal.connection!.node, this._inputs.normal.connection!.name)
       : 'normalize(vNormal)'
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_principledBSDF(${ctx.resolveInput(this._inputs.baseColor)}, ${ctx.resolveInput(this._inputs.metallic)}, ${ctx.resolveInput(this._inputs.roughness)}, ${ctx.resolveInput(this._inputs.ior)}, ${ctx.resolveInput(this._inputs.alpha)}, ${normal});`
+    const rgb   = `_st_principledBSDF(${ctx.resolveInput(this._inputs.baseColor)}, ${ctx.resolveInput(this._inputs.metallic)}, ${ctx.resolveInput(this._inputs.roughness)}, ${ctx.resolveInput(this._inputs.ior)}, ${normal})`
+    const alpha = ctx.resolveInput(this._inputs.alpha)
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = vec4(${rgb}, ${alpha});`
   }
 }

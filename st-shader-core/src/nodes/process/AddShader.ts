@@ -25,8 +25,8 @@ export class AddShader extends ProcessNode {
   }
 
   static glslFunction = `
-vec3 _st_addShader(vec3 a, vec3 b) {
-  return a + b;
+vec4 _st_addShader(vec4 a, vec4 b) {
+  return vec4(a.rgb + b.rgb, max(a.a, b.a));
 }`
 
   private readonly _inputs:  Record<string, import('../../core/InputSocket.js').InputSocket<unknown>>
@@ -48,6 +48,6 @@ vec3 _st_addShader(vec3 a, vec3 b) {
   compileCall(ctx: CompileContext): string {
     const s1 = ctx.resolveInput(this._inputs.shader1)
     const s2 = ctx.resolveInput(this._inputs.shader2)
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_addShader(${s1}, ${s2});`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = _st_addShader(${s1}, ${s2});`
   }
 }

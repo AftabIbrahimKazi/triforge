@@ -167,6 +167,6 @@ vec3 _st_principledHair(
       ? ctx.outputVar(this._inputs.tangent.connection!.node, this._inputs.tangent.connection!.name)
       : 'normalize(vStrandTangent)'  // fallback: read attribute directly if not connected
 
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_principledHair(${color}, ${roughness}, ${radialRoughness}, ${coat}, ${ior}, ${offset}, ${randomColor}, ${randomRoughness}, ${random}, ${tangent});`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = vec4(_st_principledHair(${color}, ${roughness}, ${radialRoughness}, ${coat}, ${ior}, ${offset}, ${randomColor}, ${randomRoughness}, ${random}, ${tangent}), 1.0);`
   }
 }

@@ -35,7 +35,7 @@ export class MixShader extends ProcessNode {
   }
 
   static glslFunction = `
-vec3 _st_mixShader(float fac, vec3 a, vec3 b) {
+vec4 _st_mixShader(float fac, vec4 a, vec4 b) {
   return mix(a, b, clamp(fac, 0.0, 1.0));
 }`
 
@@ -60,6 +60,6 @@ vec3 _st_mixShader(float fac, vec3 a, vec3 b) {
     const fac     = ctx.resolveInput(this._inputs.fac)
     const shader1 = ctx.resolveInput(this._inputs.shader1)
     const shader2 = ctx.resolveInput(this._inputs.shader2)
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_mixShader(${fac}, ${shader1}, ${shader2});`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = _st_mixShader(${fac}, ${shader1}, ${shader2});`
   }
 }
