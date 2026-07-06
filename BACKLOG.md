@@ -267,6 +267,23 @@ monorepo, just undocumented. The remaining open items are now closed:
 passing). Version bumped to 0.2.0 (feature-level, not a patch) per the
 FINDINGS.md release checklist.
 
+### Follow-up (2026-07-07) — root CLAUDE.md Security Rule gap in the 0.2.0 work above
+
+The 0.2.0 change above added new numeric inputs (`Mapping.location/rotation/scale`,
+`NormalMap.strength`) without following the root CLAUDE.md Security Rule "ALWAYS
+validate numeric parameters are finite numbers before use in GLSL uniforms" —
+existing precedent for this guard already existed in `AmbientOcclusion.ts`/
+`RayPortal.ts` (`Number.isFinite(...)`) but wasn't applied here. **Fixed** — added
+`finiteOr()`/`sanitizeVec3()` at the actual uniform-seeding chokepoints:
+`ShaderNode.createInputs` (initial `parameters` population), `ShaderNode.
+_wireParameters` (live GSAP-style setter path), and `CompileContext.resolveInput`/
+`toLiteral` (the point a socket's `defaultValue` first seeds a GPU uniform or a
+baked GLSL literal — this was the actual gap; sanitizing `parameters` alone
+wasn't enough since `resolveInput` reads `socket.defaultValue` directly). A
+`NaN`/`Infinity` input now becomes `0` instead of leaking `"NaN"`/`"Infinity"`
+into shader source or a GPU uniform. 3 new security regression tests (71/71
+passing).
+
 ---
 
 ## Ecosystem-Wide — Remaining
