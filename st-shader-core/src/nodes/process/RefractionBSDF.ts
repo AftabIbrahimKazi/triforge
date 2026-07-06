@@ -60,6 +60,6 @@ vec3 _st_refractionBSDF(vec3 color, float roughness, float ior, vec3 N) {
     const normal    = this._inputs.normal.isConnected()
       ? ctx.outputVar(this._inputs.normal.connection!.node, this._inputs.normal.connection!.name)
       : 'normalize(vNormal)'
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_refractionBSDF(${color}, ${roughness}, ${ior}, ${normal});`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = vec4(_st_refractionBSDF(${color}, ${roughness}, ${ior}, ${normal}), 1.0);`
   }
 }

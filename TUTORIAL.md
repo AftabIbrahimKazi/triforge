@@ -210,6 +210,21 @@ const meshA = new THREE.Mesh(geoA, mat.material)
 const meshB = new THREE.Mesh(geoB, mat.material)
 ```
 
+### Transparency / Alpha
+
+`PrincipledBSDF`'s `alpha` input reaches the compiled material end-to-end — set it below 1.0 (a literal, or a connected socket like `Fresnel`) and the mesh renders with real transparency:
+
+```javascript
+const bsdf = new PrincipledBSDF({ baseColor: '#66ccff', alpha: 0.5 })
+const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+mat.compile()
+// mat.material.transparent === true, automatically
+```
+
+`transparent` is set automatically on the compiled `THREE.ShaderMaterial` whenever `alpha` is a literal below 1.0 or connected to another node (e.g. a Fresnel-driven rim-fade) — you never need to set it by hand. Leaving `alpha` unset keeps the material fully opaque, exactly as before.
+
+This works because every `shader` socket (the type `BSDF` outputs use) carries a vec4 (RGB + alpha), not just RGB — so alpha flows from `PrincipledBSDF` through `AddShader`/`MixShader`/`ShaderToRGB` to `MaterialOutput` like any other channel.
+
 ### Animated Materials
 
 Use `AnimatedNoiseTexture` and inject a `time` uniform after compile:

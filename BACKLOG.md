@@ -284,6 +284,65 @@ wasn't enough since `resolveInput` reads `socket.defaultValue` directly). A
 into shader source or a GPU uniform. 3 new security regression tests (71/71
 passing).
 
+### Follow-up (2026-07-07) — correction: FINDINGS.md #1 (alpha) was NOT actually fixed — now properly fixed
+
+The 0.2.0 follow-up above claimed finding #1 (per-fragment alpha through
+`MaterialOutput`) "turned out to already be implemented" — **that was wrong.**
+Re-verification against the published 0.2.1 package found the fix only ever
+landed on `MaterialOutput.toPhysicalMaterial()` (the `MeshPhysicalMaterial`
+conversion path, reading BSDF constructor literals directly), which node
+graphs never touch. The actual `compile()` → `THREE.ShaderMaterial` path —
+the one every real graph uses — still hardcoded `gl_FragColor = vec4(sv,
+1.0)`, and `_st_principledBSDF`'s `alpha` parameter was accepted but never
+referenced in the function body. The socket, the uniform, and the parameter
+all existed; the value went nowhere. Repo-fixed ≠ shipped struck twice —
+first with finding #6's npm-publish gap, now with a fix that was never
+actually wired to the code path it claimed to fix.
+
+**Properly fixed now:** `shader` sockets widened from vec3 to **vec4**
+(`SOCKET_GLSL_TYPE.shader`, `st-shader-core/src/core/SocketType.ts`) so alpha
+has an actual channel to travel through end-to-end:
+
+- `CompileContext.resolveInput`/`typesCompatible`/`toLiteral` — added
+  color(vec3)↔shader(vec4) conversions (`.rgb` narrow, `vec4(v, 1.0)` widen)
+  alongside the existing vector(vec2) conversions.
+- `PrincipledBSDF` — the lighting function keeps its vec3 signature (alpha
+  dropped from the function params, it never used it); `compileCall` now
+  assembles `vec4(rgb, alpha)` at the call site.
+- Every other shader-producing node (`DiffuseBSDF`, `GlossyBSDF`, `GlassBSDF`,
+  `RefractionBSDF`, `SheenBSDF`, `SpecularBSDF`, `SubsurfaceScattering`,
+  `ToonBSDF`, `TranslucentBSDF`, `Emission`, `PrincipledHair`,
+  `VolumeAbsorption`, `VolumeScatter`, `PrincipledVolume`, `RayPortal`) wraps
+  its existing vec3 result as `vec4(..., 1.0)` at the call site — no GLSL
+  function bodies touched.
+- `AddShader`/`MixShader` now operate on vec4 directly — `AddShader` takes
+  `max(a.a, b.a)`, `MixShader`'s `mix()` blends alpha along with color for
+  free (matches Blender's Mix Shader alpha behaviour).
+- `ShaderToRGB` now extracts the real `.a` instead of hardcoding `Alpha = 1.0`.
+- `ShaderScript`'s `'shader'` socket type now maps to `vec4` in its
+  type-mapping helpers.
+- `MaterialOutput.compileCall` emits `gl_FragColor = ${sv};` directly (`sv` is
+  already vec4) instead of re-wrapping with a hardcoded `1.0`.
+- **`transparent` is now actually set on the compiled material.** Added
+  `ShaderNode.wantsTransparency()` (default `false`), overridden on
+  `PrincipledBSDF` to return `true` when `alpha` is connected (dynamic) or a
+  literal `< 1.0`. `CompileContext.compile()` ORs this across every node in
+  the graph into `CompiledMaterial.needsTransparency`; `OutputNode.compile()`
+  passes it as `ShaderMaterial({ transparent: ... })`.
+
+Acceptance test (the actual reproducer from FINDINGS.md, run against the
+*compiled* `ShaderMaterial`, not the conversion path):
+`new PrincipledBSDF({ alpha: 0.5 })` → `mat.material.transparent === true`
+and the shader source no longer ends in a hardcoded `, 1.0)`. Default
+(alpha omitted) stays `transparent: false` — existing scenes don't repaint.
+7 new regression tests added to `st-shader-core/test/run-tests.js` (78/78
+passing, up from 71). All existing tests (including the 0.2.0 vector/socket
+and NormalMap tests) still pass unmodified — the vec3→vec4 widening is
+backward-compatible at the public API/socket level.
+
+`toPhysicalMaterial()` (the path-tracer bridge) is untouched — it was already
+correct for what it does and remains a separate, valid code path.
+
 ---
 
 ## Ecosystem-Wide — Remaining

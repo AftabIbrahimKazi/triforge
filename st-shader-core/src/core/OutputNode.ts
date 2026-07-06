@@ -41,6 +41,7 @@ export abstract class OutputNode extends ShaderNode {
       vertexShader:   compiled.vertexShader,
       fragmentShader: compiled.fragmentShader,
       uniforms:       compiled.uniforms,
+      transparent:    compiled.needsTransparency,
     })
     // Inject default scene-lighting uniforms used by PrincipledBSDF.
     // Users can override these after compile() to match their scene lights.

@@ -136,7 +136,7 @@ export class MaterialOutput extends OutputNode {
   compileCall(ctx: CompileContext): string {
     const sv = this._inputs.surface.isConnected()
       ? ctx.outputVar(this._inputs.surface.connection!.node, this._inputs.surface.connection!.name)
-      : 'vec3(0.8)'
-    return `gl_FragColor = vec4(${sv}, 1.0);`
+      : 'vec4(0.8, 0.8, 0.8, 1.0)'
+    return `gl_FragColor = ${sv};`
   }
 }

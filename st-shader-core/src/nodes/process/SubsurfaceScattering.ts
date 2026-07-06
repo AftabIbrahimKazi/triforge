@@ -61,6 +61,6 @@ vec3 _st_sss(vec3 color, float scale, vec3 radius, vec3 N) {
     const normal = this._inputs.normal.isConnected()
       ? ctx.outputVar(this._inputs.normal.connection!.node, this._inputs.normal.connection!.name)
       : 'normalize(vNormal)'
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_sss(${color}, ${scale}, vec3(${r.toFixed(4)}, ${g.toFixed(4)}, ${b.toFixed(4)}), ${normal});`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = vec4(_st_sss(${color}, ${scale}, vec3(${r.toFixed(4)}, ${g.toFixed(4)}, ${b.toFixed(4)}), ${normal}), 1.0);`
   }
 }
