@@ -4,6 +4,15 @@ import { InputSocket } from './InputSocket.js'
 import { OutputSocket } from './OutputSocket.js'
 import type { SocketType } from './SocketType.js'
 
+/** Guards against NaN/Infinity reaching a GLSL uniform (would emit invalid GLSL literals like "NaN"). */
+function finiteOr(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback
+}
+
+function sanitizeVec3(v: [number, number, number]): [number, number, number] {
+  return [finiteOr(v[0], 0), finiteOr(v[1], 0), finiteOr(v[2], 0)]
+}
+
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   return [
@@ -152,7 +161,7 @@ export abstract class ShaderNode {
       if (type === 'float' && typeof literal === 'number') {
         socket.uniformName = `u_${this.id}_${name}`
         this._uniformMap.set(name, socket.uniformName)
-        this.parameters[name] = literal
+        this.parameters[name] = finiteOr(literal, 0)
       }
 
       // Auto-register unconnected color inputs as vec3 uniforms
@@ -161,7 +170,9 @@ export abstract class ShaderNode {
           socket.uniformName = `u_${this.id}_${name}`
           this._uniformMap.set(name, socket.uniformName)
           this._colorParams.add(name)
-          this.parameters[name] = typeof literal === 'string' ? hexToRgb(literal) : (literal as [number, number, number])
+          this.parameters[name] = typeof literal === 'string'
+            ? hexToRgb(literal)
+            : sanitizeVec3(literal as [number, number, number])
         }
       }
 
@@ -198,14 +209,14 @@ export abstract class ShaderNode {
         if (this._colorParams.has(paramName)) {
           Object.defineProperty(this.parameters, paramName, {
             get:          () => uniforms[uniformName].value as [number, number, number],
-            set:          (v: [number, number, number]) => { uniforms[uniformName].value = v },
+            set:          (v: [number, number, number]) => { uniforms[uniformName].value = sanitizeVec3(v) },
             enumerable:   true,
             configurable: true,
           })
         } else {
           Object.defineProperty(this.parameters, paramName, {
             get:          () => uniforms[uniformName].value as number,
-            set:          (v: number) => { uniforms[uniformName].value = v },
+            set:          (v: number) => { uniforms[uniformName].value = finiteOr(v, 0) },
             enumerable:   true,
             configurable: true,
           })
