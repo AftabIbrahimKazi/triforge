@@ -62,7 +62,7 @@ export class ImageTexture extends ProcessNode {
 
   compileCall(ctx: CompileContext): string {
     const uv  = this._inputs.vector.isConnected()
-      ? ctx.outputVar(this._inputs.vector.connection!.node, this._inputs.vector.connection!.name)
+      ? ctx.resolveInput(this._inputs.vector)
       : 'vUv'
     const cv  = ctx.outputVar(this, 'Color')
     const av  = ctx.outputVar(this, 'Alpha')

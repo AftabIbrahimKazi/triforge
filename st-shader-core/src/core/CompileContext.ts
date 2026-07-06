@@ -68,7 +68,16 @@ export class CompileContext {
    */
   resolveInput(socket: InputSocket<unknown>): string {
     if (socket.connection) {
-      return this.outputVar(socket.connection.node, socket.connection.name)
+      const varName = this.outputVar(socket.connection.node, socket.connection.name)
+      // vec3 (color/shader) → vec2 (vector) implicit conversion, e.g. Mapping.Vector → ImageTexture.vector
+      if (socket.type === 'vector' && socket.connection.type !== 'vector') {
+        return `(${varName}).xy`
+      }
+      // vec2 (vector) → vec3 (color) implicit conversion, e.g. TextureCoordinate.UV → Mapping.vector
+      if (socket.type === 'color' && socket.connection.type === 'vector') {
+        return `vec3(${varName}, 0.0)`
+      }
+      return varName
     }
     if (socket.uniformName !== null) {
       if (!(socket.uniformName in this._uniforms)) {
@@ -217,6 +226,11 @@ export class CompileContext {
     if (from === to) return true
     // shader and color are both vec3 — compatible
     if ((from === 'shader' || from === 'color') && (to === 'shader' || to === 'color')) return true
+    // vec3 (color/shader) implicitly narrows to vec2 (vector) via .xy, mirroring Blender's
+    // Mapping (vector output) → Image Texture Vector panning graph
+    if ((from === 'color' || from === 'shader') && to === 'vector') return true
+    // vec2 (vector) implicitly widens to vec3 (color), e.g. Texture Coordinate UV → Mapping.vector
+    if (from === 'vector' && to === 'color') return true
     return false
   }
 

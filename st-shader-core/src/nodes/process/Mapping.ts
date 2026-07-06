@@ -42,20 +42,19 @@ vec3 _st_rotateZ(vec3 v, float a) {
   return vec3(c * v.x - s * v.y, s * v.x + c * v.y, v.z);
 }`
 
-  private readonly loc: [number, number, number]
-  private readonly rot: [number, number, number]
-  private readonly scl: [number, number, number]
   private readonly mode: MappingMode
   private readonly _inputs:  Record<string, import('../../core/InputSocket.js').InputSocket<unknown>>
   private readonly _outputs: Record<string, import('../../core/OutputSocket.js').OutputSocket>
 
   constructor(inputs: MappingInputs = {}) {
     super('Mapping')
-    this.mode = inputs.mode     ?? 'TEXTURE'
-    this.loc  = inputs.location ?? [0, 0, 0]
-    this.rot  = inputs.rotation ?? [0, 0, 0]
-    this.scl  = inputs.scale    ?? [1, 1, 1]
-    this._inputs  = this.createInputs(inputs as Record<string, unknown>, { vector: ['color', null] })
+    this.mode = inputs.mode ?? 'TEXTURE'
+    this._inputs  = this.createInputs(inputs as Record<string, unknown>, {
+      vector:   ['color', null],
+      location: ['color', inputs.location ?? [0, 0, 0]],
+      rotation: ['color', inputs.rotation ?? [0, 0, 0]],
+      scale:    ['color', inputs.scale    ?? [1, 1, 1]],
+    })
     this._outputs = this.createOutputs({ Vector: 'color' })
   }
 
@@ -64,20 +63,21 @@ vec3 _st_rotateZ(vec3 v, float a) {
   compileDefs()      { return Mapping.glslFunction }
 
   compileCall(ctx: CompileContext): string {
-    const v   = ctx.resolveInput(this._inputs.vector)
-    const out = ctx.outputVar(this, 'Vector')
-    const toRad = (d: number) => (d * Math.PI / 180).toFixed(6)
-    const [lx, ly, lz] = this.loc
-    const [rx, ry, rz] = this.rot.map(Number)
-    const [sx, sy, sz] = this.scl
+    const v     = ctx.resolveInput(this._inputs.vector)
+    const loc   = ctx.resolveInput(this._inputs.location)
+    const rot   = ctx.resolveInput(this._inputs.rotation)
+    const scl   = ctx.resolveInput(this._inputs.scale)
+    const out   = ctx.outputVar(this, 'Vector')
+    const toRad = (Math.PI / 180).toFixed(6)
 
     return [
       `vec3 _mp_v_${this.id} = ${v};`,
-      `_mp_v_${this.id} = _mp_v_${this.id} - vec3(${lx.toFixed(4)}, ${ly.toFixed(4)}, ${lz.toFixed(4)});`,
-      `_mp_v_${this.id} = _st_rotateX(_mp_v_${this.id}, ${toRad(rx)});`,
-      `_mp_v_${this.id} = _st_rotateY(_mp_v_${this.id}, ${toRad(ry)});`,
-      `_mp_v_${this.id} = _st_rotateZ(_mp_v_${this.id}, ${toRad(rz)});`,
-      `_mp_v_${this.id} = _mp_v_${this.id} * vec3(${sx.toFixed(4)}, ${sy.toFixed(4)}, ${sz.toFixed(4)});`,
+      `vec3 _mp_r_${this.id} = ${rot} * ${toRad};`,
+      `_mp_v_${this.id} = _mp_v_${this.id} - ${loc};`,
+      `_mp_v_${this.id} = _st_rotateX(_mp_v_${this.id}, _mp_r_${this.id}.x);`,
+      `_mp_v_${this.id} = _st_rotateY(_mp_v_${this.id}, _mp_r_${this.id}.y);`,
+      `_mp_v_${this.id} = _st_rotateZ(_mp_v_${this.id}, _mp_r_${this.id}.z);`,
+      `_mp_v_${this.id} = _mp_v_${this.id} * ${scl};`,
       `vec3 ${out} = _mp_v_${this.id};`,
     ].join('\n  ')
   }

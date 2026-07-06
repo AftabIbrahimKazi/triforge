@@ -234,6 +234,39 @@ security regression tests added to `st-shader-core/test/run-tests.js` (62/62
 passing). Only exploitable if an app passes untrusted input as `uniformName`;
 all current consumers use hardcoded literals.
 
+### Follow-up (2026-07-07) — FINDINGS.md feature gaps #2, #3, #4 (shader-core 0.2.0)
+
+FINDINGS.md (Planetarium project) also documented feature gaps beyond the
+security items above; #1 (alpha through `MaterialOutput`) and #5 (ambient
+lighting on `PrincipledBSDF`) turned out to already be implemented in the
+monorepo, just undocumented. The remaining open items are now closed:
+
+- **#2 vector/color socket incompatibility** — `CompileContext` now implicitly
+  converts `color`/`shader` (vec3) ↔ `vector` (vec2) at connection points
+  (`.xy` narrowing, `vec3(v, 0.0)` widening). `ImageTexture.compileCall` routed
+  through `resolveInput` so the conversion actually applies (it previously
+  called `ctx.outputVar` directly, bypassing type coercion). `Mapping`'s
+  `location`/`rotation`/`scale` were converted from baked constructor literals
+  to live `color`-typed uniform inputs, exposed on `node.parameters` per the
+  root CLAUDE.md parameters rule — the canonical `TextureCoordinate → Mapping →
+  ImageTexture` UV-panning graph now compiles and is animatable.
+- **#3 generic script escape hatch** — found that `ShaderScript` already existed
+  in the monorepo (predates this finding, wasn't cross-referenced), matching
+  the proposed `GlslScript` design. Its input/output socket names were
+  interpolated into GLSL as local-variable names with no validation; added
+  `assertGlslIdentifier` there, same pattern as the `Attribute`/`ImageTexture`
+  fixes above.
+- **#4 tangent-space normal mapping** — `NormalMap` was a duplicate of `Bump`'s
+  height-gradient technique under a Blender-mismatched name. Rewrote it as a
+  true tangent-space texture decoder: RGB → vector, derivative-based cotangent
+  frame (Schüler method, reusing the no-vertex-tangent-attribute fallback this
+  finding suggested), `normalize(TBN * n)`. No other code in the monorepo
+  referenced the old `fac`-based signature, so this was a clean break.
+
+6 new regression tests added to `st-shader-core/test/run-tests.js` (68/68
+passing). Version bumped to 0.2.0 (feature-level, not a patch) per the
+FINDINGS.md release checklist.
+
 ---
 
 ## Ecosystem-Wide — Remaining

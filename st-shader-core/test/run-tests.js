@@ -13,6 +13,9 @@ import {
   PrincipledHair,
   EnvironmentTexture,
   ImageTexture,
+  Mapping,
+  NormalMap,
+  ShaderScript,
   Attribute,
   isValidGlslIdentifier,
 } from '../dist/index.js'
@@ -514,6 +517,52 @@ test('EnvironmentTexture roughness creates float uniform', () => {
   if (Math.abs(result.uniforms[roughUniform].value - 0.5) > 0.001) throw new Error('roughness value wrong')
 })
 
+// ── UV Panning / vector-socket compatibility Tests ────────────────────────────
+
+test('Mapping (color output) can drive ImageTexture.vector (vector input) via implicit vec3->vec2', () => {
+  const coord = new TextureCoordinate()
+  const mapping = new Mapping({ vector: coord.output('UV'), location: [0.5, 0, 0] })
+  const tex = new ImageTexture({ uniformName: 'uAlbedo', vector: mapping.output('Vector') })
+  const bsdf = new PrincipledBSDF({ baseColor: tex.output('Color') })
+  const mat = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('.xy')) throw new Error('expected vec3->vec2 swizzle in generated GLSL')
+  if (!result.fragmentShader.includes('texture2D(uAlbedo')) throw new Error('texture2D call missing')
+})
+
+test('Mapping location parameter is mutable post-construction (uniform-driveable panning)', () => {
+  const coord = new TextureCoordinate()
+  const mapping = new Mapping({ vector: coord.output('UV') })
+  const tex = new ImageTexture({ uniformName: 'uAlbedo2', vector: mapping.output('Vector') })
+  const bsdf = new PrincipledBSDF({ baseColor: tex.output('Color') })
+  const mat = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+  if (typeof mapping.parameters?.location === 'undefined') throw new Error('Mapping.parameters.location missing')
+})
+
+// ── NormalMap (tangent-space decode) Tests ────────────────────────────────────
+
+test('NormalMap compiles: ImageTexture -> NormalMap -> PrincipledBSDF.normal', () => {
+  const tex  = new ImageTexture({ uniformName: 'uNormalMap' })
+  const nm   = new NormalMap({ color: tex.output('Color'), strength: 0.75 })
+  const bsdf = new PrincipledBSDF({ normal: nm.output('Normal') })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('_st_normalMap(')) throw new Error('normal map decode call missing')
+  if (!result.fragmentShader.includes('mat3 TBN')) throw new Error('TBN construction missing')
+  if (!result.fragmentShader.includes('sampledColor * 2.0 - 1.0')) throw new Error('RGB->vector decode missing')
+})
+
+test('NormalMap strength=0 zeroes out the xy perturbation, leaving geometry normal dominant', () => {
+  const nm  = new NormalMap({ strength: 0 })
+  const bsdf = new PrincipledBSDF({ normal: nm.output('Normal') })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  const strengthUniform = Object.keys(result.uniforms).find(k => k.includes('strength'))
+  if (!strengthUniform) throw new Error('strength uniform missing')
+  if (result.uniforms[strengthUniform].value !== 0) throw new Error('strength value wrong')
+})
+
 // ── Color Uniform Tests ───────────────────────────────────────────────────────
 
 test('color input creates uniform vec3 declaration in fragment shader', () => {
@@ -615,6 +664,30 @@ test('SECURITY: EnvironmentTexture rejects a GLSL-injecting uniformName at const
     new EnvironmentTexture({ uniformName: 'uEnv; } /* pwned */ void main(){' })
   } catch { threw = true }
   if (!threw) throw new Error('EnvironmentTexture accepted an injecting uniformName — GLSL injection possible')
+})
+
+test('SECURITY: ShaderScript rejects a GLSL-injecting input name at construction', () => {
+  let threw = false
+  try {
+    new ShaderScript({
+      inputs: { 'x; } /* pwned */ void hack(': ['float', 1.0] },
+      outputs: { result: 'float' },
+      glsl: 'result = 1.0;',
+    })
+  } catch { threw = true }
+  if (!threw) throw new Error('Expected error for unsafe input name')
+})
+
+test('SECURITY: ShaderScript rejects a GLSL-injecting output name at construction', () => {
+  let threw = false
+  try {
+    new ShaderScript({
+      inputs: {},
+      outputs: { 'x; } /* pwned */ void hack(': 'float' },
+      glsl: '',
+    })
+  } catch { threw = true }
+  if (!threw) throw new Error('Expected error for unsafe output name')
 })
 
 test('SECURITY: EnvironmentTexture still accepts a normal uniformName', () => {
