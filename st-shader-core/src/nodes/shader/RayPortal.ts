@@ -77,6 +77,6 @@ export class RayPortal extends ProcessNode {
 
     // Rasterizer passthrough: BSDF = color * blend
     // Portal Transform is intentionally unused in this mode.
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = ${color} * ${blend};`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = vec4(${color} * ${blend}, 1.0);`
   }
 }

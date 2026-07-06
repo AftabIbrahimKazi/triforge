@@ -48,6 +48,6 @@ vec3 _st_emission(vec3 color, float strength) {
   compileCall(ctx: CompileContext): string {
     const color    = ctx.resolveInput(this._inputs.color)
     const strength = ctx.resolveInput(this._inputs.strength)
-    return `vec3 ${ctx.outputVar(this, 'BSDF')} = _st_emission(${color}, ${strength});`
+    return `vec4 ${ctx.outputVar(this, 'BSDF')} = vec4(_st_emission(${color}, ${strength}), 1.0);`
   }
 }

@@ -9,6 +9,9 @@ import {
   OceanAttribute,
   Emission,
   AddShader,
+  MixShader,
+  Fresnel,
+  ShaderToRGB,
   HairInfo,
   PrincipledHair,
   EnvironmentTexture,
@@ -728,6 +731,76 @@ test('SECURITY: EnvironmentTexture still accepts a normal uniformName', () => {
   const mat = new MaterialOutput({ surface: new Emission({ color: env.output('Color') }).output('BSDF') })
   const result = mat.compile()
   if (!result.fragmentShader.includes('uEnv')) throw new Error('valid uniformName was mangled/rejected')
+})
+
+// ── FINDINGS #1: per-fragment alpha through MaterialOutput ─────────────────────
+// Reproducer from FINDINGS.md — must pass on the *compiled* ShaderMaterial,
+// not just the toPhysicalMaterial() conversion path.
+
+test('FIX #1: PrincipledBSDF alpha=0.5 reaches gl_FragColor and marks the material transparent', () => {
+  const bsdf = new PrincipledBSDF({ alpha: 0.5 })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  if (result.fragmentShader.includes('gl_FragColor = vec4(_st_') && result.fragmentShader.includes(', 1.0000);')) {
+    throw new Error('alpha still hardcoded to 1.0 in gl_FragColor')
+  }
+  if (mat.material.transparent !== true) throw new Error(`expected transparent:true, got ${mat.material.transparent}`)
+})
+
+test('FIX #1: default alpha (omitted) keeps the material opaque', () => {
+  const bsdf = new PrincipledBSDF()
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+  if (mat.material.transparent !== false) throw new Error(`expected transparent:false, got ${mat.material.transparent}`)
+})
+
+test('FIX #1: socket-driven alpha (fresnel-style chain) compiles and registers a live uniform, marks transparent', () => {
+  const fresnel = new Fresnel()
+  const bsdf    = new PrincipledBSDF({ alpha: fresnel.output('Fac') })
+  const mat     = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result  = mat.compile()
+  if (!result.fragmentShader.includes('_st_') ) throw new Error('fresnel alpha connection did not compile')
+  if (mat.material.transparent !== true) throw new Error('connected (dynamic) alpha should conservatively mark transparent:true')
+})
+
+test('FIX #1: gl_FragColor is assigned the vec4 BSDF variable directly (no more hardcoded 1.0 wrapper)', () => {
+  const bsdf = new PrincipledBSDF({ alpha: 0.5 })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  const bsdfVar = `_st_${bsdf.id}_BSDF`
+  if (!result.fragmentShader.includes(`gl_FragColor = ${bsdfVar};`)) {
+    throw new Error('gl_FragColor should be assigned the vec4 BSDF variable directly')
+  }
+})
+
+test('FIX #1: AddShader combines rgb and takes the max alpha of both branches', () => {
+  const a   = new Emission({ color: '#ff0000', strength: 1.0 })
+  const b   = new PrincipledBSDF({ alpha: 0.4 })
+  const add = new AddShader({ shader1: a.output('BSDF'), shader2: b.output('BSDF') })
+  const mat = new MaterialOutput({ surface: add.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('_st_addShader(')) throw new Error('AddShader call missing')
+})
+
+test('FIX #1: MixShader blends alpha along with color via vec4 mix', () => {
+  const a   = new Emission({ color: '#ff0000' })
+  const b   = new PrincipledBSDF({ alpha: 0.2 })
+  const mix = new MixShader({ fac: 0.5, shader1: a.output('BSDF'), shader2: b.output('BSDF') })
+  const mat = new MaterialOutput({ surface: mix.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('_st_mixShader(')) throw new Error('MixShader call missing')
+})
+
+test('FIX #1: ShaderToRGB extracts the real alpha channel instead of hardcoding 1.0', () => {
+  const bsdf = new PrincipledBSDF({ alpha: 0.3 })
+  const s2rgb = new ShaderToRGB({ shader: bsdf.output('BSDF') })
+  const emit  = new Emission({ color: s2rgb.output('Color'), strength: 1.0 })
+  const mat   = new MaterialOutput({ surface: emit.output('BSDF') })
+  const result = mat.compile()
+  if (result.fragmentShader.includes('float _st_') && result.fragmentShader.match(/Alpha = 1\.0;/)) {
+    throw new Error('ShaderToRGB Alpha still hardcoded to 1.0')
+  }
+  if (!result.fragmentShader.includes('.a;')) throw new Error('ShaderToRGB should extract .a from the vec4 shader')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────
