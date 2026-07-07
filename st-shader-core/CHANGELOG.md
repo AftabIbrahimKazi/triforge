@@ -5,6 +5,42 @@ Format follows `coding-standards/versioning-standards.md` (RULE V-08).
 
 ---
 
+## [0.4.1] — 2026-07-07
+
+### Fixed
+- **`Bump({ method: 'uv-offset' })` shader compile failure on WebGL2** — the
+  `#extension GL_EXT_shader_texture_lod : enable` pragma was emitted inline
+  in `Bump.compileDefs()`, landing mid-file in the assembled fragment shader
+  (after other nodes' uniforms/functions). ESSL3 (WebGL2) requires
+  `#extension` directives before any non-preprocessor token, so any graph
+  combining `uv-offset` Bump with another defs-emitting node
+  (e.g. `PrincipledBSDF`) failed to compile with `VALIDATE_STATUS false`:
+  `'#extension GL_EXT_shader_texture_lod : enable' : extension directive must
+  occur before any non-preprocessor tokens in ESSL3`.
+  Fixed generally at `CompileContext`, not in `Bump`: any node's
+  `compileDefs()` output is now scanned for `#extension` lines, which are
+  stripped out, deduplicated, and hoisted to the first line of the compiled
+  fragment shader (before `precision`) — so any current or future node that
+  needs a GLSL extension gets correct placement automatically, no per-node
+  opt-in required. `Bump`'s local `#ifndef`-guard workaround for this (added
+  in 0.4.0) is no longer needed and was removed; the extension line is now
+  emitted plainly and deduplicated centrally instead.
+- Investigated whether the extension is even needed on WebGL2: three.js's
+  `WebGLProgram` auto-`#define`s `texture2DLodEXT` → `textureLod` when
+  running GLSL ES 100-style shader source against a WebGL2 context, making
+  the `#extension` pragma inert there (harmless — GLSL treats an unknown
+  `: enable` extension as a warning, not an error). `CompileContext.compile()`
+  has no renderer/context available at graph-compile time to reliably gate
+  the pragma per-target, so hoisting (renderer-agnostic) is the fix rather
+  than a WebGL1-only conditional — it's correct under both WebGL1 (where the
+  pragma is load-bearing) and WebGL2 (where it's a no-op).
+
+2 new regression tests (91/91 passing, up from 90) — one reproducing the
+original ordering bug with a combined `Bump(uv-offset) + PrincipledBSDF`
+graph, one confirming multi-instance dedup still holds.
+
+---
+
 ## [0.4.0] — 2026-07-07
 
 ### Added
