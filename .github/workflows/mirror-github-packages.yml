@@ -68,6 +68,9 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     strategy:
+      # One package's install/publish failure must not cancel the other 16 —
+      # they're independent packages, not a single atomic release.
+      fail-fast: false
       matrix:
         dir: ${{ fromJson(needs.resolve.outputs.dirs) }}
     steps:
@@ -83,7 +86,12 @@ jobs:
       - name: Install and build
         working-directory: ${{ matrix.dir }}
         run: |
-          npm ci
+          # --legacy-peer-deps: some package-lock.json files here predate a
+          # peer-dependency range bump in a transitive dep (e.g. three-bvh-csg
+          # vs three) and fail npm's strict ERESOLVE in a clean CI install.
+          # This workflow only needs a working dist/ to republish, so relax
+          # peer-dep strictness rather than block the mirror on it.
+          npm ci --legacy-peer-deps
           npm run build
 
       - name: Scope package name for GitHub Packages
