@@ -1,0 +1,105 @@
+# Mirrors an already-released @triforge/* package to GitHub Packages so the
+# repo's "Packages" sidebar reflects the npm release. This exists purely for
+# visibility — someone landing on the repo without reading the README should
+# still see, at a glance, that these packages are published somewhere.
+#
+# npmjs.com stays the ONLY primary registry and is published manually (see
+# each package's CHANGELOG / BACKLOG.md release notes) — this workflow never
+# touches npmjs.com and never runs automatically. GitHub Packages requires
+# scoped names to match the repo owner, so the mirror publishes as
+# @aftabibrahimkazi/<package> — that rename happens only inside this
+# workflow's throwaway checkout and is never committed back to the repo.
+# The real @triforge/<package> name, version, and dist tarball on npmjs.com
+# are the source of truth; this is a same-content re-tag, not a fork.
+#
+# Run manually after publishing a new version to npm:
+#   Actions -> Mirror to GitHub Packages -> Run workflow -> pick the package
+#   (or "all" to mirror every package's current package.json version)
+
+name: Mirror to GitHub Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Package directory to mirror (or "all")'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - st-shader-core
+          - st-geometry-nodes
+          - st-modifier-core
+          - st-curve-core
+          - radius-parametric-geometry
+          - st-uv-core
+          - st-particle-core
+          - st-physics-core
+          - st-animation-core
+          - st-keyframe
+          - st-compositor-core
+          - st-pathtracer-core
+          - st-hair-core
+          - st-fluid-core
+          - st-metaball-core
+          - st-volume-core
+          - st-core-types
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.list.outputs.dirs }}
+    steps:
+      - id: list
+        run: |
+          if [ "${{ github.event.inputs.package }}" = "all" ]; then
+            echo 'dirs=["st-shader-core","st-geometry-nodes","st-modifier-core","st-curve-core","radius-parametric-geometry","st-uv-core","st-particle-core","st-physics-core","st-animation-core","st-keyframe","st-compositor-core","st-pathtracer-core","st-hair-core","st-fluid-core","st-metaball-core","st-volume-core","st-core-types"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "dirs=[\"${{ github.event.inputs.package }}\"]" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: resolve
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: ${{ fromJson(needs.resolve.outputs.dirs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+
+      - name: Install and build
+        working-directory: ${{ matrix.dir }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Scope package name for GitHub Packages
+        working-directory: ${{ matrix.dir }}
+        run: |
+          node -e "
+            const fs = require('fs')
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+            const shortName = pkg.name.split('/')[1]
+            pkg.name = '@aftabibrahimkazi/' + shortName
+            delete pkg.publishConfig
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2))
+          "
+
+      - name: Publish to GitHub Packages
+        working-directory: ${{ matrix.dir }}
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
