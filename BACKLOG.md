@@ -402,6 +402,45 @@ upgraded): the planetarium project can retire its hand-written `RgbaOutput`,
 `MixShader`, the `'name.x'` parameter aliases, and `Bump({ method: 'uv-offset' })`
 respectively.
 
+### Follow-up (2026-07-07) — same-day bug: uv-offset Bump's #extension broke WebGL2 compiles (shader-core 0.4.1)
+
+Caught immediately by the same consumer trying to use `Bump({ method:
+'uv-offset' })` on WebGL2: the `#extension GL_EXT_shader_texture_lod :
+enable` pragma added in 0.4.0 was written inline in `Bump.compileDefs()`,
+which lands wherever `CompileContext` happens to assemble that node's defs
+in the final fragment shader — after other nodes' uniform/function defs in
+any graph where another node (e.g. `PrincipledBSDF`) also has `compileDefs()`
+output. ESSL3 (WebGL2) requires `#extension` before any non-preprocessor
+token; mid-file placement throws `VALIDATE_STATUS false` — confirmed via
+actual shader compile failure.
+
+**Fixed generally, not in `Bump`:** `CompileContext` now scans every node's
+`compileDefs()` output for `#extension` lines, strips them, deduplicates,
+and hoists them to the first line of the compiled fragment shader (before
+`precision`) — `_extractExtensions()` at the `emitDefs` chokepoint,
+prepended in `buildFragmentShader()`. Any current or future node that needs
+a GLSL extension gets correct placement automatically; no per-node opt-in.
+`Bump`'s local `#ifndef`-guard (0.4.0's dedup workaround) was removed —
+central dedup makes it redundant.
+
+**Investigated whether the pragma is needed on WebGL2 at all** (per the
+report's suggestion to gate it behind a WebGL1-only check instead of
+hoisting): three.js's `WebGLProgram` auto-`#define`s `texture2DLodEXT` →
+`textureLod` when running GLSL ES 100-style source against a WebGL2 context,
+so the extension pragma is inert there — GLSL treats an unrecognized
+`: enable` extension as a warning, not a hard error. But `CompileContext.
+compile()` has no renderer/context reference at graph-compile time to
+reliably detect WebGL1 vs. WebGL2 and gate the pragma per-target — hoisting
+is the renderer-agnostic fix and is correct under both (load-bearing on
+WebGL1, harmless no-op on WebGL2), so that's what shipped instead of a
+runtime gate.
+
+2 new regression tests (91/91 passing, up from 90): one reproduces the
+original ordering bug with a combined `Bump(uv-offset) + PrincipledBSDF`
+graph and asserts `#extension` is the first non-empty line; one extends the
+existing multi-instance test to assert the extension appears exactly once
+(not once per `uv-offset` `Bump` instance). Published as 0.4.1.
+
 ---
 
 ## Ecosystem-Wide — Remaining

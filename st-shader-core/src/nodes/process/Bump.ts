@@ -126,11 +126,12 @@ vec3 _st_bump(float height, float strength, float distance, vec3 N) {
 
   compileDefs(): string {
     if (this._method === 'uv-offset') {
+      // The #extension line is hoisted to the very top of the fragment shader
+      // (before `precision`) and deduplicated by CompileContext regardless of
+      // where/how many times it's emitted here — see
+      // CompileContext._extractExtensions. No local guard needed.
       return [
-        '#ifndef _ST_BUMP_TEXLOD_EXT',
-        '#define _ST_BUMP_TEXLOD_EXT',
         '#extension GL_EXT_shader_texture_lod : enable',
-        '#endif',
         `uniform sampler2D ${this._uniformName};`,
       ].join('\n')
     }

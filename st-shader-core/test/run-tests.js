@@ -932,6 +932,26 @@ test('Bump method:"uv-offset" samples via texture2DLodEXT at explicit uv+-texelS
   }
 })
 
+test('BUGFIX: #extension is hoisted to the very first line of the fragment shader, ahead of other nodes\' compileDefs() output', () => {
+  // PrincipledBSDF's own compileDefs() (light uniforms + schlick/ggx/geo functions)
+  // gets emitted before Bump's in graph order here, reproducing the original bug:
+  // the #extension line landed mid-file, after other nodes' defs/uniforms, which
+  // WebGL2/ESSL3 rejects with "extension directive must occur before any
+  // non-preprocessor tokens".
+  const bump = new Bump({ method: 'uv-offset', uniformName: 'uHeightOrder' })
+  const bsdf = new PrincipledBSDF({ roughness: 0.4, normal: bump.output('Normal') })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+
+  const firstLine = result.fragmentShader.split('\n').find(l => l.trim() !== '')
+  if (firstLine.trim() !== '#extension GL_EXT_shader_texture_lod : enable') {
+    throw new Error(`expected #extension as the first non-empty line, got: "${firstLine}"`)
+  }
+  // And it must appear exactly once (deduplicated), not once per occurrence in compileDefs().
+  const occurrences = (result.fragmentShader.match(/#extension GL_EXT_shader_texture_lod/g) ?? []).length
+  if (occurrences !== 1) throw new Error(`expected #extension exactly once, found ${occurrences}`)
+})
+
 test('Bump method:"uv-offset" keeps the same strength*distance*50.0 output scaling as derivative mode', () => {
   const bump = new Bump({ method: 'uv-offset', uniformName: 'uHeightTex2' })
   const bsdf = new PrincipledBSDF({ normal: bump.output('Normal') })
@@ -951,6 +971,8 @@ test('Two uv-offset Bump instances with different uniformNames both compile with
   const result = mat.compile()
   if (!result.fragmentShader.includes('uniform sampler2D uHeightA;')) throw new Error('uHeightA uniform missing')
   if (!result.fragmentShader.includes('uniform sampler2D uHeightB;')) throw new Error('uHeightB uniform missing')
+  const occurrences = (result.fragmentShader.match(/#extension GL_EXT_shader_texture_lod/g) ?? []).length
+  if (occurrences !== 1) throw new Error(`expected #extension exactly once across 2 uv-offset instances, found ${occurrences}`)
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────
