@@ -225,6 +225,35 @@ mat.compile()
 
 This works because every `shader` socket (the type `BSDF` outputs use) carries a vec4 (RGB + alpha), not just RGB — so alpha flows from `PrincipledBSDF` through `AddShader`/`MixShader`/`ShaderToRGB` to `MaterialOutput` like any other channel.
 
+`Emission` always outputs fully opaque alpha, though — for emission-only transparency (a glow that fades out, a fresnel-driven rim light, cutout foliage), use `TransparentBSDF` (Blender's mechanism: no inputs, always fully transparent) mixed against your emission:
+
+```javascript
+const fresnel  = new Fresnel({ ior: 1.45 })
+const trans    = new TransparentBSDF()
+const emit     = new Emission({ color: '#ffaa33', strength: 2.0 })
+const rimGlow  = new MixShader({ fac: fresnel.output('Fac'), shader1: trans.output('BSDF'), shader2: emit.output('BSDF') })
+const mat      = new MaterialOutput({ surface: rimGlow.output('BSDF') })
+mat.compile()
+// mat.material.transparent === true automatically — fac=0 is fully transparent, fac=1 is fully opaque emission
+```
+
+### Animating a Single Axis (Panning, per-component Parameters)
+
+Vector-typed live parameters (`Mapping.location/rotation/scale`, any node's color/vector uniform) expose flattened `'name.x'`/`'name.y'`/`'name.z'` aliases alongside the whole-array `name` property — both read/write the same underlying uniform, so animating one axis doesn't require reconstructing the whole array every frame:
+
+```javascript
+const mapping = new Mapping({ location: [0, 0, 0] })
+const tex     = new ImageTexture({ uniformName: 'uAlbedo', vector: mapping.output('Vector') })
+const mat     = new MaterialOutput({ surface: new Emission({ color: tex.output('Color') }).output('BSDF') })
+mat.compile()
+
+// Pans only along U — Y and Z stay untouched
+new KeyframeTrack(mapping.parameters, 'location.x', [
+  { time: 0, value: 0 },
+  { time: 4, value: 1 },
+])
+```
+
 ### Animated Materials
 
 Use `AnimatedNoiseTexture` and inject a `time` uniform after compile:
@@ -258,7 +287,22 @@ class LavaMaterial {
   get material() { return this._out.material }
   tick(t) { this.material.uniforms.time.value = t }
 }
+```
 
+`Bump`'s default (`method: 'derivative'`) reads a screen-space height gradient — fine for procedural noise like above. For a *sampled texture* (e.g. a planetary crater/regolith height map) viewed across a wide camera-distance range, screen-space derivatives can speckle or seam-flicker; use `method: 'uv-offset'` instead, which samples the texture directly at fixed UV offsets and a fixed LOD, independent of the camera:
+
+```javascript
+const bump = new Bump({
+  method:      'uv-offset',
+  uniformName: 'uHeightMap',
+  texelSize:   1 / 2048,   // 1 / textureResolution
+  strength:    1.5,
+})
+mat.compile()
+mat.material.uniforms.uHeightMap = { value: new THREE.TextureLoader().load('height.jpg') }
+```
+
+```javascript
 const lava = new LavaMaterial()
 scene.add(new THREE.Mesh(geo, lava.material))
 // In loop: lava.tick(clock.getElapsedTime())
