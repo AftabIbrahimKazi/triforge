@@ -102,6 +102,7 @@ export { SubsurfaceScattering }  from './nodes/process/SubsurfaceScattering.js'
 export { ToonBSDF }              from './nodes/process/ToonBSDF.js'
 export { SpecularBSDF }          from './nodes/process/SpecularBSDF.js'
 export { TranslucentBSDF }       from './nodes/process/TranslucentBSDF.js'
+export { TransparentBSDF }       from './nodes/process/TransparentBSDF.js'
 export { PrincipledHair }        from './nodes/process/PrincipledHair.js'
 
 // ── Process nodes — Converter ─────────────────────────────────────────────────

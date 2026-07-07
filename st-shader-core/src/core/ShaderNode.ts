@@ -221,6 +221,22 @@ export abstract class ShaderNode {
             enumerable:   true,
             configurable: true,
           })
+          // Per-component aliases (e.g. parameters['location.x']) for any vector-typed
+          // uniform parameter, so a KeyframeTrack can animate a single axis. Reads/writes
+          // go through the same uniforms[uniformName].value array as the whole-vector
+          // getter/setter above, so both access styles stay in sync automatically.
+          const AXES = ['x', 'y', 'z'] as const
+          AXES.forEach((axis, idx) => {
+            Object.defineProperty(this.parameters, `${paramName}.${axis}`, {
+              get:          () => (uniforms[uniformName].value as [number, number, number])[idx],
+              set:          (v: number) => {
+                const arr = uniforms[uniformName].value as [number, number, number]
+                arr[idx] = finiteOr(v, 0)
+              },
+              enumerable:   true,
+              configurable: true,
+            })
+          })
         } else {
           Object.defineProperty(this.parameters, paramName, {
             get:          () => uniforms[uniformName].value as number,
