@@ -31,6 +31,12 @@ export class CompileContext {
   private order:        ShaderNode[]                       = []
   private emittedDefs:  Set<string>                        = new Set()
   private defs:         string[]                           = []
+  /**
+   * `#extension` pragmas collected from any node's compileDefs() output.
+   * GLSL requires these before any other non-preprocessor token in the
+   * shader — see _extractExtensions / buildFragmentShader.
+   */
+  private _extensions:  Set<string>                        = new Set()
   private calls:        string[]                           = []
   private graphPath:    string[]                           = []
   private _uniforms:    Record<string, { value: number | number[] }>  = {}
@@ -184,16 +190,33 @@ export class CompileContext {
 
     if (isInstanceSpecific) {
       // Each instance emits its own uniquely named function — no dedup
-      if (defsSource.trim()) this.defs.push(defsSource)
+      if (defsSource.trim()) this.defs.push(this._extractExtensions(defsSource))
     } else {
       // Shared function — emit once per node type
       const key = node.nodeType
       if (!this.emittedDefs.has(key)) {
         this.emittedDefs.add(key)
         const source = fn ?? defsSource
-        if (source.trim()) this.defs.push(source)
+        if (source.trim()) this.defs.push(this._extractExtensions(source))
       }
     }
+  }
+
+  /**
+   * Strips `#extension` lines out of a node's compileDefs() output and
+   * collects them (deduplicated) to be hoisted to the very top of the
+   * fragment shader by buildFragmentShader(). WebGL2/ESSL3 requires
+   * `#extension` directives to appear before any non-preprocessor token —
+   * leaving them in place mid-file (after other nodes' defs/uniforms) throws
+   * "extension directive must occur before any non-preprocessor tokens".
+   * A node just writes `#extension NAME : enable` anywhere in compileDefs()
+   * and gets correct placement automatically — no per-node opt-in needed.
+   */
+  private _extractExtensions(source: string): string {
+    return source.replace(/^[ \t]*#extension[^\n]*$/gm, (line) => {
+      this._extensions.add(line.trim())
+      return ''
+    })
   }
 
   // ── Validation ────────────────────────────────────────────────────
@@ -285,6 +308,7 @@ ${customAssigns}
   }
 
   private buildFragmentShader(): string {
+    const extensionsBlock = [...this._extensions].join('\n')
     const uniformsBlock  = this.buildUniformDeclarations()
     const customVaryings = [...this._vertexInjections.entries()]
       .map(([vName, { attrType }]) => `varying ${attrType} ${vName};`)
@@ -293,6 +317,7 @@ ${customAssigns}
     const callsBlock     = this.calls.map(c => `  ${c}`).join('\n')
 
     return `
+${extensionsBlock}
 precision mediump float;
 
 varying vec2 vUv;
