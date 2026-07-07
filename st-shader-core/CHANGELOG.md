@@ -5,6 +5,34 @@ Format follows `coding-standards/versioning-standards.md` (RULE V-08).
 
 ---
 
+## [0.4.0] — 2026-07-07
+
+### Added
+- **`TransparentBSDF`** node (Blender's "Transparent BSDF" equivalent) — no
+  inputs, always compiles to `vec4(0.0, 0.0, 0.0, 0.0)`. Combine with
+  `MixShader`/`AddShader` to build fresnel-fade, rim-light, or cutout-foliage
+  materials without a hand-written GLSL terminal node (FINDINGS.md #7).
+- Per-component parameter aliases for any vector-typed live uniform parameter:
+  `node.parameters['location.x']` (and `.y`/`.z`) now read/write the same
+  underlying uniform array as the whole-vector `node.parameters.location`
+  getter/setter, in sync in both directions. Implemented once at the shared
+  `ShaderNode._wireParameters` layer, so it applies to every current and
+  future node with a vector uniform param, not just `Mapping`. Unblocks
+  `@triforge/keyframe`'s `KeyframeTrack` animating a single axis (FINDINGS.md #8).
+- `Bump` gained a `method: 'derivative' | 'uv-offset'` option (default
+  `'derivative'`, unchanged). `'uv-offset'` mode samples an explicit height
+  texture (`uniformName`) at `uv ± texelSize` offsets via `texture2DLodEXT`
+  at a fixed `lod`, independent of screen-space derivatives — stable across
+  camera distance for texture-driven relief. Same `strength * distance * 50.0`
+  output scaling as `'derivative'` mode. Resolves the undocumented
+  `Bump`/`TextureBump` duplication a consumer had worked around with a
+  hand-written node.
+
+No breaking changes — all three additions are opt-in / additive.
+12 new regression tests (90/90 passing, up from 78).
+
+---
+
 ## [0.3.0] — 2026-07-07
 
 ### Added

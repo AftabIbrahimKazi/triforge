@@ -343,6 +343,65 @@ backward-compatible at the public API/socket level.
 `toPhysicalMaterial()` (the path-tracer bridge) is untouched — it was already
 correct for what it does and remains a separate, valid code path.
 
+### Follow-up (2026-07-07) — FINDINGS.md #7, #8, and the undocumented Bump/TextureBump split (shader-core 0.4.0)
+
+Three more gaps reported from the Planetarium project, all general-purpose
+library fixes (not consumer-specific):
+
+- **#7 generalized alpha for emission-only graphs** — `Emission.compileCall`
+  hardcoded `vec4(color, 1.0)`; only `PrincipledBSDF` had a real alpha input.
+  Added **`TransparentBSDF`** (Blender's actual mechanism: no inputs, always
+  `vec4(0.0, 0.0, 0.0, 0.0)` — fully transparent, colorless).
+  `ShaderNode.wantsTransparency()` returns `true` unconditionally for it (it's
+  a constant, not a dynamic value). Verified `MixShader(fac, TransparentBSDF,
+  Emission)` alpha-blends correctly through the existing vec4 `mix()` from the
+  earlier alpha-widening work — `fac=0` → fully transparent, `fac=1` → fully
+  opaque emission, no bug found, already worked. This lets any fresnel-fade /
+  rim-light / cutout-foliage graph express alpha without a hand-written
+  terminal node.
+- **#8 per-component parameter aliases** — `node.parameters.location = [x,y,z]`
+  only supported whole-array assignment; `@triforge/keyframe`'s
+  `KeyframeTrack(target, property, keyframes)` can only animate a single
+  scalar property, so per-axis animation (e.g. texture panning on just the
+  x-axis) had no library path. Generalized at the shared parameter-proxy
+  layer (`ShaderNode._wireParameters`, not per-node): every vector-typed live
+  uniform parameter now also exposes flattened `'name.x'`/`'name.y'`/`'name.z'`
+  getters/setters reading/writing the same underlying uniform array as the
+  whole-vector accessor, so both stay in sync. Applies to any current or
+  future node with a vector uniform param (`Mapping.location/rotation/scale`,
+  `PrincipledBSDF.baseColor`, etc.) — not special-cased to `Mapping`.
+- **Undocumented Bump/TextureBump duplication** — the stock `Bump` node's
+  `dFdx`/`dFdy` height gradient is screen-space/rasterization-dependent,
+  causing speckle at minification and texel-seam flicker at magnification for
+  texture-driven relief across a wide camera-distance range. A consumer wrote
+  a whole separate `TextureBump` node sampling at explicit `uv ± texelSize`
+  offsets at a fixed LOD instead. Rather than two node classes, added a
+  `method: 'derivative' | 'uv-offset'` option to `Bump` (default
+  `'derivative'`, unchanged). `'uv-offset'` mode samples via
+  `texture2DLodEXT` (with the `GL_EXT_shader_texture_lod` extension enabled)
+  at `uv ± vec2(texelSize, 0)` / `uv ± vec2(0, texelSize)`, builds the
+  tangent/bitangent frame from `dFdx`/`dFdy` of `vPosition`/`vUv` (that's
+  building the tangent basis, not sampling the height — no stability problem
+  there, same cotangent approach `NormalMap` already uses), and keeps the same
+  `strength * distance * 50.0` output scaling as derivative mode so swapping
+  `method` doesn't require retuning constants. `Bump.instanceSpecificDef`
+  flipped to `true` so multiple `'uv-offset'` instances each get their own
+  `uniformName` declaration instead of being deduped by node type; the shared
+  `'derivative'` function is now `#ifndef`-guarded so it stays safe to emit
+  per-instance too.
+
+12 new regression tests added to `st-shader-core/test/run-tests.js` (90/90
+passing, up from 78). `assertGlslIdentifier` applied to `Bump`'s new
+`uniformName`, matching the `Attribute`/`ImageTexture`/`EnvironmentTexture`
+security precedent. No public API changes to existing nodes — `TransparentBSDF`
+is additive, `Bump`'s new fields are optional and default to prior behavior.
+
+Consumer follow-up (not done here, downstream repo's responsibility once
+upgraded): the planetarium project can retire its hand-written `RgbaOutput`,
+`UvPan`, and `TextureBump` custom nodes in favor of `TransparentBSDF`/
+`MixShader`, the `'name.x'` parameter aliases, and `Bump({ method: 'uv-offset' })`
+respectively.
+
 ---
 
 ## Ecosystem-Wide — Remaining
