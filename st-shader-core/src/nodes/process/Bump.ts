@@ -126,14 +126,11 @@ vec3 _st_bump(float height, float strength, float distance, vec3 N) {
 
   compileDefs(): string {
     if (this._method === 'uv-offset') {
-      // The #extension line is hoisted to the very top of the fragment shader
-      // (before `precision`) and deduplicated by CompileContext regardless of
-      // where/how many times it's emitted here — see
-      // CompileContext._extractExtensions. No local guard needed.
-      return [
-        '#extension GL_EXT_shader_texture_lod : enable',
-        `uniform sampler2D ${this._uniformName};`,
-      ].join('\n')
+      // No #extension needed: three.js's WebGL2/ESSL3 prefix already
+      // #defines texture2DLodEXT to the core textureLod() built-in, and that
+      // prefix is injected ahead of anything CompileContext could hoist this
+      // extension above — emitting it here breaks ESSL3's ordering rule.
+      return `uniform sampler2D ${this._uniformName};`
     }
     return Bump.derivativeGlslFunction
   }

@@ -5,6 +5,26 @@ Format follows `coding-standards/versioning-standards.md` (RULE V-08).
 
 ---
 
+## [0.4.2] — 2026-07-08
+
+### Fixed
+- **`Bump({ method: 'uv-offset' })` still broke WebGL2 compilation after the
+  0.4.1 hoisting fix.** The 0.4.1 fix hoisted `#extension` lines within
+  shader-core's own compiled output, but `OutputNode.compile()` builds a
+  plain `THREE.ShaderMaterial`, and three.js's `WebGLProgram.js` always
+  injects its own `luminance()`/colorspace prefix block ahead of the
+  compiled fragment source — entirely outside `CompileContext`'s control.
+  No amount of hoisting inside shader-core's output can place `#extension`
+  ahead of that prefix, so the ordering error persisted for any real render.
+  Fixed by removing the `#extension GL_EXT_shader_texture_lod : enable` line
+  from `Bump.compileDefs()` entirely rather than hoisting it: three.js's
+  WebGL2/ESSL3 code path already `#define`s `texture2DLodEXT` to the core
+  `textureLod()` built-in, so the extension was dead code in the only target
+  three.js actually compiles against (WebGL2) and can simply be omitted. No
+  change to `compileCall()` or the sampling math.
+
+---
+
 ## [0.4.1] — 2026-07-07
 
 ### Fixed

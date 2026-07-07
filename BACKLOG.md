@@ -441,6 +441,32 @@ graph and asserts `#extension` is the first non-empty line; one extends the
 existing multi-instance test to assert the extension appears exactly once
 (not once per `uv-offset` `Bump` instance). Published as 0.4.1.
 
+### Follow-up (2026-07-08) — 0.4.1's hoist fix wasn't enough: real render still broke (shader-core 0.4.2)
+
+0.4.1's hoist only reorders `#extension` lines *within* shader-core's own
+compiled output. It can't reach far enough: `OutputNode.compile()` always
+builds a plain `THREE.ShaderMaterial` (not `RawShaderMaterial`), and
+three.js's `WebGLProgram.js` unconditionally injects its own
+`luminance()`/colorspace prefix block ahead of wherever the compiled
+`fragmentShader` string gets appended — assembled entirely outside
+`CompileContext`'s control. So the hoisted `#extension` line still landed
+after non-preprocessor content once three.js's own prefix was in play,
+confirmed via an actual WebGL2 render (a static source-level check of
+`result.fragmentShader` alone wouldn't have caught this — it only
+manifests once three.js's prefix injection runs).
+
+**Fixed by deleting the `#extension` line from `Bump.compileDefs()`
+entirely** instead of trying to hoist it further: three.js's WebGL2/ESSL3
+code path already `#define`s `texture2DLodEXT` → the core `textureLod()`
+built-in, so `GL_EXT_shader_texture_lod` was dead code in the only target
+three.js actually compiles against. `GL_EXT_shader_texture_lod` only ever
+mattered on WebGL1, which three.js hasn't defaulted to in several major
+versions. No change to `compileCall()` — the sampling math is untouched.
+
+3 previously-passing tests updated to assert the extension is *never*
+emitted (rather than hoisted-and-deduplicated); all 91 tests pass.
+Published as 0.4.2.
+
 ---
 
 ## Ecosystem-Wide — Remaining
