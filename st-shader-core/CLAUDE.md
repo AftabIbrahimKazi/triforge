@@ -12,6 +12,7 @@ ALWAYS use node classes to build materials.
 ALWAYS end every material graph with MaterialOutput.
 Math is exported as ShaderMath to avoid clashing with JavaScript's built-in Math object.
 Color inputs (hex or [r,g,b] array, unconnected) are live uniform vec3 — animatable via node.parameters.colorName = [r,g,b].
+Any vector-typed live uniform parameter (color-type or shader-alpha-adjacent) also exposes flattened per-axis aliases — node.parameters['location.x'] reads/writes the same underlying value as node.parameters.location[0]. Useful for animating a single axis with @triforge/keyframe's KeyframeTrack, which only targets one scalar property at a time.
 
 ---
 
@@ -20,15 +21,23 @@ Color inputs (hex or [r,g,b] array, unconnected) are live uniform vec3 — anima
 'vector' = vec2  — UV coordinates and 2D spatial inputs ONLY
 'color'  = vec3  — RGB colours, normals, positions, directions
 'float'  = float — single scalar value
-'shader' = vec3  — BSDF output (connects to MaterialOutput.surface)
+'shader' = vec4  — BSDF output (RGB + alpha), connects to MaterialOutput.surface
 ```
 Normal map outputs MUST use 'color' type (vec3), NOT 'vector' (vec2).
 Any node input that accepts a normal map MUST be typed 'color', not 'vector'.
 
-'color'/'shader' (vec3) and 'vector' (vec2) sockets are connection-compatible: the
-CompileContext implicitly converts at the connection point (`.xy` narrowing vec3→vec2,
-`vec3(v, 0.0)` widening vec2→vec3), so e.g. `Mapping.Vector` (vec3) can drive
+'color'/'shader' and 'vector' sockets are connection-compatible: the CompileContext
+implicitly converts at the connection point (`.xy` narrowing to vec2, `vec3(v, 0.0)` /
+`vec4(v, 0.0, 1.0)` widening from vec2), so e.g. `Mapping.Vector` (vec3) can drive
 `ImageTexture.vector` (vec2) directly — no manual conversion node needed.
+'color' (vec3) and 'shader' (vec4) also implicitly convert into each other — `.rgb`
+narrowing drops alpha, `vec4(v, 1.0)` widening adds an opaque alpha channel.
+`PrincipledBSDF.alpha` flows through this vec4 channel end-to-end to
+`MaterialOutput`'s compiled `gl_FragColor` — set it below 1.0 (literal or connected)
+and the compiled material's `transparent` flag is set automatically
+(`ShaderNode.wantsTransparency()`). Use `TransparentBSDF` (no inputs, always fully
+transparent) combined with `MixShader`/`AddShader` for emission-only or
+fresnel-driven transparency.
 
 ---
 
@@ -143,7 +152,7 @@ MixRGB modes: 'MIX' | 'DARKEN' | 'MULTIPLY' | 'BURN' | 'LIGHTEN' | 'SCREEN' |
 | Node | Key Inputs | Outputs |
 |---|---|---|
 | `NormalMap` | color (color, from ImageTexture RGB), strength | Normal (color) — tangent-space texture decode, derivative-based TBN |
-| `Bump` | height (float), strength, distance, normal | Normal (color) |
+| `Bump` | height (float), strength, distance, normal, method ('derivative'\|'uv-offset'), uniformName/vector/texelSize/lod (uv-offset only) | Normal (color) — 'uv-offset' mode samples a height texture directly (texture2DLodEXT at explicit uv±texelSize offsets), camera-distance-stable; 'derivative' (default) uses screen-space dFdx/dFdy |
 | `Mapping` | vector, location, rotation (deg), scale | Vector (color) |
 | `VectorMath` | mode, vector, vectorB, scale | Vector (color), Value (float) |
 | `SeparateRGB` | color | R, G, B (float) |
@@ -174,6 +183,7 @@ VectorMath modes: 'ADD' | 'SUBTRACT' | 'MULTIPLY' | 'DIVIDE' | 'SCALE' |
 | `ToonBSDF` | color, size, smooth, normal | BSDF (shader) |
 | `SpecularBSDF` | baseColor, specular (color), roughness, normal | BSDF (shader) |
 | `TranslucentBSDF` | color, normal | BSDF (shader) |
+| `TransparentBSDF` | — (no inputs) | BSDF (shader) — always vec4(0,0,0,0), fully transparent/colorless. Combine with MixShader/AddShader for fresnel-fade, rim-light, cutout materials. |
 | `PrincipledHair` | color, roughness, radialRoughness, coat, ior, offset, randomColor, randomRoughness, random, tangent | BSDF (shader) — Kajiya-Kay dual-lobe hair |
 | `Emission` | color, strength | BSDF (shader) |
 | `MixShader` | fac, shader1, shader2 | BSDF (shader) |
