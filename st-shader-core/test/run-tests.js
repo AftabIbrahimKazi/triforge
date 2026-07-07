@@ -18,6 +18,8 @@ import {
   ImageTexture,
   Mapping,
   NormalMap,
+  Bump,
+  TransparentBSDF,
   ShaderScript,
   Attribute,
   isValidGlslIdentifier,
@@ -801,6 +803,154 @@ test('FIX #1: ShaderToRGB extracts the real alpha channel instead of hardcoding 
     throw new Error('ShaderToRGB Alpha still hardcoded to 1.0')
   }
   if (!result.fragmentShader.includes('.a;')) throw new Error('ShaderToRGB should extract .a from the vec4 shader')
+})
+
+// ── FINDINGS #7: TransparentBSDF — generalized alpha for any shader graph ──────
+
+test('TransparentBSDF has no inputs and outputs BSDF (shader)', () => {
+  const t = new TransparentBSDF()
+  if (Object.keys(t.getInputSockets()).length !== 0) throw new Error('TransparentBSDF should have no inputs')
+  if (t.output('BSDF').type !== 'shader') throw new Error('BSDF output should be shader type')
+})
+
+test('TransparentBSDF compiles to a fully-transparent, colorless vec4 literal', () => {
+  const t   = new TransparentBSDF()
+  const mat = new MaterialOutput({ surface: t.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('vec4(0.0, 0.0, 0.0, 0.0)')) {
+    throw new Error('TransparentBSDF should emit vec4(0.0, 0.0, 0.0, 0.0)')
+  }
+  if (mat.material.transparent !== true) throw new Error('TransparentBSDF alone should mark the material transparent')
+})
+
+test('FIX: MixShader(fresnelFac, TransparentBSDF, Emission) alpha-blends correctly through the vec4 mix', () => {
+  const fresnel = new Fresnel()
+  const trans   = new TransparentBSDF()
+  const emit    = new Emission({ color: '#ff8800', strength: 1.0 })
+  const mixed   = new MixShader({ fac: fresnel.output('Fac'), shader1: trans.output('BSDF'), shader2: emit.output('BSDF') })
+  const mat     = new MaterialOutput({ surface: mixed.output('BSDF') })
+  const result  = mat.compile()
+
+  if (mat.material.transparent !== true) {
+    throw new Error(`expected transparent:true for a TransparentBSDF-driven mix, got ${mat.material.transparent}`)
+  }
+  if (!result.fragmentShader.includes('_st_mixShader(')) throw new Error('MixShader call missing')
+  // The mix's alpha channel should be the raw fresnel Fac value, not a hardcoded 1.0 —
+  // i.e. no BSDF assignment anywhere in the graph should still read ", 1.0);" for this chain.
+  const transVar = `_st_${trans.id}_BSDF`
+  if (!result.fragmentShader.includes(`vec4 ${transVar} = vec4(0.0, 0.0, 0.0, 0.0);`)) {
+    throw new Error('TransparentBSDF output not wired into the mix as expected')
+  }
+})
+
+// ── FINDINGS #8: per-component parameter aliases for vector-typed uniforms ─────
+
+test('FIX: parameters exposes flattened per-component aliases (location.x/.y/.z) after compile()', () => {
+  const mapping = new Mapping({ location: [1, 2, 3] })
+  const img     = new ImageTexture({ uniformName: 'uAliasTex', vector: mapping.output('Vector') })
+  const emit    = new Emission({ color: img.output('Color') })
+  const mat     = new MaterialOutput({ surface: emit.output('BSDF') })
+  mat.compile()
+
+  if (mapping.parameters['location.x'] !== 1) throw new Error(`expected location.x===1, got ${mapping.parameters['location.x']}`)
+  if (mapping.parameters['location.y'] !== 2) throw new Error(`expected location.y===2, got ${mapping.parameters['location.y']}`)
+  if (mapping.parameters['location.z'] !== 3) throw new Error(`expected location.z===3, got ${mapping.parameters['location.z']}`)
+})
+
+test('FIX: writing parameters["location.x"] updates only the x component, in sync with the whole-array getter', () => {
+  const mapping = new Mapping({ location: [0, 0, 0] })
+  const img     = new ImageTexture({ uniformName: 'uAliasTex2', vector: mapping.output('Vector') })
+  const emit    = new Emission({ color: img.output('Color') })
+  const mat     = new MaterialOutput({ surface: emit.output('BSDF') })
+  mat.compile()
+
+  // Simulates what a KeyframeTrack(mapping.parameters, 'location.x', [...]) would do per-frame.
+  mapping.parameters['location.x'] = 5
+  const whole = mapping.parameters.location
+  if (whole[0] !== 5) throw new Error(`expected location[0]===5 after location.x write, got ${whole[0]}`)
+  if (whole[1] !== 0 || whole[2] !== 0) throw new Error('writing location.x should not touch y/z')
+
+  // Whole-array write should stay visible through the per-component alias too.
+  mapping.parameters.location = [7, 8, 9]
+  if (mapping.parameters['location.y'] !== 8) throw new Error(`expected location.y===8 after whole-array write, got ${mapping.parameters['location.y']}`)
+})
+
+test('FIX: per-component aliases work for any vector-typed uniform param, not just Mapping.location', () => {
+  const bsdf = new PrincipledBSDF({ baseColor: [0.2, 0.4, 0.6] })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  mat.compile()
+  if (Math.abs(bsdf.parameters['baseColor.x'] - 0.2) > 1e-6) throw new Error('baseColor.x alias missing/wrong on a non-Mapping node')
+  bsdf.parameters['baseColor.z'] = 0.9
+  if (Math.abs(bsdf.parameters.baseColor[2] - 0.9) > 1e-6) throw new Error('baseColor.z write did not sync to the whole-array getter')
+})
+
+// ── (undocumented) Bump/TextureBump duplication: method:'uv-offset' ────────────
+
+test('Bump default method is "derivative" — existing behaviour/GLSL unchanged', () => {
+  const bump = new Bump({ strength: 1.0 })
+  const bsdf = new PrincipledBSDF({ normal: bump.output('Normal') })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('_st_bump(')) throw new Error('derivative-mode Bump function missing')
+})
+
+test('Bump throws when method:"uv-offset" and uniformName is omitted', () => {
+  let threw = false
+  try {
+    // eslint-disable-next-line no-new
+    new Bump({ method: 'uv-offset' })
+  } catch { threw = true }
+  if (!threw) throw new Error('Bump should require uniformName for method:"uv-offset"')
+})
+
+test('SECURITY: Bump rejects a GLSL-injecting uniformName at construction', () => {
+  let threw = false
+  try {
+    // eslint-disable-next-line no-new
+    new Bump({ method: 'uv-offset', uniformName: 'uTex; } /* pwned */ void main(){' })
+  } catch { threw = true }
+  if (!threw) throw new Error('Bump accepted an injecting uniformName — GLSL injection possible')
+})
+
+test('Bump method:"uv-offset" samples via texture2DLodEXT at explicit uv+-texelSize offsets, no dFdx(height)/dFdy(height)', () => {
+  const bump = new Bump({ method: 'uv-offset', uniformName: 'uHeightTex', strength: 1.0, distance: 1.0 })
+  const bsdf = new PrincipledBSDF({ normal: bump.output('Normal') })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+
+  if (!result.fragmentShader.includes('texture2DLodEXT(uHeightTex')) {
+    throw new Error('uv-offset Bump should sample via texture2DLodEXT')
+  }
+  if (!result.fragmentShader.includes('GL_EXT_shader_texture_lod')) {
+    throw new Error('uv-offset Bump should enable the shader_texture_lod extension')
+  }
+  if (result.fragmentShader.includes('dFdx(height)') || result.fragmentShader.includes('dFdy(height)')) {
+    throw new Error('uv-offset Bump should not use dFdx(height)/dFdy(height) for the height sample itself')
+  }
+  if (!result.fragmentShader.includes('uniform sampler2D uHeightTex;')) {
+    throw new Error('uv-offset Bump should declare its own sampler2D uniform')
+  }
+})
+
+test('Bump method:"uv-offset" keeps the same strength*distance*50.0 output scaling as derivative mode', () => {
+  const bump = new Bump({ method: 'uv-offset', uniformName: 'uHeightTex2' })
+  const bsdf = new PrincipledBSDF({ normal: bump.output('Normal') })
+  const mat  = new MaterialOutput({ surface: bsdf.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('* 50.0;')) throw new Error('uv-offset Bump should keep the *50.0 scale constant')
+})
+
+test('Two uv-offset Bump instances with different uniformNames both compile without collision', () => {
+  const bumpA = new Bump({ method: 'uv-offset', uniformName: 'uHeightA' })
+  const bumpB = new Bump({ method: 'uv-offset', uniformName: 'uHeightB' })
+  const mixed = new AddShader({
+    shader1: new PrincipledBSDF({ normal: bumpA.output('Normal') }).output('BSDF'),
+    shader2: new PrincipledBSDF({ normal: bumpB.output('Normal') }).output('BSDF'),
+  })
+  const mat = new MaterialOutput({ surface: mixed.output('BSDF') })
+  const result = mat.compile()
+  if (!result.fragmentShader.includes('uniform sampler2D uHeightA;')) throw new Error('uHeightA uniform missing')
+  if (!result.fragmentShader.includes('uniform sampler2D uHeightB;')) throw new Error('uHeightB uniform missing')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────
