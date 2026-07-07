@@ -1,6 +1,6 @@
 ﻿# Triforge — Handover Document
 
-Last updated: 2026-07-04
+Last updated: 2026-07-07
 
 ---
 
@@ -18,18 +18,21 @@ Paid addons live under `addons/` — gitignored, never pushed until ready.
 
 ## Repository State
 
-**Branch flow:** `dev` → `test` → `beta` → `main`
+**Branch flow:** `dev` → `test` → `beta` → `main` (see `coding-standards/git-standards.md`, binding every session)
 **Default branch:** `main`
 **Branch protection:** `main` has a ruleset — no direct pushes, no force pushes, no deletions. PR required.
-**All 4 branches are in sync** as of last session (commit `29120ca`).
+**All 4 branches are in sync** as of this session. No extra branches exist beyond the 4.
+**Coding standards:** `coding-standards/` (tracked, pushed to GitHub) replaced the old gitignored `My-Coding-Standards/`, which no longer exists in this repo.
 
 ---
 
 ## Published Packages — Current Versions
 
+All versions below are confirmed identical between npm and GitHub `main` (RULE V-05).
+
 | Package | Version |
 |---|---|
-| `@triforge/shader-core` | 0.2.0 |
+| `@triforge/shader-core` | 0.4.1 |
 | `@triforge/geometry-nodes` | 0.1.1 |
 | `@triforge/modifier-core` | 0.1.1 |
 | `@triforge/curve-core` | 0.1.1 |
@@ -37,15 +40,17 @@ Paid addons live under `addons/` — gitignored, never pushed until ready.
 | `@triforge/uv-core` | 0.1.1 |
 | `@triforge/particle-core` | 0.1.1 |
 | `@triforge/physics-core` | 0.1.1 |
-| `@triforge/animation-core` | 0.1.1 |
+| `@triforge/animation-core` | 0.1.2 |
 | `@triforge/keyframe` | 0.1.1 |
-| `@triforge/compositor-core` | 0.1.1 |
+| `@triforge/compositor-core` | 0.1.2 |
 | `@triforge/pathtracer-core` | 0.1.1 |
 | `@triforge/fluid-core` | 0.1.1 |
 | `@triforge/metaball-core` | 0.1.1 |
 | `@triforge/hair-core` | 0.1.0 |
 | `@triforge/volume-core` | 0.1.0 |
 | `@triforge/core-types` | 0.1.0 |
+
+All 17 are also mirrored to GitHub Packages as `@aftabibrahimkazi/<name>` (visibility only — npm stays the source of truth, see `.github/workflows/mirror-github-packages.yml`).
 
 ---
 
@@ -500,12 +505,29 @@ parallel with each other once Phase A is done and tested)**
 
 ## Important Rules (Never Break)
 
+- `coding-standards/` — binding every session automatically, no reminder needed. Read the actual files for specifics; this list is not a substitute.
 - `addons/` — never push to any branch
-- `My-Coding-Standards/` — never push, read and follow locally
-- `main` branch — never push directly, always via PR
+- `main` branch — never push directly; always `dev → test → beta → main`, no stage skipped, `main` requires owner approval (`git-standards.md` RULE G-01–G-03)
+- Temp branches: `[type]/[short-description]`, deleted immediately after merge (RULE G-04/G-05) — never leave merged branches around
+- npm and GitHub `main` versions must match exactly at all times (RULE V-05); version bump happens only at push time, as the last step (RULE V-04)
 - Packages never import from each other (except `@triforge/core-types`)
 - Every addon must work with Three.js alone — triforge packages are opt-in
 - No `any` types, no `@ts-ignore`, no dynamic template-literal imports
+
+---
+
+## Session — 2026-07-07
+
+- **Security audit + fixes** (3 core packages): `ExpressionDriver` `new Function()` → sandboxed `SafeExpression` parser; GLSL injection via `Attribute`/`ImageTexture`/`EnvironmentTexture`/`Bump` `uniformName` → `assertGlslIdentifier`; uncapped `st-compositor-core` GLSL loop bounds → `glslLoopBound()`. Published as `animation-core` 0.1.2, `compositor-core` 0.1.2, `shader-core` patches.
+- **FINDINGS.md follow-through** (external consumer project, Exo Space Planetarium) — `shader-core` taken from 0.1.1 → 0.4.1:
+  - Per-fragment alpha through `MaterialOutput`: `shader` sockets widened vec3→**vec4** end-to-end (0.3.0). First attempt (0.2.0) was documented as fixed but wasn't — only reached the unused `toPhysicalMaterial()` path; corrected with a reproducer test on the actual `compile()` path.
+  - `TransparentBSDF`, per-component parameter aliases (`parameters['location.x']`), `Bump.method:'uv-offset'` (0.4.0).
+  - Same-day bugfix: `#extension` directives now hoisted/deduped at `CompileContext`, not per-node (0.4.1) — WebGL2 compile failure when `Bump.uv-offset` combined with another defs-emitting node.
+  - Vector/color socket compatibility, generic `ShaderScript` escape hatch, tangent-space `NormalMap`, `PrincipledBSDF` ambient term (0.2.0, prior session).
+- **`coding-standards/` folder** replaced `My-Coding-Standards/` — now tracked and pushed, binding every session per `ai-standards.md`/user instruction.
+- **GitHub Packages mirror** — `workflow_dispatch`-only CI job mirrors all 17 npm packages to GitHub Packages (`@aftabibrahimkazi/<name>`) purely for the repo sidebar's "Packages" widget. npm stays the sole source of truth; never runs automatically.
+- **README npm badges** — top-level + per-package version badges, all linking to npmjs.com.
+- All work went through the full `dev → test → beta → main` chain per PR, `main` merges owner-approved. Stray branches from incomplete `--delete-branch` calls cleaned up — only 4 branches exist now.
 
 ---
 
