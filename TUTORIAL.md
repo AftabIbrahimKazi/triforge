@@ -41,6 +41,7 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 | `st-pathtracer-core` | Raster ↔ path-tracer toggle; LightPathController multi-pass rendering | — |
 | `st-metaball-core` | Organic iso-surfaces — MetaballWorld, positive + negative blobs | — |
 | `st-core-types` | Shared TypeScript interfaces — IModifier, ICurve, IStrand, IForce, IConstraint + 11 more | 8 |
+| `render-budget-core` | Engine-agnostic device/network profiling → render-quality budget (texture tier, shader complexity, context-count policy). No Three.js dependency. | 25 |
 
 ---
 
@@ -1244,6 +1245,77 @@ const lscm = new ConformalLSCM()
 const result = lscm.unwrap(geo)
 geo.setAttribute('uv', result.uvAttribute)
 ```
+
+---
+
+## `render-budget-core` — Device/Network-Aware Render Budgets
+
+Real device and network probes turned into a single quality decision, so you don't have to hand-tune texture resolution, shader complexity, or WebGL context limits per device. Built to fix a real bug class: silent AVIF decode failures on mobile, procedural shaders failing to compile under `mediump`, and WebGL context exhaustion from too many simultaneous renderers — all invisible in the console, all looking like "nothing rendered."
+
+No Three.js dependency — this package is engine-agnostic. It doesn't create renderers, materials, or contexts; it only tells you what's safe to create.
+
+### Quick start — resolving a budget plan
+
+```typescript
+import { initRenderBudget } from '@triforge/render-budget-core'
+
+const plan = await initRenderBudget()
+
+console.log(plan.textureTier)            // 'high' | 'mid' | 'low' | 'potato'
+console.log(plan.textureFormat)          // 'avif' | 'jpg' — only 'high' ever requests avif
+console.log(plan.shaderComplexity)       // 'full' | 'reduced' | 'baked-only'
+console.log(plan.maxConcurrentContexts)  // safe ceiling for a context-pool or similar
+```
+
+### Using the plan to pick a texture
+
+```typescript
+// One master texture, four pre-generated variants — see BACKLOG.md for the
+// build-time generation workflow. The loader is a pure string lookup, no
+// runtime format probing per texture.
+const url = `/textures/earth-daymap-${plan.textureTier}.${plan.textureFormat}`
+const texture = new THREE.TextureLoader().load(url)
+```
+
+### Using the plan to avoid a procedural-shader mobile bug
+
+```typescript
+import { PrincipledBSDF, NoiseTexture, MaterialOutput } from '@triforge/shader-core'
+
+const material = plan.shaderComplexity === 'baked-only'
+  ? new THREE.MeshBasicMaterial({ map: bakedSkyTexture })          // safe everywhere
+  : buildProceduralNebulaMaterial()                                 // uses @triforge/shader-core node graph
+```
+
+### Letting users override the auto-detected tier
+
+```typescript
+import { initRenderBudget, setUserOverride, clearUserOverride } from '@triforge/render-budget-core'
+
+// e.g. a settings-panel "Low quality" button
+setUserOverride(localStorage, { textureTier: 'low' })
+const plan = await initRenderBudget() // now returns { textureTier: 'low', source: 'manual-override', ... }
+
+clearUserOverride(localStorage) // back to auto-detection next call
+```
+
+### Testing every tier without matching hardware
+
+```typescript
+// ?forceQuality=potato in the URL — only works if allowDevOverride is true, and
+// can only force a WORSE tier than what was actually auto-detected (never better),
+// so a real visitor can't force a tier their device can't handle and file an
+// unreproducible bug report.
+const plan = await initRenderBudget({ allowDevOverride: !isProd })
+```
+
+### Precedence, if you need to reason about a specific result
+
+1. A user's explicit override (via `setUserOverride`) wins outright.
+2. `saveData` (OS/browser data-saver signal) forces the most conservative **texture tier only** — shader complexity and context budget are hardware-only, unaffected by network conditions.
+3. Otherwise: `textureTier = min(hardwareTier, networkTier)` — whichever is more conservative wins; neither one categorically outranks the other.
+
+See `render-budget-core/CLAUDE.md` for the full internal design (injectable probe seams, caching strategy, the context-count/texture-size probing race this package works around).
 
 ---
 
