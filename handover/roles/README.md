@@ -1,0 +1,1 @@
+Role charters go here as `<role>.md` — one file per lane (mission, owned paths, forbidden paths, definition of done). See `.claude/skills/role-session/templates.md` for the charter template. No roles are chartered yet.
