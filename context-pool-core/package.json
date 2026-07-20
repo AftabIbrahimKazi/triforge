@@ -1,0 +1,59 @@
+{
+  "name": "@triforge/context-pool-core",
+  "version": "0.1.0",
+  "description": "Engine-agnostic scissor/viewport multiplexer — share one real rendering context across many logical canvases, enforcing a context-count budget instead of creating one context per canvas",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node test/run-tests.js",
+    "bench": "node bench/run-bench.js"
+  },
+  "keywords": [
+    "context-pool",
+    "webgl",
+    "scissor",
+    "viewport",
+    "three.js"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "three": ">=0.128.0"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/three": "^0.165.0",
+    "three": "^0.165.0",
+    "typescript": "^5.3.0"
+  },
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "context-pool-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./three": {
+      "import": "./dist/adapters/ThreeContextAdapter.js",
+      "types": "./dist/adapters/ThreeContextAdapter.d.ts"
+    }
+  }
+}
