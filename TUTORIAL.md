@@ -42,6 +42,7 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 | `st-metaball-core` | Organic iso-surfaces — MetaballWorld, positive + negative blobs | — |
 | `st-core-types` | Shared TypeScript interfaces — IModifier, ICurve, IStrand, IForce, IConstraint + 11 more | 8 |
 | `render-budget-core` | Engine-agnostic device/network profiling → render-quality budget (texture tier, shader complexity, context-count policy). No Three.js dependency. | 25 |
+| `context-pool-core` | Engine-agnostic scissor/viewport multiplexer — N logical canvases share 1 real rendering context, enforcing a context-count budget. `ThreeContextAdapter` is the only Three.js-specific part. | 20 |
 
 ---
 
@@ -1316,6 +1317,63 @@ const plan = await initRenderBudget({ allowDevOverride: !isProd })
 3. Otherwise: `textureTier = min(hardwareTier, networkTier)` — whichever is more conservative wins; neither one categorically outranks the other.
 
 See `render-budget-core/CLAUDE.md` for the full internal design (injectable probe seams, caching strategy, the context-count/texture-size probing race this package works around).
+
+---
+
+## `context-pool-core` — One Renderer, Many Canvases
+
+Fixes the other half of the mobile bug `render-budget-core` was built alongside: a page with many small canvases (a carousel of "planet orb" previews, say) that each create their own `THREE.WebGLRenderer` will silently exhaust the browser's WebGL context ceiling on mobile — the browser force-loses the oldest contexts with no error, and those canvases just go blank.
+
+The fix is one shared renderer instead of N. `ContextPool` (the engine-agnostic core) decides which registered scenes are visible and fit inside a context-count budget; `ThreeContextAdapter` (a separate `/three` subpath export, so non-Three.js consumers never pull in Three.js types) turns that decision into real `setScissor`/`setViewport`/`render()` calls against one shared `WebGLRenderer`.
+
+### Quick start — sharing one renderer across many orbs
+
+```typescript
+import * as THREE from 'three'
+import { ThreeContextAdapter } from '@triforge/context-pool-core/three'
+import { initRenderBudget } from '@triforge/render-budget-core'
+
+const plan = await initRenderBudget()
+
+const renderer = new THREE.WebGLRenderer({ canvas: overlayCanvas, alpha: true })
+const adapter = new ThreeContextAdapter({
+  renderer,
+  maxConcurrent: plan.maxConcurrentContexts, // the two packages never import each other — wire the number yourself
+})
+
+// One registration per "orb" — anchor is the placeholder element that already
+// has the right position/size in your existing layout/CSS.
+for (const orb of orbs) {
+  adapter.registerScene(orb.id, { scene: orb.scene, camera: orb.camera, anchor: orb.placeholderEl })
+}
+
+function animate() {
+  requestAnimationFrame(animate)
+  adapter.renderFrame() // only the visible, budget-approved scenes actually render this frame
+}
+animate()
+```
+
+### What happens when there are more visible orbs than budget
+
+The over-budget ones are simply skipped that frame (not rendered, not erroring) — and `ContextPool` is "sticky": whichever scenes were already rendering keep their slot as you scroll, rather than flickering between different scenes each frame as visibility changes. A scene only loses its slot when it actually goes off-screen.
+
+### Using a different engine (or raw WebGL)
+
+Only `ThreeContextAdapter` knows about Three.js. The core `ContextPool` just needs a DOM anchor and a `render(viewport)` callback per client — swap in Babylon or raw `gl.drawArrays` calls and the scheduling logic (visibility, budget, sticky selection) works unchanged:
+
+```typescript
+import { ContextPool } from '@triforge/context-pool-core'
+
+const pool = new ContextPool({ maxConcurrent: 4 })
+pool.register({
+  id: 'my-canvas',
+  getAnchorRect: () => placeholderEl.getBoundingClientRect(),
+  render: (viewport) => { /* your own gl.viewport/gl.scissor + draw calls */ },
+})
+```
+
+See `context-pool-core/CLAUDE.md` for the full internal design (sticky-selection rules, the DOM-to-GL Y-flip, context-loss handling on the one shared context).
 
 ---
 
