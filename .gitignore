@@ -9,3 +9,9 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Internal process docs — local reference only, not part of the shipped project
+BACKLOG.md
+HANDOVER.md
+**/HANDOVER.md
+coding-standards/
