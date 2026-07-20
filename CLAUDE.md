@@ -294,6 +294,88 @@ When unsure which package a feature belongs to, refer to this table and the ecos
 
 ## Reference Files
 
-- `BACKLOG.md` — deferred features, blocked work, future packages
+- `BACKLOG.md` — deferred features, blocked work, future packages (local only, gitignored)
 - `TUTORIAL.md` — user-facing guide, updated with every working feature
 - `THREE_JS_ECOSYSTEM.md` — ecosystem architecture overview
+- `ECOSYSTEM_STATUS.md` — prior project status/handover doc (local only, gitignored; superseded going forward by `handover.md`, see below)
+- `handover.md` — current session-to-session state (local only, gitignored) — see Session Start Protocol
+
+---
+
+## Session Start Protocol
+
+At the start of every session Claude must:
+
+1. Read `coding-standards/index.md` — loads the full standards map
+2. Confirm active standards below are loaded
+3. Begin every response with `[CX]` — signals context is active
+4. Declare loaded standards on the first response of the session
+
+If `[CX]` is ever missing from a response the session has lost context. Stop immediately, discard the response, and start a new session.
+
+---
+
+## Active Standards
+
+| Standard | Active |
+|---|---|
+| CSS standard | N/A — no CSS in this repo (library/package ecosystem, no styled UI) |
+| HTML standard | N/A — `examples/*.html` files are throwaway demo scaffolding, not shipped UI |
+| Script standard | `coding-standards/js-and-ts-standards.md` (packages are TS-strict; `examples/` demo files are plain JS) |
+| Git standard | `coding-standards/git-standards.md` |
+| Versioning standard | `coding-standards/versioning-standards.md` |
+| SEO standard | N/A — not a web-facing project |
+| Performance standard | `coding-standards/performance-standards.md` |
+| Accessibility standard | N/A — no UI surface |
+| QA standard | `coding-standards/qa-standards.md` |
+| AI standard | `coding-standards/ai-standards.md` |
+| Framework | N/A |
+| CSS Framework | N/A |
+
+---
+
+## Project-Specific Context
+
+| Property | Value |
+|---|---|
+| Project name | Triforge — modular Three.js ecosystem |
+| Framework | None (vanilla Three.js + TypeScript packages) |
+| CSS framework | None |
+| Script standard | JS + TS combined |
+| CSS token prefix | N/A |
+| Selector signature | N/A |
+| Token file | N/A |
+| Global stylesheet | N/A |
+| Entry scripts | each package's `src/index.ts`; demo entry points under `examples/*.html` |
+
+---
+
+## How to Load Standards Per File
+
+Before editing any file identify its role using the table in `coding-standards/index.md` then load:
+
+1. The relevant discipline global standard (`js-and-ts-standards.md`, etc.)
+2. The relevant file-role partial (`js-and-ts-standards/class-files.md`, etc.)
+3. The relevant framework file if applicable — N/A for this project
+
+Never edit a file without loading its standard chain first.
+
+---
+
+## AI Behavioural Contract
+
+- Every response starts with `[CX]`
+- First response of every session declares which standards are loaded
+- No restating the task before acting
+- No trailing summaries after completing work
+- No filler phrases
+- No invented rules — gaps in standards are flagged to the developer
+- Full rules in `coding-standards/ai-standards.md`
+
+---
+
+## Parallel-Session Coordination
+
+Before claiming or resuming any task in the parallel-session system (`handover/` — board, locks, per-role handovers), read `handover/PROTOCOL.md` and follow it. Never touch a file that is part of shared or locked work without going through that protocol first.
+
+(This repo does not currently use parallel-session mode — `handover/` does not exist yet. This section activates once the user turns parallel mode on; until then there's nothing to read.)
