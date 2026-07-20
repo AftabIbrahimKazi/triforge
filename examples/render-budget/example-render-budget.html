@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>render-budget-core — example</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:monospace; color:#ddd; }
+  #info { position:absolute; top:10px; left:10px; font-size:12px; line-height:1.6; max-width:420px; }
+  #info b { color:#fff; }
+  #info .tier-high { color:#4caf50; }
+  #info .tier-mid { color:#cddc39; }
+  #info .tier-low { color:#ff9800; }
+  #info .tier-potato { color:#f44336; }
+  button { font-family:monospace; margin-top:6px; margin-right:4px; }
+</style>
+</head>
+<body>
+<div id="info">
+  <b>render-budget-core</b> — live device/network profiling &rarr; render budget plan<br>
+  Cube color reflects the resolved <code>textureTier</code>.<br><br>
+  <pre id="output">profiling…</pre>
+  <button id="forceLow">Simulate: force worse tier (dev override)</button>
+  <button id="clearOverride">Clear user override</button>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { initRenderBudget, setUserOverride, clearUserOverride } from '../../render-budget-core/dist/index.js'
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.setPixelRatio(devicePixelRatio)
+document.body.appendChild(renderer.domElement)
+
+const scene  = new THREE.Scene()
+scene.background = new THREE.Color(0x111111)
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100)
+camera.position.set(0, 1.5, 4)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.enableDamping = true
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5))
+const sun = new THREE.DirectionalLight(0xffffff, 1.2)
+sun.position.set(4, 8, 5)
+scene.add(sun)
+
+const TIER_COLORS = { high: 0x4caf50, mid: 0xcddc39, low: 0xff9800, potato: 0xf44336 }
+const cube = new THREE.Mesh(
+  new THREE.BoxGeometry(1.2, 1.2, 1.2),
+  new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.2, roughness: 0.6 }),
+)
+scene.add(cube)
+
+function applyPlan(plan) {
+  cube.material.color.setHex(TIER_COLORS[plan.textureTier])
+  document.getElementById('output').innerHTML =
+    `<span class="tier-${plan.textureTier}"><b>textureTier</b>: ${plan.textureTier} (${plan.textureFormat})</span>\n` +
+    `<b>shaderComplexity</b>: ${plan.shaderComplexity}\n` +
+    `<b>maxConcurrentContexts</b>: ${plan.maxConcurrentContexts}\n` +
+    `<b>source</b>: ${plan.source}`
+}
+
+async function runProfile() {
+  // allowDevOverride: true here only to demo the "Simulate" button — a real site
+  // would gate this behind `!isProd` per the design's recommendation.
+  const plan = await initRenderBudget({
+    allowUserOverride: true,
+    allowDevOverride: true,
+    probeAssetUrl: 'https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js',
+    readDevOverrideParam: () => window.__forcedQuality ?? null,
+  })
+  applyPlan(plan)
+}
+
+document.getElementById('forceLow').addEventListener('click', () => {
+  window.__forcedQuality = 'potato'
+  runProfile()
+})
+document.getElementById('clearOverride').addEventListener('click', () => {
+  window.__forcedQuality = null
+  clearUserOverride(localStorage)
+  runProfile()
+})
+
+runProfile()
+
+// ── Render loop ────────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate)
+  cube.rotation.y += 0.01
+  controls.update()
+  renderer.render(scene, camera)
+}
+animate()
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+</script>
+</body>
+</html>
