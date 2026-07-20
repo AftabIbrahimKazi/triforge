@@ -120,6 +120,20 @@ st-core-types  ✓      — shared TypeScript interfaces (no runtime code)
         IConstraint · IRigidBody · IPoseBone + more
 ```
 
+### Infra (engine-agnostic, no Three.js dependency)
+
+Utility packages that aren't Blender-matched node/modifier systems — no `st-` prefix,
+matching the existing `radius-parametric-geometry` precedent for non-domain packages.
+
+```
+render-budget-core  ✓ (Stage 1 of 2) — device/network profiling → render-quality budget
+        DeviceProfiler (real WebGL-context-ceiling, MAX_TEXTURE_SIZE, AVIF/WebP probes) ·
+        BudgetPlanner (texture tier · shader complexity · context-count policy) ·
+        RenderBudgetSystem (caching, user/dev override precedence)
+        Stage 2, not started: context-pool-core — engine-agnostic scissor/viewport
+        multiplexer enforcing the context-count budget above
+```
+
 Packages communicate ONLY through Three.js primitives (`BufferGeometry`, `Material`, `Texture`).
 No package imports from another package except `st-core-types`.
 
