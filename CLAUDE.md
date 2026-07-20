@@ -297,8 +297,8 @@ When unsure which package a feature belongs to, refer to this table and the ecos
 - `BACKLOG.md` — deferred features, blocked work, future packages (local only, gitignored)
 - `TUTORIAL.md` — user-facing guide, updated with every working feature
 - `THREE_JS_ECOSYSTEM.md` — ecosystem architecture overview
-- `ECOSYSTEM_STATUS.md` — prior project status/handover doc (local only, gitignored; superseded going forward by `handover.md`, see below)
-- `handover.md` — current session-to-session state (local only, gitignored) — see Session Start Protocol
+- `ECOSYSTEM_STATUS.md` — prior project status/handover doc (local only, gitignored; superseded by `handover/`, see below)
+- `handover/` — parallel-session coordination (board, locks, per-role handovers), committed — see Parallel-Session Coordination below. "Update handover" always means this folder, not a single `handover.md` file.
 
 ---
 
@@ -378,4 +378,6 @@ Never edit a file without loading its standard chain first.
 
 Before claiming or resuming any task in the parallel-session system (`handover/` — board, locks, per-role handovers), read `handover/PROTOCOL.md` and follow it. Never touch a file that is part of shared or locked work without going through that protocol first.
 
-(This repo does not currently use parallel-session mode — `handover/` does not exist yet. This section activates once the user turns parallel mode on; until then there's nothing to read.)
+Parallel-session mode is active as of 2026-07-20 — `handover/` exists (`PROTOCOL.md`, `board.md`, `locks.md`, `roles/`). No lane roles are chartered yet; add a `roles/<role>.md` charter before a session claims that role.
+
+**Naming note:** "update handover" always means the `handover/` folder structure (board/locks/per-role files) in this repo, never the single classic `handover.md` file — that file is not used here.
