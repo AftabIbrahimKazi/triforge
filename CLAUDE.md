@@ -126,13 +126,18 @@ Utility packages that aren't Blender-matched node/modifier systems — no `st-` 
 matching the existing `radius-parametric-geometry` precedent for non-domain packages.
 
 ```
-render-budget-core  ✓ (Stage 1 of 2) — device/network profiling → render-quality budget
+render-budget-core  ✓  — device/network profiling → render-quality budget
         DeviceProfiler (real WebGL-context-ceiling, MAX_TEXTURE_SIZE, AVIF/WebP probes) ·
         BudgetPlanner (texture tier · shader complexity · context-count policy) ·
         RenderBudgetSystem (caching, user/dev override precedence)
-        Stage 2, not started: context-pool-core — engine-agnostic scissor/viewport
-        multiplexer enforcing the context-count budget above
+context-pool-core  ✓   — scissor/viewport multiplexer sharing 1 context across N canvases
+        ContextPool (visibility · sticky-active selection · budget enforcement, engine-agnostic) ·
+        ThreeContextAdapter (/three subpath — shared WebGLRenderer, scissor/viewport, context-loss)
 ```
+
+Neither package imports the other, or any Three.js-shape into the engine-agnostic core — a
+consumer wires `RenderBudgetPlan.maxConcurrentContexts` into `ContextPoolConfig.maxConcurrent`
+itself.
 
 Packages communicate ONLY through Three.js primitives (`BufferGeometry`, `Material`, `Texture`).
 No package imports from another package except `st-core-types`.

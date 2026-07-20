@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>context-pool-core — example</title>
+<style>
+  body { margin:0; background:#111; overflow-y:scroll; font-family:monospace; color:#ddd; }
+  #hud { position:fixed; top:10px; left:10px; font-size:12px; line-height:1.6; background:rgba(0,0,0,0.6); padding:8px 12px; z-index:10; }
+  #hud b { color:#fff; }
+  #overlay-canvas { position:fixed; top:0; left:0; width:100vw; height:100vw; pointer-events:none; z-index:1; }
+  .grid { position:relative; z-index:0; display:grid; grid-template-columns:repeat(6, 1fr); gap:16px; padding:120px 24px 24px; }
+  .orb { position:relative; aspect-ratio:1; border-radius:12px; background:#1c1c1c; border:1px solid #333; }
+  .orb .label { position:absolute; bottom:4px; left:6px; font-size:10px; color:#888; }
+  .orb.skipped .label { color:#ff9800; }
+  .orb.hidden .label { color:#555; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <b>context-pool-core</b> — 24 "carousel orb" placeholders, ONE shared WebGLRenderer<br>
+  budget = <b id="budget">4</b> simultaneous scenes (scroll to see which ones stay active)<br><br>
+  active: <span id="active">-</span><br>
+  skipped (visible, over budget): <span id="skipped">-</span><br>
+  hidden (off-screen): <span id="hidden">-</span>
+</div>
+<canvas id="overlay-canvas"></canvas>
+<div class="grid" id="grid"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { ThreeContextAdapter } from '../../context-pool-core/dist/adapters/ThreeContextAdapter.js'
+
+const ORB_COUNT = 24
+const MAX_CONCURRENT = 4
+
+const canvas = document.getElementById('overlay-canvas')
+function resizeCanvas() {
+  canvas.style.height = document.documentElement.scrollHeight + 'px'
+  canvas.width = innerWidth
+  canvas.height = document.documentElement.scrollHeight
+}
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+renderer.setPixelRatio(devicePixelRatio)
+
+const adapter = new ThreeContextAdapter({
+  renderer,
+  maxConcurrent: MAX_CONCURRENT,
+  onContextLost: () => console.warn('shared context lost'),
+  onContextRestored: () => console.warn('shared context restored'),
+})
+
+const colors = [0xff4444, 0x44aaff, 0x44ff88, 0xffdd44, 0xff88cc, 0x88ffee]
+const meshes = []
+
+const grid = document.getElementById('grid')
+for (let i = 0; i < ORB_COUNT; i++) {
+  const orbEl = document.createElement('div')
+  orbEl.className = 'orb'
+  orbEl.innerHTML = `<span class="label">orb ${i}</span>`
+  grid.appendChild(orbEl)
+
+  const scene = new THREE.Scene()
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 10)
+  camera.position.set(0, 0, 3)
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+  const light = new THREE.DirectionalLight(0xffffff, 1)
+  light.position.set(2, 2, 2)
+  scene.add(light)
+
+  const mesh = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1, 0),
+    new THREE.MeshStandardMaterial({ color: colors[i % colors.length], flatShading: true }),
+  )
+  scene.add(mesh)
+  meshes.push(mesh)
+
+  adapter.registerScene(`orb-${i}`, { scene, camera, anchor: orbEl, priority: i })
+}
+
+resizeCanvas()
+window.addEventListener('resize', resizeCanvas)
+window.addEventListener('scroll', resizeCanvas)
+
+function updateHud(result) {
+  document.getElementById('active').textContent = result.active.length
+  document.getElementById('skipped').textContent = result.skipped.length
+  document.getElementById('hidden').textContent = result.hidden.length
+
+  const orbEls = grid.children
+  for (let i = 0; i < ORB_COUNT; i++) {
+    const el = orbEls[i]
+    el.classList.toggle('skipped', result.skipped.includes(`orb-${i}`))
+    el.classList.toggle('hidden', result.hidden.includes(`orb-${i}`))
+  }
+}
+
+// Patch: ThreeContextAdapter.renderFrame() doesn't return the tick result directly,
+// so for this demo's HUD we re-derive it the same way the adapter does internally —
+// intersection with viewport + budget — using the same orb elements.
+function computeHudResult() {
+  const vw = innerWidth, vh = innerHeight
+  const active = [], skipped = [], hidden = []
+  let budgetLeft = MAX_CONCURRENT
+  for (let i = 0; i < ORB_COUNT; i++) {
+    const rect = grid.children[i].getBoundingClientRect()
+    const visible = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw
+    if (!visible) { hidden.push(`orb-${i}`); continue }
+    if (budgetLeft > 0) { active.push(`orb-${i}`); budgetLeft-- } else { skipped.push(`orb-${i}`) }
+  }
+  return { active, skipped, hidden }
+}
+
+function animate() {
+  requestAnimationFrame(animate)
+  meshes.forEach((m) => { m.rotation.x += 0.01; m.rotation.y += 0.015 })
+  adapter.renderFrame()
+  updateHud(computeHudResult())
+}
+animate()
+</script>
+</body>
+</html>
