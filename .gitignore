@@ -16,9 +16,11 @@ ECOSYSTEM_STATUS.md
 **/HANDOVER.md
 coding-standards/
 
-# ai-dev-kit: session-continuity + parallel-session scaffolding — per-project, not committed
+# ai-dev-kit: classic single-session continuity file — local reference only
 handover.md
-handover/
+# NOTE: handover/ (board.md, locks.md, roles/, PROTOCOL.md) is intentionally NOT
+# ignored — it's the actual cross-session coordination mechanism for parallel
+# mode and must be committed so other lanes/sessions can see claims and state.
 
 # ai-dev-kit: installed skill copies — local tooling, not a project deliverable
 .claude/skills/
