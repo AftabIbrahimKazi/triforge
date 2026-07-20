@@ -12,6 +12,13 @@ Thumbs.db
 
 # Internal process docs — local reference only, not part of the shipped project
 BACKLOG.md
-HANDOVER.md
+ECOSYSTEM_STATUS.md
 **/HANDOVER.md
 coding-standards/
+
+# ai-dev-kit: session-continuity + parallel-session scaffolding — per-project, not committed
+handover.md
+handover/
+
+# ai-dev-kit: installed skill copies — local tooling, not a project deliverable
+.claude/skills/
