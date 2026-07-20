@@ -3,3 +3,5 @@ Updated continuously by active sessions. Dev clears `done` rows. `Files` lists e
 
 | Role | Task | Files | Status | Started |
 |---|---|---|---|---|
+| render-budget | Stage 1: render-budget-core (DeviceProfiler + RenderBudget) | render-budget-core/** | done | 2026-07-20 |
+| render-budget | Stage 2: context-pool-core (ContextPool + ThreeContextAdapter) | context-pool-core/** |  |  |
