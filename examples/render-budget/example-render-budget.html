@@ -25,8 +25,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156/examples/jsm/"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
   }
 }
 </script>
@@ -81,7 +81,7 @@ async function runProfile() {
   const plan = await initRenderBudget({
     allowUserOverride: true,
     allowDevOverride: true,
-    probeAssetUrl: 'https://cdn.jsdelivr.net/npm/three@0.156/build/three.module.js',
+    probeAssetUrl: 'https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js',
     readDevOverrideParam: () => window.__forcedQuality ?? null,
   })
   applyPlan(plan)

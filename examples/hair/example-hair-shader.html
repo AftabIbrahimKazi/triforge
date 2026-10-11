@@ -61,8 +61,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.1/examples/jsm/"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
   }
 }
 </script>
@@ -274,10 +274,13 @@ controls.target.set(0, 0.6, 0)
 controls.enableDamping = true
 
 // Ground
-scene.add(Object.assign(new THREE.Mesh(
+const groundMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(8, 8),
   new THREE.MeshStandardMaterial({ color: 0x111118, roughness: 1 })
-), { rotation: { x: -Math.PI/2, y: 0, z: 0 }, receiveShadow: true }))
+)
+groundMesh.rotation.set(-Math.PI/2, 0, 0)
+groundMesh.receiveShadow = true
+scene.add(groundMesh)
 
 // Head sphere
 const headMat = new THREE.MeshStandardMaterial({ color: 0x3a2015, roughness: 0.9 })

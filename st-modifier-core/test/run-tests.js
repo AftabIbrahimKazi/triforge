@@ -26,6 +26,11 @@ function test(name, fn) {
   catch (e) { console.log(`  FAIL  ${name}: ${e.message}`); failed++ }
 }
 
+async function asyncTest(name, fn) {
+  try { await fn(); console.log(`  PASS  ${name}`); passed++ }
+  catch (e) { console.log(`  FAIL  ${name}: ${e.message}`); failed++ }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function makeCube() {
@@ -131,6 +136,21 @@ test('SubdivisionModifier exposes parameters.levels', () => {
 
 test('SubdivisionModifier name is correct', () => {
   if (new SubdivisionModifier().name !== 'Subdivision') throw new Error('Wrong name')
+})
+
+test('SubdivisionModifier produces no NaN positions on geometry with orphan (unreferenced) vertices', () => {
+  // THREE.SphereGeometry leaves one position-buffer vertex per pole that no
+  // triangle actually references (valence 0). Loop subdivision's interior-vertex
+  // formula divides by valence — regression guard for the Infinity/NaN that
+  // produced when that division wasn't guarded.
+  const geo    = new SphereGeometry(1, 16, 8)
+  const result = new SubdivisionModifier({ levels: 2 }).apply(geo)
+  const pos    = result.getAttribute('position')
+  for (let i = 0; i < pos.count; i++) {
+    if (!Number.isFinite(pos.getX(i)) || !Number.isFinite(pos.getY(i)) || !Number.isFinite(pos.getZ(i))) {
+      throw new Error(`Non-finite position at vertex ${i}`)
+    }
+  }
 })
 
 // ── ArrayModifier ──────────────────────────────────────────────────────────────
@@ -477,51 +497,58 @@ test('BooleanModifier intersection operation index is 2', () => {
   if (mod.parameters.operation !== 2) throw new Error(`Expected 2, got ${mod.parameters.operation}`)
 })
 
-test('BooleanModifier difference produces geometry', () => {
+await asyncTest('BooleanModifier difference produces geometry', async () => {
   const base    = new BoxGeometry(1, 1, 1)
   const cutter  = new SphereGeometry(0.5, 8, 6)
   const mod     = new BooleanModifier({ operand: cutter, operation: 'difference' })
+  await mod.ready()
   const result  = mod.apply(base)
   const pos     = result.getAttribute('position')
   if (!pos || pos.count === 0) throw new Error('Result has no position attribute')
 })
 
-test('BooleanModifier union produces geometry with more volume', () => {
+await asyncTest('BooleanModifier union produces geometry with more volume', async () => {
   const base   = new BoxGeometry(1, 1, 1)
   const other  = new SphereGeometry(0.5, 8, 6)
   const mod    = new BooleanModifier({ operand: other, operation: 'union' })
+  await mod.ready()
   const result = mod.apply(base)
   const pos    = result.getAttribute('position')
   if (!pos || pos.count === 0) throw new Error('Result has no position attribute')
 })
 
-test('BooleanModifier intersection produces geometry', () => {
+await asyncTest('BooleanModifier intersection produces geometry', async () => {
   const base   = new BoxGeometry(1, 1, 1)
   const other  = new SphereGeometry(0.5, 8, 6)
   const mod    = new BooleanModifier({ operand: other, operation: 'intersection' })
+  await mod.ready()
   const result = mod.apply(base)
   const pos    = result.getAttribute('position')
   if (!pos || pos.count === 0) throw new Error('Result has no position attribute')
 })
 
-test('BooleanModifier does not mutate input geometry', () => {
+await asyncTest('BooleanModifier does not mutate input geometry', async () => {
   const base        = new BoxGeometry(1, 1, 1)
   const origCount   = base.getAttribute('position').count
   const mod         = new BooleanModifier({ operand: new SphereGeometry(0.5, 8, 6), operation: 'difference' })
+  await mod.ready()
   mod.apply(base)
   if (base.getAttribute('position').count !== origCount) throw new Error('Input geometry was mutated')
 })
 
-test('BooleanModifier works inside ModifierStack', () => {
+await asyncTest('BooleanModifier works inside ModifierStack', async () => {
   const stack  = new ModifierStack(new BoxGeometry(1, 1, 1))
-  stack.add(new BooleanModifier({ operand: new SphereGeometry(0.4, 8, 6), operation: 'difference' }))
+  const mod    = new BooleanModifier({ operand: new SphereGeometry(0.4, 8, 6), operation: 'difference' })
+  await mod.ready()
+  stack.add(mod)
   const result = stack.apply()
   const pos    = result.getAttribute('position')
   if (!pos || pos.count === 0) throw new Error('ModifierStack result has no vertices')
 })
 
-test('BooleanModifier parameters.operation can be changed at runtime', () => {
+await asyncTest('BooleanModifier parameters.operation can be changed at runtime', async () => {
   const mod = new BooleanModifier({ operand: new SphereGeometry(0.5, 8, 6), operation: 'difference' })
+  await mod.ready()
   mod.parameters.operation = 0
   if (mod.parameters.operation !== 0) throw new Error('parameter change failed')
   const result = mod.apply(new BoxGeometry(1, 1, 1))
@@ -529,7 +556,7 @@ test('BooleanModifier parameters.operation can be changed at runtime', () => {
 })
 
 // ── New modifiers (Bevel, Wireframe, Shrinkwrap) ──────────────────────────────
-import('./new-modifiers.test.js')
+await import('./new-modifiers.test.js')
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 
