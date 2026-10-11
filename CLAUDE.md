@@ -346,7 +346,7 @@ If `[CX]` is ever missing from a response the session has lost context. Stop imm
 | SEO standard | N/A — not a web-facing project |
 | Performance standard | `coding-standards/performance-standards.md` |
 | Accessibility standard | N/A — no UI surface |
-| QA standard | `coding-standards/qa-standards.md` |
+| QA standard | `coding-standards/qa/index.md` |
 | AI standard | `coding-standards/ai-standards.md` |
 | Framework | N/A |
 | CSS Framework | N/A |
