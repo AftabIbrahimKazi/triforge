@@ -28,6 +28,7 @@ handover.md
 
 # ai-dev-kit: installed skill copies — local tooling, not a project deliverable
 .claude/skills/
+.claude/skills-archive/
 
 # ai-dev-kit: source/install directory — local tooling, not a project deliverable
 ai-dev-kit/
