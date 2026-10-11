@@ -1,6 +1,6 @@
 {
   "name": "@triforge/hair-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Hair, fur, and grass strand rendering for Three.js with Verlet-integrated dynamics — Blender Hair Particle System equivalent",
   "type": "module",
   "main": "./dist/index.js",

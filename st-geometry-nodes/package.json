@@ -1,6 +1,6 @@
 {
   "name": "@triforge/geometry-nodes",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Blender Geometry Nodes-style procedural geometry graph for Three.js — Grid, UVSphere, Subdivision, instancing and scatter nodes, TypeScript",
   "type": "module",
   "main": "./dist/index.js",

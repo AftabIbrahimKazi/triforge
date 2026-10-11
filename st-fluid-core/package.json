@@ -1,6 +1,6 @@
 {
   "name": "@triforge/fluid-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "FLIP and SPH fluid simulation for Three.js with Marching Cubes surface extraction — Blender-matched particle fluid behavior",
   "type": "module",
   "main": "./dist/index.js",

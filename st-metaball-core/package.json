@@ -1,6 +1,6 @@
 {
   "name": "@triforge/metaball-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Blender-style metaball system for Three.js — organic iso-surface blobs with live field evaluation and negative balls",
   "type": "module",
   "main": "./dist/index.js",
