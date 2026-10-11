@@ -1,6 +1,6 @@
 {
   "name": "@triforge/keyframe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Blender-matched keyframe animation driver for the Triforge Three.js ecosystem — tracks, clips, mixer, 30 easing functions, GSAP-compatible parameters",
   "type": "module",
   "main": "./dist/index.js",

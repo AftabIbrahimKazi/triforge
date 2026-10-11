@@ -1,6 +1,6 @@
 {
   "name": "@triforge/volume-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Ray-marched volumetric fog, smoke, and fire rendering for Three.js — Blender Principled Volume shader equivalent",
   "type": "module",
   "main": "./dist/index.js",

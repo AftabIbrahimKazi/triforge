@@ -1,6 +1,6 @@
 {
   "name": "@triforge/core-types",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared TypeScript interfaces for the Triforge Three.js ecosystem (IAnimatable, IModifier, IGeometryProvider, ICurve, and more) — types only, zero runtime code",
   "type": "module",
   "main": "./dist/index.js",
