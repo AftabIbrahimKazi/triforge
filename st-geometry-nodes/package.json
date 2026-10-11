@@ -1,7 +1,7 @@
 {
   "name": "@triforge/geometry-nodes",
   "version": "0.1.1",
-  "description": "Blender Geometry Nodes-style procedural geometry graph for Three.js",
+  "description": "Blender Geometry Nodes-style procedural geometry graph for Three.js — Grid, UVSphere, Subdivision, instancing and scatter nodes, TypeScript",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -22,8 +22,8 @@
     "three": ">=0.128.0"
   },
   "devDependencies": {
-    "@types/three": "^0.156.0",
-    "three": "^0.156.0",
+    "@types/three": "^0.186.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "files": [
@@ -39,5 +39,16 @@
   "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "keywords": [
+    "geometry-nodes",
+    "procedural-geometry",
+    "threejs",
+    "three.js",
+    "webgl",
+    "buffergeometry",
+    "blender",
+    "typescript",
+    "instancing"
+  ]
 }
