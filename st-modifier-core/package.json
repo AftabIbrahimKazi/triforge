@@ -1,6 +1,6 @@
 {
   "name": "@triforge/modifier-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Blender-matched non-destructive geometry modifier stack for Three.js — Subdivision, Array, Bevel, Boolean, Mirror, Displace and more",
   "type": "module",
   "main": "./dist/index.js",

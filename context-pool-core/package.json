@@ -1,6 +1,6 @@
 {
   "name": "@triforge/context-pool-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Engine-agnostic scissor/viewport multiplexer — share one real rendering context across many logical canvases, enforcing a context-count budget instead of creating one context per canvas",
   "type": "module",
   "main": "./dist/index.js",

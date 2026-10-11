@@ -1,6 +1,6 @@
 {
   "name": "@triforge/uv-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Blender-matched UV unwrapping algorithms for Three.js BufferGeometry — LSCM, ABF, Smart UV Project, seam cutting, island packing",
   "type": "module",
   "main": "./dist/index.js",

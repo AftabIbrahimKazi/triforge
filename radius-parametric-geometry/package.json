@@ -1,6 +1,6 @@
 {
   "name": "@triforge/radius-parametric-geometry",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Parametric geometry generator for Three.js — custom radius/height functions, 90.6% triangle reduction vs. naive lathe geometry",
   "type": "module",
   "main": "./dist/index.js",

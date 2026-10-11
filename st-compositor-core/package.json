@@ -1,6 +1,6 @@
 {
   "name": "@triforge/compositor-core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Blender-matched post-processing compositor for Three.js — 28 passes (Bloom, Depth of Field, SSAO, SSR, LUT, Film Grain), backend-agnostic",
   "type": "module",
   "main": "./dist/index.js",
