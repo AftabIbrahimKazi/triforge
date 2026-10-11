@@ -82,7 +82,7 @@ export class GlareStreaks extends BasePass {
         uniform float length;
         varying vec2 vUv;
 
-        float luminance(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+        float stLuma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
         vec4 sampleStreak(vec2 dir) {
           vec4 acc  = vec4(0.0);
@@ -91,7 +91,7 @@ export class GlareStreaks extends BasePass {
           for (int i = 1; i <= ${sampleLength}; i++) {
             vec2 uv   = vUv + step * float(i) * strength;
             vec4 samp = texture2D(tDiffuse, clamp(uv, 0.0, 1.0));
-            float lum = luminance(samp.rgb);
+            float lum = stLuma(samp.rgb);
             if (lum > threshold) acc += samp * att;
             att *= fade;
           }

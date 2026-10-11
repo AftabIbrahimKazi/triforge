@@ -48,8 +48,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three":              "https://unpkg.com/three@0.165.0/build/three.module.js",
-    "three/addons/":      "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "three":              "https://unpkg.com/three@0.186.1/build/three.module.js",
+    "three/addons/":      "https://unpkg.com/three@0.186.1/examples/jsm/",
     "@st-modifier-core":  "../../st-modifier-core/dist/index.js",
     "three-mesh-bvh":     "https://unpkg.com/three-mesh-bvh@0.9.0/build/index.module.js",
     "three-bvh-csg":      "https://unpkg.com/three-bvh-csg@0.0.18/build/index.module.js"
@@ -89,7 +89,7 @@ function clearScene() {
   resultMesh = operandGhost = null
 }
 
-function buildDemo({ baseType, operandType, operation, operandScale, operandOffsetX }) {
+async function buildDemo({ baseType, operandType, operation, operandScale, operandOffsetX }) {
   clearScene()
 
   // Base geometry
@@ -107,7 +107,9 @@ function buildDemo({ baseType, operandType, operation, operandScale, operandOffs
 
   // Run boolean
   const stack = new ModifierStack(baseGeo)
-  stack.add(new BooleanModifier({ operand: operandGeo, operation }))
+  const boolMod = new BooleanModifier({ operand: operandGeo, operation })
+  await boolMod.ready()
+  stack.add(boolMod)
   const result = stack.apply()
 
   const mat = new THREE.MeshStandardMaterial({

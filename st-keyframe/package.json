@@ -1,7 +1,7 @@
 {
   "name": "@triforge/keyframe",
   "version": "0.1.1",
-  "description": "Blender-matched keyframe animation driver for Three.js ecosystem parameters",
+  "description": "Blender-matched keyframe animation driver for the Triforge Three.js ecosystem — tracks, clips, mixer, 30 easing functions, GSAP-compatible parameters",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,7 +20,14 @@
     "animation",
     "three.js",
     "blender",
-    "tween"
+    "tween",
+    "threejs",
+    "webgl",
+    "tweening",
+    "easing",
+    "typescript",
+    "gsap",
+    "motion-graphics"
   ],
   "license": "MIT",
   "devDependencies": {

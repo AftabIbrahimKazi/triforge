@@ -1,7 +1,7 @@
 {
   "name": "@triforge/shader-core",
   "version": "0.4.2",
-  "description": "GLSL shader library for Three.js with Blender workflow",
+  "description": "Node-based GLSL shader generator for Three.js — 75 Blender-matched surface shader nodes (PrincipledBSDF, Noise, Voronoi, Musgrave) compiled to WebGL materials",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,13 @@
     "glsl",
     "three.js",
     "materials",
-    "blender"
+    "blender",
+    "threejs",
+    "webgl",
+    "pbr",
+    "procedural-texture",
+    "node-editor",
+    "typescript"
   ],
   "author": "Aftab Ibrahim Kazi",
   "license": "MIT",
@@ -27,9 +33,9 @@
     "three": ">=0.128.0"
   },
   "devDependencies": {
-    "@types/three": "^0.156.0",
+    "@types/three": "^0.186.0",
     "esbuild": "^0.28.0",
-    "three": "^0.156.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "repository": {

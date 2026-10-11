@@ -66,7 +66,7 @@ export class LensFlare extends BasePass {
         uniform float chromatic;
         varying vec2 vUv;
 
-        float luminance(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+        float stLuma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
         vec3 sampleChromatic(vec2 uv, vec2 offset) {
           vec2 r = clamp(uv + offset * (1.0 + chromatic * 0.1), 0.0, 1.0);
@@ -89,7 +89,7 @@ export class LensFlare extends BasePass {
             float disp  = 0.3 + fi * 0.25;
             vec2  guv   = vUv + ghost * disp;
             vec3  samp  = sampleChromatic(guv, ghost * 0.01 * fi);
-            float lum   = luminance(samp);
+            float lum   = stLuma(samp);
             if (lum > threshold) {
               vec3 tint = mix(vec3(1.0, 0.8, 0.6), vec3(0.6, 0.8, 1.0), fract(fi * 0.37));
               flare += samp * tint * (lum - threshold) * strength / fi;
@@ -101,7 +101,7 @@ export class LensFlare extends BasePass {
           float haloBias = abs(dist - haloWidth);
           float halo    = smoothstep(0.05, 0.0, haloBias) * strength * 0.5;
           vec4  haloCentre = texture2D(tDiffuse, clamp(vec2(0.5) + normalize(-ghost) * haloWidth, 0.0, 1.0));
-          if (luminance(haloCentre.rgb) > threshold) {
+          if (stLuma(haloCentre.rgb) > threshold) {
             flare += haloCentre.rgb * halo;
           }
 

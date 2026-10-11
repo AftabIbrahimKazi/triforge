@@ -3,5 +3,4 @@ Updated continuously by active sessions. Dev clears `done` rows. `Files` lists e
 
 | Role | Task | Files | Status | Started |
 |---|---|---|---|---|
-| render-budget | Stage 1: render-budget-core (DeviceProfiler + RenderBudget) | render-budget-core/** | done | 2026-07-20 |
-| render-budget | Stage 2: context-pool-core (ContextPool + ThreeContextAdapter) | context-pool-core/** | done | 2026-07-20 |
+| bugfix | Package-by-package bugfix sweep (all st-* packages, radius-parametric-geometry, render-budget-core, context-pool-core, addon-human) | st-*/**, radius-parametric-geometry/**, render-budget-core/**, context-pool-core/**, addons/st-addon-human/** | done (addon-human skipped — incomplete placeholder, see handover/bugfix.md) | 2026-10-12 |

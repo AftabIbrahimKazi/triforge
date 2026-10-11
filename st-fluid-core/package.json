@@ -1,7 +1,7 @@
 {
   "name": "@triforge/fluid-core",
   "version": "0.1.1",
-  "description": "SPH fluid simulation for Three.js — Blender-matched particle fluid",
+  "description": "FLIP and SPH fluid simulation for Three.js with Marching Cubes surface extraction — Blender-matched particle fluid behavior",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,7 +21,13 @@
     "simulation",
     "three.js",
     "blender",
-    "particles"
+    "particles",
+    "threejs",
+    "webgl",
+    "flip-fluid",
+    "marching-cubes",
+    "typescript",
+    "physics-simulation"
   ],
   "license": "MIT",
   "peerDependencies": {
@@ -30,9 +36,9 @@
   "devDependencies": {
     "@rollup/plugin-commonjs": "^29.0.2",
     "@rollup/plugin-node-resolve": "^16.0.3",
-    "@types/three": "^0.156.0",
+    "@types/three": "^0.186.0",
     "rollup": "^4.60.4",
-    "three": "^0.156.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
 {
   "name": "@triforge/metaball-core",
   "version": "0.1.1",
-  "description": "Blender-style metaball system for Three.js — organic blobs with live field evaluation",
+  "description": "Blender-style metaball system for Three.js — organic iso-surface blobs with live field evaluation and negative balls",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,8 +15,8 @@
     "three": ">=0.128.0"
   },
   "devDependencies": {
-    "@types/three": "^0.165.0",
-    "three": "^0.165.0",
+    "@types/three": "^0.186.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "files": [
@@ -38,5 +38,15 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     }
-  }
+  },
+  "keywords": [
+    "threejs",
+    "three.js",
+    "webgl",
+    "metaballs",
+    "isosurface",
+    "marching-cubes",
+    "typescript",
+    "blender"
+  ]
 }

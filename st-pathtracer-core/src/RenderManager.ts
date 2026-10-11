@@ -1,4 +1,4 @@
-import { WebGLRenderer, Scene, Camera, PCFSoftShadowMap, ACESFilmicToneMapping, ShaderMaterial } from 'three'
+import { WebGLRenderer, Scene, Camera, PCFShadowMap, ACESFilmicToneMapping, ShaderMaterial } from 'three'
 import { PathTracerRenderer, PathTracerRendererOptions } from './PathTracerRenderer.js'
 import { LightPathController } from './LightPathController.js'
 
@@ -58,7 +58,7 @@ export class RenderManager {
 
     // Ensure renderer is set up for quality rasterization
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type    = PCFSoftShadowMap
+    renderer.shadowMap.type    = PCFShadowMap
     renderer.toneMapping       = ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.0
   }
