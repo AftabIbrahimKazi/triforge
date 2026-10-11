@@ -1,6 +1,6 @@
 {
   "name": "@triforge/physics-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Blender-matched cloth, soft body, and rigid body physics for Three.js — Verlet integration, constraints (hinge, spring, ball-socket, cone-twist), colliders",
   "type": "module",
   "main": "./dist/index.js",

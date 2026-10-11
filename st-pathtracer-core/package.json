@@ -1,6 +1,6 @@
 {
   "name": "@triforge/pathtracer-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Raster-to-path-tracer toggle for Three.js — swap WebGLRenderer for a GPU path tracer at runtime, with multi-pass LightPath output (camera/diffuse/glossy/reflection)",
   "type": "module",
   "main": "./dist/index.js",

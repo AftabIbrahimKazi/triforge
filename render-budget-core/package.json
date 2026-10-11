@@ -1,6 +1,6 @@
 {
   "name": "@triforge/render-budget-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Engine-agnostic device/network profiling and render-quality budget planning — texture tier, shader complexity, context-count policy from real runtime probes, not heuristics",
   "type": "module",
   "main": "./dist/index.js",

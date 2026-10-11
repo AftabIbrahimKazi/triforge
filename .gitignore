@@ -1,5 +1,9 @@
 node_modules/
 
+# Secrets — never committed
+.env
+.env.*
+
 # Addons — not ready for release yet
 addons/
 
