@@ -1,7 +1,7 @@
 {
   "name": "@triforge/hair-core",
   "version": "0.1.0",
-  "description": "Hair and fur strand rendering for Three.js — Blender Hair Particle System",
+  "description": "Hair, fur, and grass strand rendering for Three.js with Verlet-integrated dynamics — Blender Hair Particle System equivalent",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -22,8 +22,8 @@
     "three": ">=0.128.0"
   },
   "devDependencies": {
-    "@types/three": "^0.156.0",
-    "three": "^0.156.0",
+    "@types/three": "^0.186.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "files": [
@@ -39,5 +39,16 @@
   "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "keywords": [
+    "threejs",
+    "three.js",
+    "webgl",
+    "hair",
+    "fur",
+    "grass",
+    "strand-rendering",
+    "typescript",
+    "blender"
+  ]
 }

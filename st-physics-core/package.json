@@ -1,7 +1,7 @@
 {
   "name": "@triforge/physics-core",
   "version": "0.1.1",
-  "description": "Blender-matched cloth simulation with Verlet integration, spring constraints, and colliders for Three.js",
+  "description": "Blender-matched cloth, soft body, and rigid body physics for Three.js — Verlet integration, constraints (hinge, spring, ball-socket, cone-twist), colliders",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,15 +21,23 @@
     "simulation",
     "verlet",
     "three.js",
-    "blender"
+    "blender",
+    "threejs",
+    "webgl",
+    "rigid-body",
+    "soft-body",
+    "rigidbody",
+    "typescript",
+    "constraints",
+    "collision"
   ],
   "license": "MIT",
   "peerDependencies": {
     "three": ">=0.128.0"
   },
   "devDependencies": {
-    "@types/three": "^0.156.0",
-    "three": "^0.156.0",
+    "@types/three": "^0.186.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "author": "Aftab Ibrahim Kazi",

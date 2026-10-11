@@ -1,7 +1,7 @@
 {
   "name": "@triforge/pathtracer-core",
   "version": "0.1.1",
-  "description": "Path-tracer renderer for the three-js ecosystem — toggle between rasterizer and WebGPU path tracing",
+  "description": "Raster-to-path-tracer toggle for Three.js — swap WebGLRenderer for a GPU path tracer at runtime, with multi-pass LightPath output (camera/diffuse/glossy/reflection)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -22,8 +22,8 @@
     "three-mesh-bvh": ">=0.7.0"
   },
   "devDependencies": {
-    "@types/three": "^0.165.0",
-    "three": "^0.165.0",
+    "@types/three": "^0.186.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "repository": {
@@ -40,5 +40,15 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     }
-  }
+  },
+  "keywords": [
+    "threejs",
+    "three.js",
+    "webgl",
+    "path-tracing",
+    "raytracing",
+    "global-illumination",
+    "typescript",
+    "render-passes"
+  ]
 }

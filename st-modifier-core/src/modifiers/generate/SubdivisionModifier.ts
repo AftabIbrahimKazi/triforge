@@ -143,7 +143,15 @@ export class SubdivisionModifier extends BaseModifier {
 
       let np: number[], nu: number[]
 
-      if (isBoundary && boundaryNeighbors.length >= 2) {
+      if (n === 0) {
+        // Orphan vertex — present in the position buffer but never referenced by any
+        // triangle (e.g. THREE.SphereGeometry leaves one unused vertex per pole from
+        // its UV-seam construction). No neighbors to smooth against, so it passes
+        // through unchanged. Without this guard, beta = 3/(8*0) = Infinity and
+        // w = 1 - 0*Infinity = NaN, poisoning the output position.
+        np = pv
+        nu = uv_
+      } else if (isBoundary && boundaryNeighbors.length >= 2) {
         // Boundary rule: 3/4*v + 1/8*(bn1 + bn2)
         const pn1 = getP(boundaryNeighbors[0]), pn2 = getP(boundaryNeighbors[1])
         const un1 = getU(boundaryNeighbors[0]), un2 = getU(boundaryNeighbors[1])

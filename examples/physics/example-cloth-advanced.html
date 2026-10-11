@@ -48,8 +48,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three":           "https://unpkg.com/three@0.165.0/build/three.module.js",
-    "three/addons/":   "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "three":           "https://unpkg.com/three@0.186.1/build/three.module.js",
+    "three/addons/":   "https://unpkg.com/three@0.186.1/examples/jsm/",
     "@st-physics-core":"../../st-physics-core/dist/index.js"
   }
 }
@@ -102,7 +102,7 @@ function makeCloth({ vertsX = 12, vertsY = 12, selfCollision = false, pressure =
   for (let i = 0; i < posAttr.count; i++) {
     if (posAttr.getY(i) > 2.9) pinSet.add(i)
   }
-  cloth.setPins([...pinSet])
+  for (const i of pinSet) cloth.pin(i)
   cloth.addCollider(new PlaneCollider({ normal: [0,1,0], point: [0,0,0] }))
 
   clothMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
@@ -208,7 +208,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.033)
   if (cloth && clothMesh) {
     cloth.step(dt)
-    cloth.updateGeometry(clothMesh.geometry)
+    cloth.apply(clothMesh.geometry)
     clothMesh.geometry.computeVertexNormals()
   }
   liveFn(activeKnobs)

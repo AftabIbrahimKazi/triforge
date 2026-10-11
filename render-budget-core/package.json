@@ -20,7 +20,12 @@
     "device-profiler",
     "webgl",
     "texture-variants",
-    "three.js"
+    "three.js",
+    "threejs",
+    "performance",
+    "adaptive-quality",
+    "typescript",
+    "device-detection"
   ],
   "license": "MIT",
   "devDependencies": {

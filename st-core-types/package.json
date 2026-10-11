@@ -1,7 +1,7 @@
 {
   "name": "@triforge/core-types",
   "version": "0.1.0",
-  "description": "Shared TypeScript interfaces for the st- Three.js ecosystem",
+  "description": "Shared TypeScript interfaces for the Triforge Three.js ecosystem (IAnimatable, IModifier, IGeometryProvider, ICurve, and more) — types only, zero runtime code",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,8 +20,8 @@
     "test": "node test/run-tests.js"
   },
   "devDependencies": {
-    "@types/three": "^0.165.0",
-    "three": "^0.165.0",
+    "@types/three": "^0.186.0",
+    "three": "^0.186.0",
     "typescript": "^5.3.0"
   },
   "peerDependencies": {
@@ -37,5 +37,14 @@
   "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "keywords": [
+    "threejs",
+    "three.js",
+    "webgl",
+    "typescript",
+    "typescript-types",
+    "interfaces",
+    "triforge"
+  ]
 }
