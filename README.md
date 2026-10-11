@@ -104,6 +104,18 @@ dev → test → beta → main
 
 ---
 
+## Contributing
+
+Bug reports, feature requests, and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and package conventions, and the issue
+templates for what to include. This project follows the
+[Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+
+Found a security issue? Please report it privately — see [SECURITY.md](SECURITY.md)
+instead of opening a public issue.
+
+---
+
 ## License
 
 MIT © 2026 Aftab Ibrahim Kazi
