@@ -5,7 +5,7 @@ import { OutputSocket } from './OutputSocket.js'
 import type { SocketType } from './SocketType.js'
 
 /** Guards against NaN/Infinity reaching a GLSL uniform (would emit invalid GLSL literals like "NaN"). */
-function finiteOr(value: number, fallback: number): number {
+export function finiteOr(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback
 }
 

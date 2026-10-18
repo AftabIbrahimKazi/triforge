@@ -54,8 +54,12 @@ export class SubdivisionModifier extends BaseModifier {
 
     // ── Build adjacency ────────────────────────────────────────────────────────
 
+    // Numeric edge key (a < b): a * vCount + b. Avoids per-edge string allocation
+    // from template-literal keys, which dominated subdivision time on large meshes.
+    const edgeKey = (a: number, b: number): number => a < b ? a * vCount + b : b * vCount + a
+
     // For each edge, store the two triangle-opposite vertices
-    const edgeOpposites = new Map<string, number[]>()
+    const edgeOpposites = new Map<number, number[]>()
     // For each vertex, store its ring of neighbors
     const vertNeighbors: Set<number>[] = Array.from({ length: vCount }, () => new Set())
 
@@ -65,7 +69,7 @@ export class SubdivisionModifier extends BaseModifier {
       vertNeighbors[c].add(a); vertNeighbors[c].add(b)
 
       for (const [e0, e1, opp] of [[a,b,c],[b,c,a],[c,a,b]] as [number,number,number][]) {
-        const key = e0 < e1 ? `${e0}_${e1}` : `${e1}_${e0}`
+        const key = edgeKey(e0, e1)
         if (!edgeOpposites.has(key)) edgeOpposites.set(key, [])
         edgeOpposites.get(key)!.push(opp)
       }
@@ -75,7 +79,7 @@ export class SubdivisionModifier extends BaseModifier {
     // Interior edge: 3/8*(v1+v2) + 1/8*(opp1+opp2)
     // Boundary edge: 1/2*(v1+v2)
 
-    const edgeMidIndex = new Map<string, number>()
+    const edgeMidIndex = new Map<number, number>()
     const outPos: number[] = []
     const outUv:  number[] = []
 
@@ -91,7 +95,7 @@ export class SubdivisionModifier extends BaseModifier {
 
     // Compute new edge vertices
     for (const [key, opps] of edgeOpposites.entries()) {
-      const [ai, bi] = key.split('_').map(Number)
+      const ai = Math.floor(key / vCount), bi = key % vCount
       const pa = getP(ai), pb = getP(bi)
       const ua = getU(ai), ub = getU(bi)
 
@@ -134,7 +138,7 @@ export class SubdivisionModifier extends BaseModifier {
       let isBoundary = false
       const boundaryNeighbors: number[] = []
       for (const nb of neighbors) {
-        const key = v < nb ? `${v}_${nb}` : `${nb}_${v}`
+        const key = edgeKey(v, nb)
         if ((edgeOpposites.get(key)?.length ?? 0) === 1) {
           isBoundary = true
           boundaryNeighbors.push(nb)
@@ -185,10 +189,7 @@ export class SubdivisionModifier extends BaseModifier {
 
     const outIdx: number[] = []
 
-    const getMid = (a: number, b: number): number => {
-      const key = a < b ? `${a}_${b}` : `${b}_${a}`
-      return edgeMidIndex.get(key)!
-    }
+    const getMid = (a: number, b: number): number => edgeMidIndex.get(edgeKey(a, b))!
 
     for (const [a, b, c] of tris) {
       const oa = origNewIndex[a], ob = origNewIndex[b], oc = origNewIndex[c]
