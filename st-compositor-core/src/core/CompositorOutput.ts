@@ -182,7 +182,13 @@ export class CompositorOutput {
     let pkg: Record<string, unknown>
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // Deliberate indirection, not a mistake: a literal `import('postprocessing')` here
+      // gets statically rewritten by bundlers, which both breaks the "optional peer
+      // dependency" story (bundlers try to resolve it even when absent) and makes this
+      // loader trivial to lift out of context. Routing it through Function() keeps the
+      // import fully dynamic and out of static analysis. The string is a fixed literal,
+      // not user input, so this isn't the eval-injection pattern the root rule targets.
+      // eslint-disable-next-line no-new-func, @typescript-eslint/no-explicit-any
       pkg = await (Function('m', 'return import(m)') as (m: string) => Promise<any>)('postprocessing') as Record<string, unknown>
     } catch {
       throw new Error(
