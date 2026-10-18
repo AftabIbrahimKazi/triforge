@@ -31,9 +31,28 @@ export class VortexForce extends BaseForce {
     const dy = particle.position.y - this.position.y
     const dz = particle.position.z - this.position.z
     if (p.maxDistance > 0 && dx * dx + dy * dy + dz * dz > p.maxDistance * p.maxDistance) return
-    const axis = new Vector3(p.axisX, p.axisY, p.axisZ).normalize()
-    const rel  = new Vector3(dx, dy, dz)
-    const tangential = new Vector3().crossVectors(axis, rel).normalize()
-    particle.velocity.addScaledVector(tangential, p.strength * dt)
+
+    const axisLenSq = p.axisX * p.axisX + p.axisY * p.axisY + p.axisZ * p.axisZ
+    if (axisLenSq < 1e-8) return
+    const axisInvLen = 1 / Math.sqrt(axisLenSq)
+    const ax = p.axisX * axisInvLen
+    const ay = p.axisY * axisInvLen
+    const az = p.axisZ * axisInvLen
+
+    // tangential = normalize(axis × rel), computed in place to avoid per-call Vector3 allocation
+    let tx = ay * dz - az * dy
+    let ty = az * dx - ax * dz
+    let tz = ax * dy - ay * dx
+    const tLenSq = tx * tx + ty * ty + tz * tz
+    if (tLenSq < 1e-8) return
+    const tInvLen = 1 / Math.sqrt(tLenSq)
+    tx *= tInvLen
+    ty *= tInvLen
+    tz *= tInvLen
+
+    const mag = p.strength * dt
+    particle.velocity.x += tx * mag
+    particle.velocity.y += ty * mag
+    particle.velocity.z += tz * mag
   }
 }

@@ -95,7 +95,8 @@ Computes texel density ratio (√3D_area / √UV_area) per island, scales all to
 ### MarkSeams
 Stores seam edges in `geometry.userData.seams: Array<{a:number, b:number}>`.
 Does not modify geometry positions or UVs — metadata only.
-LSCM/ABF do not yet read seams (future: use seams to cut closed meshes).
+ConformalLSCM and AngleBasedABF both read `geometry.userData.seams` and call `applySeamCuts`
+to cut the mesh graph along marked edges before unwrapping.
 
 ---
 

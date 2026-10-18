@@ -4,6 +4,12 @@ import {
   Vector3,
 } from 'three'
 
+/** Default resolution when `resolution` is omitted or invalid. */
+const DEFAULT_RESOLUTION = 32
+
+/** Largest resolution allowed per axis — above this, res³×16 bytes exceeds typical GPU texture budgets. */
+const MAX_RESOLUTION = 256
+
 export interface PointDensityOptions {
   /**
    * 3D texture resolution per axis. Default 32.
@@ -65,7 +71,10 @@ export class PointDensity {
   private readonly _data:     Float32Array<ArrayBuffer>  // rgba, res³ voxels
 
   constructor(opts: PointDensityOptions = {}) {
-    const res   = opts.resolution ?? 32
+    const rawRes = opts.resolution ?? DEFAULT_RESOLUTION
+    const res    = Number.isFinite(rawRes) && rawRes >= 1
+      ? Math.min(Math.round(rawRes), MAX_RESOLUTION)
+      : DEFAULT_RESOLUTION
     const bMin  = opts.boundsMin  ?? [-2, -2, -2]
     const bMax  = opts.boundsMax  ?? [ 2,  2,  2]
 
