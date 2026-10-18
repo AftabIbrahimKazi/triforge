@@ -311,6 +311,12 @@ export class ParticleSystem {
       this._geometry = this._geometryProvider()
     }
 
+    // Let forces that need frame-level bookkeeping (e.g. rebuilding a spatial
+    // grid from an external source) run once before the per-particle loop.
+    for (const force of this._forces) {
+      if (force.enabled) force.beginFrame?.()
+    }
+
     const p = this.parameters
     const inEmissionWindow = this._time >= p.start && this._time <= p.end
 
