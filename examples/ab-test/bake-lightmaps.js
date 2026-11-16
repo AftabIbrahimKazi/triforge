@@ -178,32 +178,44 @@ function boxNormalAt(box, point) {
 }
 
 /**
- * @param {{boxes: BoxSpec[], faceFrames: FaceFrame[][], sun: SunSpec, sky: (direction: number[]) => number[], texels: number, samples: number}} options
- * @returns {Float32Array[][]} per box, per face, a texels*texels RGBA float lightmap of outgoing radiance
+ * @param {FaceFrame} frame
+ * @param {number} texelsPerMeter
+ * @param {number} maxTexels
+ * @returns {{width: number, height: number}} lightmap size for one face
  */
-export function bakeBoxLightmaps({ boxes, faceFrames, sun, sky, texels, samples }) {
-  if (!Number.isInteger(texels) || texels < 1 || !Number.isInteger(samples) || samples < 1) {
-    throw new RangeError('texels and samples must be positive integers');
+export function faceTextureSize(frame, texelsPerMeter, maxTexels) {
+  const size = (edge) => Math.max(1, Math.min(maxTexels, Math.ceil(Math.hypot(...edge) * texelsPerMeter)));
+  return { width: size(frame.du), height: size(frame.dv) };
+}
+
+/**
+ * @param {{boxes: BoxSpec[], faceFrames: FaceFrame[][], sun: SunSpec, sky: (direction: number[]) => number[], texelsPerMeter: number, maxTexels: number, samples: number}} options
+ * @returns {{width: number, height: number, data: Float32Array}[][]} per box, per face, an RGBA float lightmap of outgoing radiance
+ */
+export function bakeBoxLightmaps({ boxes, faceFrames, sun, sky, texelsPerMeter, maxTexels, samples }) {
+  if (!(texelsPerMeter > 0) || !Number.isInteger(maxTexels) || maxTexels < 1 || !Number.isInteger(samples) || samples < 1) {
+    throw new RangeError('texelsPerMeter must be positive; maxTexels and samples must be positive integers');
   }
   const random = makeRandom(SEED);
 
   return boxes.map((box, boxIndex) =>
     faceFrames[boxIndex].map((frame) => {
-      const data = new Float32Array(texels * texels * CHANNELS);
-      for (let j = 0; j < texels; j++) {
-        for (let i = 0; i < texels; i++) {
-          const u = (i + 0.5) / texels;
-          const v = (j + 0.5) / texels;
+      const { width, height } = faceTextureSize(frame, texelsPerMeter, maxTexels);
+      const data = new Float32Array(width * height * CHANNELS);
+      for (let j = 0; j < height; j++) {
+        for (let i = 0; i < width; i++) {
+          const u = (i + 0.5) / width;
+          const v = (j + 0.5) / height;
           const point = [0, 1, 2].map((k) => frame.origin[k] + u * frame.du[k] + v * frame.dv[k]);
           const radiance = shadePoint(point, frame.normal, box, boxes, sun, sky, samples, random);
-          const offset = (j * texels + i) * CHANNELS;
+          const offset = (j * width + i) * CHANNELS;
           data[offset] = radiance[0];
           data[offset + 1] = radiance[1];
           data[offset + 2] = radiance[2];
           data[offset + 3] = 1;
         }
       }
-      return data;
+      return { width, height, data };
     })
   );
 }
