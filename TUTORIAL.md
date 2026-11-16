@@ -38,7 +38,7 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 | `st-physics-core` | Cloth, soft body, rigid body — BallSocket, ConeTwist, Hinge, Spring, Slider constraints | 63 |
 | `st-hair-core` | Hair/fur/grass — tube/ribbon/line render, kink, clump, HairDynamics (Verlet + collision) | 51 |
 | `st-fluid-core` | FLIP fluid (PCG pressure), SPH, marching cubes surface reconstruction | — |
-| `st-pathtracer-core` | Raster ↔ path-tracer toggle; LightPathController multi-pass rendering | — |
+| `st-pathtracer-core` | Raster ↔ path-tracer toggle; LightPathController multi-pass rendering; opt-in `offlineMode` for clean captures | 5 |
 | `st-metaball-core` | Organic iso-surfaces — MetaballWorld, positive + negative blobs | — |
 | `st-core-types` | Shared TypeScript interfaces — IModifier, ICurve, IStrand, IForce, IConstraint + 11 more | 8 |
 | `render-budget-core` | Engine-agnostic device/network profiling → render-quality budget (texture tier, shader complexity, context-count policy). No Three.js dependency. | 25 |

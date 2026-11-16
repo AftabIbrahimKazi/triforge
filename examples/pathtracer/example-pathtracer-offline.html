@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Path tracer offline mode — @triforge/pathtracer-core</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060810; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #status { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.72); padding: 8px 12px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="status">starting…</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":                "https://unpkg.com/three@0.187.0/build/three.module.js",
+    "three/addons/":        "https://unpkg.com/three@0.187.0/examples/jsm/",
+    "three/examples/jsm/":  "https://unpkg.com/three@0.187.0/examples/jsm/",
+    "three-mesh-bvh":       "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/build/index.module.js",
+    "three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.27/build/index.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { PathTracerRenderer } from '../../st-pathtracer-core/dist/index.js'
+
+const TARGET_SAMPLES = 64
+const params = new URLSearchParams(location.search)
+const offlineMode = params.get('offline') !== '0'
+
+const renderer = new THREE.WebGLRenderer({ preserveDrawingBuffer: true })
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+document.body.appendChild(renderer.domElement)
+
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x1a2030)
+const floor = new THREE.Mesh(new THREE.BoxGeometry(6, 0.2, 6), new THREE.MeshStandardMaterial({ color: 0xcfc8bc }))
+floor.position.y = -0.1
+const ball = new THREE.Mesh(new THREE.SphereGeometry(0.7, 48, 48), new THREE.MeshStandardMaterial({ color: 0xc03030, roughness: 0.4 }))
+ball.position.y = 0.7
+const sun = new THREE.DirectionalLight(0xfff1dd, 4)
+sun.position.set(3, 5, 2)
+scene.add(floor, ball, sun, sun.target)
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(3, 2.5, 4)
+camera.lookAt(0, 0.6, 0)
+const controls = new OrbitControls(camera, renderer.domElement)
+controls.target.set(0, 0.6, 0)
+
+const status = document.getElementById('status')
+const tracer = new PathTracerRenderer(renderer, { maxSamples: TARGET_SAMPLES, offlineMode })
+window.__demo = { offlineMode, samples: 0, done: false }
+
+await tracer.setScene(scene, camera)
+
+function frame() {
+  controls.update()
+  const samples = tracer.render()
+  window.__demo.samples = samples
+  window.__demo.done = samples >= TARGET_SAMPLES
+  status.textContent = `offlineMode: ${offlineMode} · ${tracer.compiling ? 'compiling shader…' : `${samples} / ${TARGET_SAMPLES} samples`}`
+  requestAnimationFrame(frame)
+}
+frame()
+</script>
+</body>
+</html>
