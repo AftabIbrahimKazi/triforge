@@ -199,7 +199,10 @@ export class CompositorOutput {
     let pkg: Record<string, unknown>
 
     try {
-      const moduleName = 'postprocessing' // variable specifier keeps the optional dependency out of the bundle graph
+      // A variable specifier (not a literal import('postprocessing')) keeps bundlers from resolving
+      // the optional dependency when it is absent. Function() would do the same but is banned by
+      // the ecosystem-wide no-eval/no-new-Function rule.
+      const moduleName = 'postprocessing'
       pkg = await import(moduleName) as Record<string, unknown> // dynamic import resolves to the module namespace object
     } catch {
       throw new Error(

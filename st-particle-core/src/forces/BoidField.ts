@@ -2,6 +2,13 @@ import { BaseForce } from '../core/BaseForce.js'
 import type { Particle } from '../core/Particle.js'
 
 /**
+ * Source-pool size above which BoidField partitions agents into a uniform
+ * spatial grid instead of scanning every agent for every particle. Below
+ * this size the brute-force scan is cheaper than grid upkeep.
+ */
+const GRID_THRESHOLD = 64
+
+/**
  * A minimal interface for any particle pool that BoidField can read positions from.
  * Pass `otherSystem.pool` or any array of objects with a `position` and `alive` flag.
  */
@@ -51,6 +58,12 @@ export class BoidField extends BaseForce {
 
   private _source: BoidFieldSource[]
 
+  // Uniform spatial grid over _source, rebuilt once per frame via beginFrame()
+  // when the source pool is large enough to benefit (see GRID_THRESHOLD).
+  private readonly _grid: Map<number, number[]> = new Map()
+  private _cellSize = 0
+  private _useGrid  = false
+
   constructor(source: BoidFieldSource[], opts: BoidFieldOptions = {}) {
     super()
     this._source = source
@@ -68,6 +81,39 @@ export class BoidField extends BaseForce {
     this._source = source
   }
 
+  /**
+   * Rebuilds the spatial grid for this frame when the source pool is large
+   * enough to benefit. Called once per frame by the owning ParticleSystem,
+   * before any apply() calls — never by application code directly.
+   */
+  beginFrame(): void {
+    this._useGrid = this._source.length >= GRID_THRESHOLD
+    if (!this._useGrid) return
+
+    const { repelRadius, attractRadius } = this.parameters
+    const searchRadius = Math.max(repelRadius, attractRadius)
+    if (searchRadius <= 0) { this._useGrid = false; return }
+
+    this._cellSize = searchRadius
+    this._grid.clear()
+    for (let i = 0; i < this._source.length; i++) {
+      const agent = this._source[i]
+      if (!agent.alive) continue
+      const key = this._cellKey(
+        Math.floor(agent.position.x / this._cellSize),
+        Math.floor(agent.position.y / this._cellSize),
+        Math.floor(agent.position.z / this._cellSize),
+      )
+      let cell = this._grid.get(key)
+      if (!cell) { cell = []; this._grid.set(key, cell) }
+      cell.push(i)
+    }
+  }
+
+  private _cellKey(cx: number, cy: number, cz: number): number {
+    return ((cx * 92837111) ^ (cy * 689287499) ^ (cz * 283923481)) | 0
+  }
+
   apply(particle: Particle, dt: number): void {
     const { repelRadius, attractRadius, repelStrength, attractStrength, maxSpeed } = this.parameters
     const repR2  = repelRadius   * repelRadius
@@ -77,13 +123,13 @@ export class BoidField extends BaseForce {
 
     let fx = 0, fy = 0, fz = 0
 
-    for (const agent of this._source) {
-      if (!agent.alive) continue
+    const accumulate = (agent: BoidFieldSource): void => {
+      if (!agent.alive) return
       const dx = particle.position.x - agent.position.x
       const dy = particle.position.y - agent.position.y
       const dz = particle.position.z - agent.position.z
       const d2 = dx*dx + dy*dy + dz*dz
-      if (d2 < 1e-8) continue
+      if (d2 < 1e-8) return
       const d = Math.max(Math.sqrt(d2), minD)
 
       // Repulsion — push away
@@ -103,6 +149,21 @@ export class BoidField extends BaseForce {
         fy += dy * mag
         fz += dz * mag
       }
+    }
+
+    if (this._useGrid) {
+      const cx = Math.floor(particle.position.x / this._cellSize)
+      const cy = Math.floor(particle.position.y / this._cellSize)
+      const cz = Math.floor(particle.position.z / this._cellSize)
+      for (let dz = -1; dz <= 1; dz++)
+      for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const cell = this._grid.get(this._cellKey(cx+dx, cy+dy, cz+dz))
+        if (!cell) continue
+        for (const idx of cell) accumulate(this._source[idx])
+      }
+    } else {
+      for (const agent of this._source) accumulate(agent)
     }
 
     particle.velocity.x += fx * dt

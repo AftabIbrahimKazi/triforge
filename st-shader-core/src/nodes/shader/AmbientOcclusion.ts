@@ -1,5 +1,6 @@
 import { InputNode } from '../../core/InputNode.js'
 import type { NodeMetadata } from '../../core/ShaderNode.js'
+import { finiteOr } from '../../core/ShaderNode.js'
 import type { CompileContext } from '../../core/CompileContext.js'
 import type { OutputSocket } from '../../core/OutputSocket.js'
 import type { InputSocket } from '../../core/InputSocket.js'
@@ -138,7 +139,7 @@ float _st_ambientOcclusion(vec3 pos, vec3 N, float dist, int samples, bool insid
       ? Math.min(Math.floor(rawSamples), 16)
       : 8
     const inside = this.parameters.inside !== 0 ? 'true' : 'false'
-    const dist   = Number.isFinite(this.parameters.distance) ? this.parameters.distance.toFixed(4) : '0.5000'
+    const dist   = finiteOr(this.parameters.distance, 0.5).toFixed(4)
 
     return [
       `float ${outAO}    = _st_ambientOcclusion(vPosition, normalize(vNormal), ${dist}, ${safeSamples}, ${inside});`,

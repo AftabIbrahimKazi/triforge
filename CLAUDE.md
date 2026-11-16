@@ -17,7 +17,7 @@ High-level domain-specific generators built on top of core packages.
 Addons MAY import from core packages. Core packages must NEVER import from addons.
 
 ```
-addons/st-addon-human  ✓  — parametric human generator (HumanGenerator)
+addons/st-addon-human  ☐  — parametric human generator (HumanGenerator) — PLANNED, not yet built
         Body proportions · Head/face shaping · Skin SSS shader · Eye material ·
         JSON export/import · Skeleton joint positions
 ```

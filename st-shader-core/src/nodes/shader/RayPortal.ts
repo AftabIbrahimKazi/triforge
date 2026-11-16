@@ -1,5 +1,6 @@
 import { ProcessNode } from '../../core/ProcessNode.js'
 import type { NodeMetadata } from '../../core/ShaderNode.js'
+import { finiteOr } from '../../core/ShaderNode.js'
 import type { CompileContext } from '../../core/CompileContext.js'
 import type { OutputSocket } from '../../core/OutputSocket.js'
 import type { InputSocket } from '../../core/InputSocket.js'
@@ -73,7 +74,7 @@ export class RayPortal extends ProcessNode {
     const color = ctx.resolveInput(this._inputs.color)
     // SECURITY: validate blend is a finite number before emitting GLSL
     const rawBlend = this.parameters.blend
-    const blend    = Number.isFinite(rawBlend) ? Math.min(Math.max(rawBlend, 0.0), 1.0).toFixed(4) : '1.0000'
+    const blend    = Math.min(Math.max(finiteOr(rawBlend, 1.0), 0.0), 1.0).toFixed(4)
 
     // Rasterizer passthrough: BSDF = color * blend
     // Portal Transform is intentionally unused in this mode.

@@ -2,6 +2,9 @@ import { Vector3 }    from 'three'
 import { BaseForce }   from '../core/BaseForce.js'
 import type { Particle } from '../core/Particle.js'
 
+/** Default power-law decay exponent when `falloff` is omitted or invalid. */
+const DEFAULT_FALLOFF = 2
+
 /**
  * Radial attract / repel force — positive strength attracts, negative repels.
  * (Blender: Force Field → Charge / Force)
@@ -18,10 +21,12 @@ export class ChargeForce extends BaseForce {
   } = {}) {
     super()
     this.position = new Vector3(opts.px ?? 0, opts.py ?? 0, opts.pz ?? 0)
+    const falloff = opts.falloff ?? DEFAULT_FALLOFF
     this.parameters = {
-      strength:    opts.strength    ?? 1,
-      falloff:     opts.falloff     ?? 2,
-      maxDistance: opts.maxDistance ?? 0,
+      strength:    Number.isFinite(opts.strength) ? opts.strength as number : 1,
+      // A non-finite or non-positive falloff inverts or explodes the 1/r^falloff decay.
+      falloff:     Number.isFinite(falloff) && falloff > 0 ? falloff : DEFAULT_FALLOFF,
+      maxDistance: Number.isFinite(opts.maxDistance) && (opts.maxDistance as number) >= 0 ? opts.maxDistance as number : 0,
     }
   }
 

@@ -1,5 +1,5 @@
 import { Mesh, MeshStandardMaterial, type Material } from 'three'
-import { buildMetaballGeometry } from './MarchingCubesSolver.js'
+import { buildMetaballGeometry, type SolverBall } from './MarchingCubesSolver.js'
 import type { MetaballObject } from './MetaballObject.js'
 
 export interface MetaballWorldOptions {
@@ -20,6 +20,9 @@ export class MetaballWorld {
   readonly balls: MetaballObject[] = []
 
   parameters: { threshold: number; resolution: number; extent: number }
+
+  /** Reused across update() calls to avoid reallocating the solver-ball array every frame. */
+  private readonly _solverBallsBuffer: SolverBall[] = []
 
   constructor(opts: MetaballWorldOptions = {}) {
     const res = opts.resolution ?? 28
@@ -55,18 +58,27 @@ export class MetaballWorld {
    * Call every frame when any ball moves or changes.
    */
   update(): void {
-    const solverBalls = this.balls.map(b => ({
-      x: b.position.x,
-      y: b.position.y,
-      z: b.position.z,
+    const buffer = this._solverBallsBuffer
+    buffer.length = this.balls.length
+    for (let i = 0; i < this.balls.length; i++) {
+      const b = this.balls[i]
       // combine radius and strength into effective radius
-      r: b.parameters.radius * Math.sqrt(b.parameters.strength),
-      negative: b.negative,
-    }))
+      const r = b.parameters.radius * Math.sqrt(b.parameters.strength)
+      const entry = buffer[i]
+      if (entry) {
+        entry.x = b.position.x
+        entry.y = b.position.y
+        entry.z = b.position.z
+        entry.r = r
+        entry.negative = b.negative
+      } else {
+        buffer[i] = { x: b.position.x, y: b.position.y, z: b.position.z, r, negative: b.negative }
+      }
+    }
 
     const oldGeo = this.mesh.geometry
     this.mesh.geometry = buildMetaballGeometry(
-      solverBalls,
+      buffer,
       this.parameters.threshold,
       this.parameters.resolution,
       this.parameters.extent,
