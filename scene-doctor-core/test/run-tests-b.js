@@ -119,6 +119,15 @@ await test('flags allocation inside animate but not outside', () => {
   const f = scan(src).filter((x) => x.rule === 'loop-allocation')
   assert(f.length === 1 && f[0].path === 'a.ts:3', JSON.stringify(f))
 })
+await test('loop entry detection handles arrow forms and stays fast on long whitespace', () => {
+  const arrow = ['const tick = () => {', '  const v = new THREE.Vector3()', '}'].join('\n')
+  assert(scan(arrow).some((x) => x.rule === 'loop-allocation'))
+  const bare = ['const loop = x => {', '  const v = new THREE.Vector3()', '}'].join('\n')
+  assert(scan(bare).some((x) => x.rule === 'loop-allocation'))
+  const start = Date.now()
+  scan('update =' + ' '.repeat(40000) + 'x')
+  assert(Date.now() - start < 300, 'whitespace run took too long')
+})
 await test('missing-dispose flagged unless dispose is called', () => {
   assert(scan('const g = new THREE.WebGLRenderTarget(4, 4)').some((x) => x.rule === 'missing-dispose'))
   assert(!scan('const g = new THREE.WebGLRenderTarget(4, 4)\ng.dispose()').some((x) => x.rule === 'missing-dispose'))
