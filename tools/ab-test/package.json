@@ -1,0 +1,19 @@
+{
+  "name": "@triforge/ab-test",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "A/B harness: ΔE and SSIM against a reference render, frame-time stats, camera paths",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

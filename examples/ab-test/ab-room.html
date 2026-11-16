@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>A/B room — variants A (raster) and R (path-traced reference)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font: 11px/1.6 monospace; color: #ccc; }
+  canvas { display: block; }
+  #hud { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="hud">loading…</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":                "https://unpkg.com/three@0.187.0/build/three.module.js",
+    "three/addons/":        "https://unpkg.com/three@0.187.0/examples/jsm/",
+    "three/examples/jsm/":  "https://unpkg.com/three@0.187.0/examples/jsm/",
+    "three-mesh-bvh":       "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/build/index.module.js",
+    "three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.27/build/index.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { WebGLPathTracer } from 'three-gpu-pathtracer'
+import { createCameraPath, samplePath } from '../../tools/ab-test/src/camera-path.js'
+import { bakeBoxLightmaps, faceFramesFromBoxArrays } from './bake-lightmaps.js'
+
+const VARIANTS = ['A', 'B', 'R']
+const BALL_RADIUS = 0.4
+const BALL_COLOR_HEX = 0xc03030
+const BALL_Y = 0.4
+const BALL_DISTANCE = 2.2
+const BALL_LIMIT_FACTOR = 0.85
+const BALL_SEGMENTS = 32
+const REGION_RADIUS_SCALE = 3
+const PROBE_AMBIENT_HEX = 0x8899bb
+const PROBE_AMBIENT_INTENSITY = 0.15
+const TEXELS_PER_METER = 4
+const MAX_TEXELS = 256
+const BAKE_SAMPLES = 64
+const SUN_INTENSITY = 4
+const SUN_COLOR_HEX = 0xfff1dd
+const SKY_RED = [0.9, 0.5]
+const SKY_GREEN = [1.2, 0.5]
+const SKY_BLUE = [1.8, 0.4]
+const BYTES_HALF_RGBA = 8
+const BYTES_PER_MB = 1048576
+const DEFAULT_POSES = 4
+const DEFAULT_REF_SAMPLES = 256
+const WARMUP_FRAMES = 3
+const TIMED_FRAMES = 30
+const MAX_POSES = 64
+const FOV_DEG = 60
+const NEAR = 0.1
+const FAR = 200
+const SKY_SIZE = 64
+const SHADOW_MAP_SIZE = 2048
+const MAX_COMPILE_FRAMES = 20000
+const MAX_ITERATION_FACTOR = 4
+
+const params = new URLSearchParams(location.search)
+const variant = params.get('variant') ?? 'A'
+const dynamic = params.get('dynamic') === '1'
+const poseCount = Number.parseInt(params.get('poses') ?? String(DEFAULT_POSES), 10)
+const refSamples = Number.parseInt(params.get('samples') ?? String(DEFAULT_REF_SAMPLES), 10)
+if (!VARIANTS.includes(variant)) throw new RangeError(`variant must be one of ${VARIANTS.join(', ')}`)
+if (!Number.isInteger(poseCount) || poseCount < 2 || poseCount > MAX_POSES) throw new RangeError('poses must be an integer in [2, 64]')
+if (!Number.isInteger(refSamples) || refSamples < 1) throw new RangeError('samples must be a positive integer')
+
+const envIntensity = Number.parseFloat(params.get('env') ?? '0.4')
+const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true })
+renderer.setPixelRatio(1)
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.shadowMap.enabled = variant === 'A'
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
+document.body.appendChild(renderer.domElement)
+
+function skyRadiance(direction) {
+  const v = 0.5 + Math.asin(Math.max(-1, Math.min(1, direction[1]))) / Math.PI
+  return [SKY_RED, SKY_GREEN, SKY_BLUE].map(([base, slope]) => (base - slope * v) * envIntensity)
+}
+
+function makeSkyTexture() {
+  const data = new Float32Array(SKY_SIZE * SKY_SIZE * 4)
+  for (let y = 0; y < SKY_SIZE; y++) {
+    const t = y / (SKY_SIZE - 1)
+    for (let x = 0; x < SKY_SIZE; x++) {
+      const i = (y * SKY_SIZE + x) * 4
+      data[i] = SKY_RED[0] - SKY_RED[1] * t
+      data[i + 1] = SKY_GREEN[0] - SKY_GREEN[1] * t
+      data[i + 2] = SKY_BLUE[0] - SKY_BLUE[1] * t
+      data[i + 3] = 1
+    }
+  }
+  const tex = new THREE.DataTexture(data, SKY_SIZE, SKY_SIZE, THREE.RGBAFormat, THREE.FloatType)
+  tex.mapping = THREE.EquirectangularReflectionMapping
+  tex.magFilter = tex.minFilter = THREE.LinearFilter
+  tex.needsUpdate = true
+  return tex
+}
+
+const ROOM_BOXES = [
+  [6, 0.2, 6, 0, -0.1, 0, 0xcfc8bc],
+  [6, 0.2, 6, 0, 3.1, 0, 0xf2f0ea],
+  [0.2, 3, 6, -3.1, 1.5, 0, 0xb0603c],
+  [0.2, 3, 6, 3.1, 1.5, 0, 0x4a6fa5],
+  [6, 3, 0.2, 0, 1.5, -3.1, 0xe6e2da],
+  [2.1, 3, 0.2, -1.95, 1.5, 3.1, 0xe6e2da],
+  [2.1, 3, 0.2, 1.95, 1.5, 3.1, 0xe6e2da],
+  [1.8, 1.0, 0.2, 0, 0.5, 3.1, 0xe6e2da],
+  [1.8, 0.9, 0.2, 0, 2.55, 3.1, 0xe6e2da],
+  [1.2, 0.5, 1.2, -1, 0.25, -0.5, 0x808080],
+  [0.8, 1.2, 0.8, 1.4, 0.6, -1.5, 0xd8c05a]
+]
+
+const OUTDOOR_BOXES = [
+  [60, 0.2, 60, 0, -0.1, 0, 0x6b7a4a],
+  [0.5, 3, 0.5, -6, 1.5, 4, 0x5a3f2a],
+  [3, 3, 3, -6, 4.5, 4, 0x2f5a2a],
+  [0.5, 3, 0.5, 5, 1.5, 8, 0x5a3f2a],
+  [3, 3, 3, 5, 4.5, 8, 0x2f5a2a],
+  [0.5, 3, 0.5, -10, 1.5, -6, 0x5a3f2a],
+  [3, 3, 3, -10, 4.5, -6, 0x2f5a2a],
+  [0.5, 3, 0.5, 8, 1.5, -4, 0x5a3f2a],
+  [3, 3, 3, 8, 4.5, -4, 0x2f5a2a],
+  [0.5, 3, 0.5, 2, 1.5, 14, 0x5a3f2a],
+  [3, 3, 3, 2, 4.5, 14, 0x2f5a2a],
+  [0.5, 3, 0.5, -4, 1.5, 12, 0x5a3f2a],
+  [3, 3, 3, -4, 4.5, 12, 0x2f5a2a],
+  [6, 8, 6, 12, 4, 10, 0xb8b0a0],
+  [8, 5, 5, -14, 2.5, -10, 0xa89f90],
+  [10, 2, 0.4, 0, 1, -12, 0xcfc8bc]
+]
+
+const SCENES = {
+  room: {
+    boxes: ROOM_BOXES,
+    sun: [2.5, 6, 12],
+    shadowExtent: 8,
+    ballLimit: 2.6,
+    path: [
+      { position: [0, 1.6, -2.4], target: [0, 1.3, 3] },
+      { position: [-2, 1.6, -1], target: [1.5, 1.0, 1] },
+      { position: [2, 1.8, 1.5], target: [-2, 1.0, -2] }
+    ]
+  },
+  outdoor: {
+    boxes: OUTDOOR_BOXES,
+    sun: [15, 10, 8],
+    shadowExtent: 40,
+    ballLimit: 28,
+    path: [
+      { position: [0, 1.7, -8], target: [0, 2, 10] },
+      { position: [-8, 1.7, 0], target: [4, 2, 6] },
+      { position: [6, 2, -2], target: [-6, 2, 4] }
+    ]
+  }
+}
+
+const sceneName = params.get('scene') ?? 'room'
+if (!Object.hasOwn(SCENES, sceneName)) throw new RangeError(`scene must be one of ${Object.keys(SCENES).join(', ')}`)
+const SCENE = SCENES[sceneName]
+const BOX_SPECS = SCENE.boxes
+const SUN_POSITION = SCENE.sun
+
+function boxMesh([w, h, d, x, y, z], materials) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), materials)
+  mesh.position.set(x, y, z)
+  mesh.castShadow = mesh.receiveShadow = true
+  return mesh
+}
+
+function boxSpecToBake([w, h, d, x, y, z, hex]) {
+  const color = new THREE.Color(hex)
+  return { min: [x - w / 2, y - h / 2, z - d / 2], max: [x + w / 2, y + h / 2, z + d / 2], albedo: [color.r, color.g, color.b] }
+}
+
+function bakedMaterials(boxSpec) {
+  const geometry = new THREE.BoxGeometry(boxSpec[0], boxSpec[1], boxSpec[2])
+  return { geometry, frames: faceFramesFromBoxArrays(geometry.attributes.position.array, geometry.attributes.uv.array, geometry.attributes.normal.array) }
+}
+
+function bakeScene() {
+  const t0 = performance.now()
+  const boxes = BOX_SPECS.map(boxSpecToBake)
+  const faceFrames = BOX_SPECS.map((spec) =>
+    bakedMaterials(spec).frames.map((frame) => ({ ...frame, origin: frame.origin.map((value, i) => value + spec[3 + i]) }))
+  )
+  const sunColor = new THREE.Color(SUN_COLOR_HEX)
+  const sunDirection = new THREE.Vector3(...SUN_POSITION).normalize()
+  const maps = bakeBoxLightmaps({
+    boxes,
+    faceFrames,
+    sun: { direction: sunDirection.toArray(), color: [sunColor.r, sunColor.g, sunColor.b], intensity: SUN_INTENSITY },
+    sky: skyRadiance,
+    texelsPerMeter: TEXELS_PER_METER,
+    maxTexels: MAX_TEXELS,
+    samples: BAKE_SAMPLES
+  })
+  state.bakeMs = performance.now() - t0
+  const texelCount = maps.flat().reduce((sum, face) => sum + face.width * face.height, 0)
+  state.bakeMB = (texelCount * BYTES_HALF_RGBA) / BYTES_PER_MB
+  state.meta.bakeMB = state.bakeMB
+  state.meta.bakeMs = state.bakeMs
+  return maps
+}
+
+let ball = null
+function addBall(scene) {
+  if (!dynamic) return
+  ball = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, BALL_SEGMENTS, BALL_SEGMENTS),
+    new THREE.MeshStandardMaterial({ color: BALL_COLOR_HEX, roughness: 0.5 })
+  )
+  ball.castShadow = ball.receiveShadow = true
+  scene.add(ball)
+}
+
+function buildScene() {
+  const scene = new THREE.Scene()
+  const sky = makeSkyTexture()
+  scene.background = sky
+  const room = new THREE.Group()
+
+  if (variant === 'B') {
+    const maps = bakeScene()
+    BOX_SPECS.forEach((spec, boxIndex) => {
+      const materials = maps[boxIndex].map(({ width, height, data }) => {
+        const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType)
+        tex.magFilter = tex.minFilter = THREE.LinearFilter
+        tex.needsUpdate = true
+        return new THREE.MeshBasicMaterial({ map: tex })
+      })
+      room.add(boxMesh(spec, materials))
+    })
+    scene.add(room)
+    scene.add(new THREE.AmbientLight(PROBE_AMBIENT_HEX, PROBE_AMBIENT_INTENSITY))
+    const probeSun = new THREE.DirectionalLight(SUN_COLOR_HEX, SUN_INTENSITY)
+    probeSun.position.set(...SUN_POSITION)
+    scene.add(probeSun)
+    addBall(scene)
+    return scene
+  }
+
+  scene.environment = sky
+  scene.environmentIntensity = envIntensity
+  for (const spec of BOX_SPECS) {
+    room.add(boxMesh(spec, new THREE.MeshStandardMaterial({ color: spec[6], roughness: 0.85 })))
+  }
+  scene.add(room)
+
+  const sun = new THREE.DirectionalLight(SUN_COLOR_HEX, SUN_INTENSITY)
+  sun.position.set(...SUN_POSITION)
+  sun.target.position.set(0, 0, 0)
+  sun.castShadow = true
+  sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+  sun.shadow.camera.left = sun.shadow.camera.bottom = -SCENE.shadowExtent
+  sun.shadow.camera.right = sun.shadow.camera.top = SCENE.shadowExtent
+  sun.shadow.camera.far = SCENE.shadowExtent * 4
+  scene.add(sun, sun.target)
+  addBall(scene)
+  return scene
+}
+
+const POSES = samplePath(createCameraPath(SCENE.path), poseCount)
+
+const state = { ready: false, frameTimes: [], renderPose: null, variant, poses: poseCount, meta: { regions: [] } }
+const scene = buildScene()
+const camera = new THREE.PerspectiveCamera(FOV_DEG, innerWidth / innerHeight, NEAR, FAR)
+const hud = document.getElementById('hud')
+window.__ab = state
+
+function applyPose(index) {
+  const pose = POSES[index]
+  camera.position.set(...pose.position)
+  camera.lookAt(...pose.target)
+  camera.updateMatrixWorld()
+  if (ball) {
+    const forward = new THREE.Vector3().subVectors(new THREE.Vector3(...pose.target), camera.position).setY(0).normalize()
+    const limit = SCENE.ballLimit * BALL_LIMIT_FACTOR
+    const x = Math.max(-limit, Math.min(limit, camera.position.x + forward.x * BALL_DISTANCE))
+    const z = Math.max(-limit, Math.min(limit, camera.position.z + forward.z * BALL_DISTANCE))
+    ball.position.set(x, BALL_Y, z)
+    ball.updateMatrixWorld()
+    state.meta.regions[index] = ballRegion()
+  }
+}
+
+function ballRegion() {
+  const centre = ball.position.clone().project(camera)
+  const size = renderer.getSize(new THREE.Vector2())
+  const distance = ball.position.distanceTo(camera.position)
+  const radiusPx = (BALL_RADIUS / (distance * Math.tan((FOV_DEG * Math.PI) / 360))) * (size.y / 2) * REGION_RADIUS_SCALE
+  return {
+    x: Math.round((centre.x * 0.5 + 0.5) * size.x - radiusPx),
+    y: Math.round((-centre.y * 0.5 + 0.5) * size.y - radiusPx),
+    width: Math.round(radiusPx * 2),
+    height: Math.round(radiusPx * 2)
+  }
+}
+
+const syncPixel = new Uint8Array(4)
+function gpuSync() {
+  const gl = renderer.getContext()
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, syncPixel)
+}
+
+async function renderPoseRaster(index) {
+  applyPose(index)
+  for (let i = 0; i < WARMUP_FRAMES; i++) renderer.render(scene, camera)
+  gpuSync()
+  for (let i = 0; i < TIMED_FRAMES; i++) {
+    const t0 = performance.now()
+    renderer.render(scene, camera)
+    gpuSync()
+    state.frameTimes.push(performance.now() - t0)
+  }
+}
+
+let tracer = null
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve))
+
+async function renderPoseReference(index) {
+  applyPose(index)
+  if (dynamic) tracer.setScene(scene, camera)
+  tracer.setCamera(camera)
+  const maxIterations = refSamples * MAX_ITERATION_FACTOR + MAX_COMPILE_FRAMES
+  for (let i = 0; i < maxIterations && tracer.samples < refSamples; i++) {
+    const before = tracer.samples
+    const t0 = performance.now()
+    tracer.renderSample()
+    gpuSync()
+    if (tracer.samples > before) state.frameTimes.push(performance.now() - t0)
+    if (tracer.isCompiling) await nextFrame()
+  }
+  state.samples = tracer.samples
+  if (tracer.samples < refSamples) throw new Error(`pose ${index} reached only ${tracer.samples} of ${refSamples} samples`)
+}
+
+async function init() {
+  if (variant === 'R') {
+    tracer = new WebGLPathTracer(renderer)
+    tracer.physicallyCorrectLights = true
+    tracer.tiles.set(1, 1)
+    tracer.renderDelay = 0
+    tracer.minSamples = 0
+    tracer.fadeDuration = 0
+    tracer.rasterizeScene = false
+    scene.updateMatrixWorld(true)
+    tracer.setScene(scene, camera)
+    state.renderPose = renderPoseReference
+    window.__tracer = tracer
+  } else {
+    state.renderPose = renderPoseRaster
+  }
+  hud.style.display = 'none'
+  state.ready = true
+}
+
+init().catch((err) => { hud.textContent = `error: ${err.message}`; state.error = err.message })
+</script>
+</body>
+</html>

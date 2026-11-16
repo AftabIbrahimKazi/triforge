@@ -16,6 +16,8 @@ import {
   PrincipledHair,
   EnvironmentTexture,
   ImageTexture,
+  MapRange,
+  CombineRGB,
   Mapping,
   NormalMap,
   Bump,
@@ -224,7 +226,7 @@ test('Fragment shader contains correct GLSL structure', () => {
   if (!result.fragmentShader.includes('void main()'))       throw new Error('Missing main()')
   if (!result.fragmentShader.includes('gl_FragColor'))      throw new Error('Missing gl_FragColor')
   if (!result.fragmentShader.includes('varying vec2 vUv'))  throw new Error('Missing vUv varying')
-  if (!result.fragmentShader.includes('precision mediump')) throw new Error('Missing precision qualifier')
+  if (!result.fragmentShader.includes('precision highp'))   throw new Error('Missing precision qualifier')
 })
 
 // ── Error system ──────────────────────────────────────────────────────────────
@@ -973,6 +975,47 @@ test('Two uv-offset Bump instances with different uniformNames both compile with
   if (!result.fragmentShader.includes('uniform sampler2D uHeightB;')) throw new Error('uHeightB uniform missing')
   if (result.fragmentShader.includes('GL_EXT_shader_texture_lod')) {
     throw new Error('uv-offset Bump should never emit the shader_texture_lod extension')
+  }
+})
+
+test('Two ImageTexture nodes sharing one uniformName declare the sampler once', () => {
+  const mapping = new Mapping({ vector: new TextureCoordinate().output('UV') })
+  const a = new ImageTexture({ uniformName: 'uShared' })
+  const b = new ImageTexture({ uniformName: 'uShared', vector: mapping.output('Vector') })
+  const mixed = new AddShader({
+    shader1: new Emission({ color: a.output('Color') }).output('BSDF'),
+    shader2: new Emission({ color: b.output('Color') }).output('BSDF'),
+  })
+  const mat = new MaterialOutput({ surface: mixed.output('BSDF') })
+  const result = mat.compile()
+  const count = result.fragmentShader.split('uniform sampler2D uShared;').length - 1
+  if (count !== 1) throw new Error(`Expected one uShared declaration, found ${count}`)
+})
+
+test('ImageTexture interpolation "cubic" samples four taps and compiles alongside a linear node', () => {
+  const cubic  = new ImageTexture({ uniformName: 'uCubic', interpolation: 'cubic', textureSize: [2048, 1024] })
+  const linear = new ImageTexture({ uniformName: 'uLinear' })
+  const mixed = new AddShader({
+    shader1: new Emission({ color: cubic.output('Color') }).output('BSDF'),
+    shader2: new Emission({ color: linear.output('Color') }).output('BSDF'),
+  })
+  const mat = new MaterialOutput({ surface: mixed.output('BSDF') })
+  const result = mat.compile()
+  const taps = result.fragmentShader.split('texture2D(uCubic,').length - 1
+  if (taps !== 4) throw new Error(`Expected 4 cubic taps, found ${taps}`)
+  if (!result.fragmentShader.includes('vec2(2048.0, 1024.0)')) throw new Error('textureSize missing from cubic sample')
+})
+
+throws('ImageTexture "cubic" without a textureSize throws', () => {
+  new ImageTexture({ uniformName: 'uNoSize', interpolation: 'cubic' })
+})
+
+test('MapRange SMOOTHSTEP clamps the factor before the curve (out-of-range inputs stay in [0, 1])', () => {
+  const below = new MapRange({ value: -5, fromMin: 0, fromMax: 1, mode: 'SMOOTHSTEP' })
+  const mat = new MaterialOutput({ surface: new Emission({ color: new CombineRGB({ r: below.output('Result') }).output('Color') }).output('BSDF') })
+  const glsl = mat.compile().fragmentShader
+  if (!glsl.includes('t = clamp(t, 0.0, 1.0); t = t * t * (3.0 - 2.0 * t);')) {
+    throw new Error('SMOOTHSTEP does not clamp the factor before applying the curve')
   }
 })
 

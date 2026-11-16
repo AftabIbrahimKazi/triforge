@@ -115,6 +115,9 @@ st-fluid-core  ✓      — FLIP fluid + SPH simulation
         FLIPSimulator (PCG pressure) · SPHSimulator · MarchingCubes · FluidEmitter
 st-metaball-core  ✓   — organic iso-surfaces
         MetaballWorld · MetaballObject (positive + negative) · live update()
+st-bake-core  ✓       — CPU light baker: sun + sky + 1 diffuse bounce into per-mesh lightmaps
+        LightBaker (bake / bakeAsync) · BuiltInIntersector (no-dependency BVH) ·
+        meshBVHIntersector (opt-in three-mesh-bvh). Wins only in enclosed static interiors.
 st-core-types  ✓      — shared TypeScript interfaces (no runtime code)
         IAnimatable · IModifier · IGeometryProvider · ICurve · IStrand · IForce ·
         IConstraint · IRigidBody · IPoseBone + more
