@@ -111,6 +111,9 @@ st-fluid-core              — FLIP fluid + SPH simulation
 st-bake-core               — CPU light baker (sun + sky + 1 bounce → per-mesh lightmaps)
   LightBaker (bake / bakeAsync) · BuiltInIntersector · meshBVHIntersector (opt-in)
 
+scene-doctor-core          — dev-only scene linter, edit panel, token-capped AI export (infra, no st- prefix)
+  SceneDoctor · Reporter · EditSession · DevPanel · static scanner · page collector · strip-check
+
 st-metaball-core           — organic iso-surface
   MetaballWorld · MetaballObject (positive + negative) · live update()
 

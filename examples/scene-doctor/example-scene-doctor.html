@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scene-doctor-core — dev panel, findings and AI export</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d12; color: #ddd; font: 13px monospace; overflow: hidden; }
+  #note { position: fixed; left: 8px; bottom: 8px; max-width: 420px; padding: 8px; background: #111c; }
+  #out { position: fixed; left: 8px; top: 8px; width: 420px; height: 160px; background: #111c; color: #9f9; border: 0; font: 11px monospace; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<textarea id="out" readonly placeholder="Click Export in the panel: the AI-ready JSON lands here"></textarea>
+<div id="note">
+  The red cube has scale.x = 0 (a deliberate bug). Drag its Scene/BrokenCube.scale.x slider up
+  and the finding disappears. Export copies the edits plus the capped report.
+  Drive it from code: <code>window.__sceneDoctor.set('Scene/Ball.position.y', 2)</code>
+</div>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { SceneDoctor, EditSession } from '../../scene-doctor-core/dist/index.js'
+import { defaultRules, registerSceneObjects, ShaderErrorCollector, ResourceTracker } from '../../scene-doctor-core/dist/three/index.js'
+import { DevPanel } from '../../scene-doctor-core/dist/panel/index.js'
+
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setSize(innerWidth, innerHeight)
+document.body.append(renderer.domElement)
+
+const scene = new THREE.Scene()
+scene.name = 'Scene'
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100)
+camera.position.set(4, 3, 6)
+const controls = new OrbitControls(camera, renderer.domElement)
+
+const sun = new THREE.DirectionalLight(0xffffff, 2)
+sun.name = 'Sun'
+sun.position.set(3, 5, 2)
+scene.add(sun, new THREE.AmbientLight(0x445566, 1))
+
+const ball = new THREE.Mesh(new THREE.SphereGeometry(0.8, 48, 24), new THREE.MeshStandardMaterial({ color: 0x4488ff, roughness: 0.3, metalness: 0.4 }))
+ball.name = 'Ball'
+ball.position.set(-1.5, 0.8, 0)
+const broken = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xff4444 }))
+broken.name = 'BrokenCube'
+broken.position.set(1.5, 0.5, 0)
+broken.scale.x = 0
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshStandardMaterial({ color: 0x222833, roughness: 0.9 }))
+floor.name = 'Floor'
+floor.rotation.x = -Math.PI / 2
+scene.add(ball, broken, floor)
+
+const wave = { parameters: { amplitude: 0.3, speed: 1.5, enabled: true } }
+
+const session = new EditSession()
+registerSceneObjects(session, scene)
+session.register('Wave', wave, { ranges: { amplitude: [0, 2], speed: [0, 6] } })
+
+const shaderErrors = new ShaderErrorCollector()
+shaderErrors.attach(renderer)
+const tracker = new ResourceTracker()
+const doctor = new SceneDoctor({ rules: defaultRules })
+const getContext = () => ({ scene, renderer, shaderErrors: shaderErrors.list(), leaks: tracker })
+
+const panel = new DevPanel({
+  session, doctor, getContext, document,
+  report: { maxTokens: 400 },
+  onExport: (text) => {
+    document.getElementById('out').value = text
+    navigator.clipboard?.writeText(text).catch(() => {})
+  },
+})
+panel.init()
+panel.expose(window)
+
+
+function frame() {
+  const t = performance.now() / 1000
+  if (wave.parameters.enabled) ball.position.y = 0.8 + Math.sin(t * wave.parameters.speed) * wave.parameters.amplitude
+  controls.update()
+  renderer.render(scene, camera)
+  tracker.sample(renderer.info)
+  requestAnimationFrame(frame)
+}
+frame()
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight)
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+})
+</script>
+</body>
+</html>

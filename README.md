@@ -142,6 +142,7 @@ in [`examples/`](examples/) (100+ files).
 | [`@triforge/core-types`](https://www.npmjs.com/package/@triforge/core-types) | [![npm](https://img.shields.io/npm/v/@triforge/core-types?label=&color=cb3837)](https://www.npmjs.com/package/@triforge/core-types) | Shared TypeScript interfaces — no runtime code |
 | [`@triforge/render-budget-core`](https://www.npmjs.com/package/@triforge/render-budget-core) | [![npm](https://img.shields.io/npm/v/@triforge/render-budget-core?label=&color=cb3837)](https://www.npmjs.com/package/@triforge/render-budget-core) | Engine-agnostic device/network profiling → adaptive render-quality budget |
 | [`@triforge/context-pool-core`](https://www.npmjs.com/package/@triforge/context-pool-core) | [![npm](https://img.shields.io/npm/v/@triforge/context-pool-core?label=&color=cb3837)](https://www.npmjs.com/package/@triforge/context-pool-core) | Scissor/viewport multiplexer — share one WebGL context across many canvases |
+| `@triforge/scene-doctor-core` (not yet published) | — | Dev-only scene linter, slider edit panel and token-capped AI export |
 
 ```bash
 # Install only what you need — every package stands alone
@@ -312,6 +313,7 @@ triforge/
 ├── radius-parametric-geometry/   parametric shape generator
 ├── render-budget-core/      device/network profiling → render budget
 ├── context-pool-core/       shared-context canvas multiplexer
+├── scene-doctor-core/       dev-only scene linter + edit panel + AI export
 ├── examples/                100+ runnable, no-build-step HTML demos
 ├── TUTORIAL.md               full worked examples, every package
 └── THREE_JS_ECOSYSTEM.md     architecture / dependency diagram
