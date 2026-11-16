@@ -1,6 +1,6 @@
 {
   "name": "@triforge/shader-core",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "description": "Node-based GLSL shader generator for Three.js — 75 Blender-matched surface shader nodes (PrincipledBSDF, Noise, Voronoi, Musgrave) compiled to WebGL materials",
   "type": "module",
   "main": "./dist/index.js",

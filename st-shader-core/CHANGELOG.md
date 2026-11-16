@@ -5,7 +5,7 @@ Format follows `coding-standards/versioning-standards.md` (RULE V-08).
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-11-17
 
 ### Fixed
 - **`MapRange` SMOOTHSTEP / SMOOTHERSTEP gave garbage outside the input range.**
