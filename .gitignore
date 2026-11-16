@@ -22,9 +22,10 @@ coding-standards/
 
 # ai-dev-kit: classic single-session continuity file — local reference only
 handover.md
-# NOTE: handover/ (board.md, locks.md, roles/, PROTOCOL.md) is intentionally NOT
-# ignored — it's the actual cross-session coordination mechanism for parallel
-# mode and must be committed so other lanes/sessions can see claims and state.
+# AI session coordination and agent instruction files: local only, not part of the project
+handover/
+AGENTS.md
+.claude/
 
 # ai-dev-kit: installed skill copies — local tooling, not a project deliverable
 .claude/skills/
