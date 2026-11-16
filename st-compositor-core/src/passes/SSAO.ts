@@ -1,4 +1,5 @@
 import { Vector2 } from 'three'
+import type { Plane } from 'three'
 import { BasePass } from '../core/BasePass.js'
 import type { PassRegistry } from '../core/BasePass.js'
 
@@ -9,6 +10,12 @@ export interface SSAOOptions {
   minDistance?: number
   /** Maximum depth difference to generate occlusion. Default 0.1. */
   maxDistance?: number
+  /**
+   * Clipping planes to apply to the pass's own normal/depth render of the scene. A scene that clips its meshes
+   * (cutaways, sections) must give the same planes here, or the clipped-away half comes back as occlusion.
+   * Default none.
+   */
+  clippingPlanes?: Plane[]
 }
 
 /**
@@ -26,6 +33,8 @@ export interface SSAOOptions {
 export class SSAO extends BasePass {
   readonly passType = 'SSAO'
   parameters: { radius: number; minDistance: number; maxDistance: number }
+  /** Planes applied to the pass's normal material. Not animatable, so not part of `parameters`. */
+  clippingPlanes: Plane[]
 
   constructor(opts: SSAOOptions = {}) {
     super()
@@ -34,6 +43,7 @@ export class SSAO extends BasePass {
       minDistance: opts.minDistance ?? 0.005,
       maxDistance: opts.maxDistance ?? 0.1,
     }
+    this.clippingPlanes = opts.clippingPlanes ?? []
   }
 
   _threePassDeps() { return ['SSAOPass'] }
@@ -50,6 +60,9 @@ export class SSAO extends BasePass {
     pass['kernelRadius'] = this.parameters.radius
     pass['minDistance']  = this.parameters.minDistance
     pass['maxDistance']  = this.parameters.maxDistance
+    // SSAOPass draws the scene again with its own normal material; give that draw the same clipping as the real one
+    const normalMaterial = pass['normalMaterial'] as { clippingPlanes?: Plane[] } | undefined
+    if (this.clippingPlanes.length && normalMaterial) normalMaterial.clippingPlanes = this.clippingPlanes
     return pass
   }
 }

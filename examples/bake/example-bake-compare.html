@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bake compare — raster | baked | path-traced reference</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #05060a; overflow: hidden; font: 12px/1.5 monospace; color: #ccd; }
+  #bar { position: absolute; top: 0; left: 0; right: 0; height: 40px; display: flex; gap: 8px; align-items: center; padding: 0 12px; background: #0b0d14; z-index: 3; }
+  #bar button { font: inherit; color: inherit; background: #1a1f2e; border: 1px solid #334; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
+  #bar button[aria-pressed="true"] { background: #2d4a8a; border-color: #5b7fd0; }
+  #status { margin-left: auto; }
+  #panels { position: absolute; top: 40px; left: 0; right: 0; bottom: 74px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+  .panel { position: relative; overflow: hidden; }
+  .panel canvas { display: block; width: 100%; height: 100%; }
+  #overlay { position: absolute; top: 40px; left: 0; right: 0; bottom: 74px; z-index: 2; touch-action: none; }
+  .label { position: absolute; left: 8px; bottom: 8px; right: 8px; background: rgba(0,0,0,0.72); padding: 6px 10px; border-radius: 4px; z-index: 1; }
+  .label b { color: #fff; }
+  #note { position: absolute; left: 0; right: 0; bottom: 0; height: 74px; padding: 8px 12px; background: #0b0d14; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span>scene:</span>
+  <button id="btn-room" aria-pressed="true">Room (enclosed)</button>
+  <button id="btn-outdoor" aria-pressed="false">Outdoor (open)</button>
+  <span id="status">starting…</span>
+</div>
+<div id="panels">
+  <div class="panel"><canvas id="cv-a"></canvas><div class="label" id="lb-a"></div></div>
+  <div class="panel"><canvas id="cv-b"></canvas><div class="label" id="lb-b"></div></div>
+  <div class="panel"><canvas id="cv-r"></canvas><div class="label" id="lb-r"></div></div>
+</div>
+<div id="overlay"></div>
+<div id="note"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":                "https://unpkg.com/three@0.187.0/build/three.module.js",
+    "three/addons/":        "https://unpkg.com/three@0.187.0/examples/jsm/",
+    "three/examples/jsm/":  "https://unpkg.com/three@0.187.0/examples/jsm/",
+    "three-mesh-bvh":       "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/build/index.module.js",
+    "three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.27/build/index.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { PathTracerRenderer } from '../../st-pathtracer-core/dist/index.js'
+import { LightBaker } from '../../st-bake-core/dist/index.js'
+import { addBoxAtlasUV } from './box-atlas.js'
+
+const REFERENCE_SAMPLES = 64
+const ENV_INTENSITY = 0.4
+const SUN_INTENSITY = 4
+const SUN_COLOR_HEX = 0xfff1dd
+const TEXELS_PER_METER = 4
+const MAX_TEXELS = 256
+const BAKE_SAMPLES = 64
+const FOV_DEG = 60
+const NEAR = 0.1
+const FAR = 200
+const SKY_SIZE = 64
+const SHADOW_MAP_SIZE = 2048
+const SKY_RED = [0.9, 0.5]
+const SKY_GREEN = [1.2, 0.5]
+const SKY_BLUE = [1.8, 0.4]
+
+// Measured by the A/B harness (tools/ab-test/results/results-2026-11-16.md):
+// mean DeltaE against the path-traced reference, 640x360, 4 poses, 256 reference samples. Lower is closer.
+const MEASURED = {
+  room: { A: 39.32, B: 3.46 },
+  outdoor: { A: 3.41, B: 4.05 }
+}
+
+const ROOM_BOXES = [
+  [6, 0.2, 6, 0, -0.1, 0, 0xcfc8bc],
+  [6, 0.2, 6, 0, 3.1, 0, 0xf2f0ea],
+  [0.2, 3, 6, -3.1, 1.5, 0, 0xb0603c],
+  [0.2, 3, 6, 3.1, 1.5, 0, 0x4a6fa5],
+  [6, 3, 0.2, 0, 1.5, -3.1, 0xe6e2da],
+  [2.1, 3, 0.2, -1.95, 1.5, 3.1, 0xe6e2da],
+  [2.1, 3, 0.2, 1.95, 1.5, 3.1, 0xe6e2da],
+  [1.8, 1.0, 0.2, 0, 0.5, 3.1, 0xe6e2da],
+  [1.8, 0.9, 0.2, 0, 2.55, 3.1, 0xe6e2da],
+  [1.2, 0.5, 1.2, -1, 0.25, -0.5, 0x808080],
+  [0.8, 1.2, 0.8, 1.4, 0.6, -1.5, 0xd8c05a]
+]
+
+const OUTDOOR_BOXES = [
+  [60, 0.2, 60, 0, -0.1, 0, 0x6b7a4a],
+  [0.5, 3, 0.5, -6, 1.5, 4, 0x5a3f2a], [3, 3, 3, -6, 4.5, 4, 0x2f5a2a],
+  [0.5, 3, 0.5, 5, 1.5, 8, 0x5a3f2a], [3, 3, 3, 5, 4.5, 8, 0x2f5a2a],
+  [0.5, 3, 0.5, -10, 1.5, -6, 0x5a3f2a], [3, 3, 3, -10, 4.5, -6, 0x2f5a2a],
+  [0.5, 3, 0.5, 8, 1.5, -4, 0x5a3f2a], [3, 3, 3, 8, 4.5, -4, 0x2f5a2a],
+  [0.5, 3, 0.5, 2, 1.5, 14, 0x5a3f2a], [3, 3, 3, 2, 4.5, 14, 0x2f5a2a],
+  [0.5, 3, 0.5, -4, 1.5, 12, 0x5a3f2a], [3, 3, 3, -4, 4.5, 12, 0x2f5a2a],
+  [6, 8, 6, 12, 4, 10, 0xb8b0a0],
+  [8, 5, 5, -14, 2.5, -10, 0xa89f90],
+  [10, 2, 0.4, 0, 1, -12, 0xcfc8bc]
+]
+
+const SCENES = {
+  room: { title: 'Room', boxes: ROOM_BOXES, sun: [2.5, 6, 12], shadowExtent: 8, camera: [0, 1.6, -2.4], target: [0, 1.3, 3] },
+  outdoor: { title: 'Outdoor', boxes: OUTDOOR_BOXES, sun: [15, 10, 8], shadowExtent: 40, camera: [0, 1.7, -8], target: [0, 2, 10] }
+}
+
+const els = {
+  status: document.getElementById('status'),
+  note: document.getElementById('note'),
+  overlay: document.getElementById('overlay'),
+  labels: { A: document.getElementById('lb-a'), B: document.getElementById('lb-b'), R: document.getElementById('lb-r') },
+  canvases: { A: document.getElementById('cv-a'), B: document.getElementById('cv-b'), R: document.getElementById('cv-r') },
+  buttons: { room: document.getElementById('btn-room'), outdoor: document.getElementById('btn-outdoor') }
+}
+
+function makeRenderer(canvas, shadows) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true })
+  renderer.setPixelRatio(1)
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.shadowMap.enabled = shadows
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  return renderer
+}
+
+const renderers = {
+  A: makeRenderer(els.canvases.A, true),
+  B: makeRenderer(els.canvases.B, false),
+  R: makeRenderer(els.canvases.R, false)
+}
+
+function skyRadiance(direction) {
+  const v = 0.5 + Math.asin(Math.max(-1, Math.min(1, direction[1]))) / Math.PI
+  return [SKY_RED, SKY_GREEN, SKY_BLUE].map(([base, slope]) => (base - slope * v) * ENV_INTENSITY)
+}
+
+function makeSkyTexture() {
+  const data = new Float32Array(SKY_SIZE * SKY_SIZE * 4)
+  for (let y = 0; y < SKY_SIZE; y++) {
+    const t = y / (SKY_SIZE - 1)
+    for (let x = 0; x < SKY_SIZE; x++) {
+      const i = (y * SKY_SIZE + x) * 4
+      data[i] = SKY_RED[0] - SKY_RED[1] * t
+      data[i + 1] = SKY_GREEN[0] - SKY_GREEN[1] * t
+      data[i + 2] = SKY_BLUE[0] - SKY_BLUE[1] * t
+      data[i + 3] = 1
+    }
+  }
+  const texture = new THREE.DataTexture(data, SKY_SIZE, SKY_SIZE, THREE.RGBAFormat, THREE.FloatType)
+  texture.mapping = THREE.EquirectangularReflectionMapping
+  texture.magFilter = texture.minFilter = THREE.LinearFilter
+  texture.needsUpdate = true
+  return texture
+}
+
+function atlasBoxGeometry(width, height, depth) {
+  return addBoxAtlasUV(new THREE.BoxGeometry(width, height, depth), width, height, depth)
+}
+
+function boxMesh([w, h, d, x, y, z, hex], geometry) {
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: hex, roughness: 0.85 }))
+  mesh.position.set(x, y, z)
+  mesh.castShadow = mesh.receiveShadow = true
+  mesh.updateMatrixWorld(true)
+  return mesh
+}
+
+function buildLitScene(def) {
+  const scene = new THREE.Scene()
+  const sky = makeSkyTexture()
+  scene.background = sky
+  scene.environment = sky
+  scene.environmentIntensity = ENV_INTENSITY
+  for (const spec of def.boxes) scene.add(boxMesh(spec, new THREE.BoxGeometry(spec[0], spec[1], spec[2])))
+  const sun = new THREE.DirectionalLight(SUN_COLOR_HEX, SUN_INTENSITY)
+  sun.position.set(...def.sun)
+  sun.castShadow = true
+  sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+  sun.shadow.camera.left = sun.shadow.camera.bottom = -def.shadowExtent
+  sun.shadow.camera.right = sun.shadow.camera.top = def.shadowExtent
+  sun.shadow.camera.far = def.shadowExtent * 4
+  scene.add(sun, sun.target)
+  return scene
+}
+
+const bakeCache = new Map()
+
+async function buildBakedScene(name, def, onProgress) {
+  const scene = new THREE.Scene()
+  scene.background = makeSkyTexture()
+  const meshes = def.boxes.map((spec) => boxMesh(spec, atlasBoxGeometry(spec[0], spec[1], spec[2])))
+  let entry = bakeCache.get(name)
+  if (!entry) {
+    const sunColor = new THREE.Color(SUN_COLOR_HEX)
+    const baker = new LightBaker(meshes, {
+      sun: { direction: new THREE.Vector3(...def.sun).normalize().toArray(), color: [sunColor.r, sunColor.g, sunColor.b], intensity: SUN_INTENSITY },
+      sky: skyRadiance,
+      texelsPerMeter: TEXELS_PER_METER,
+      maxTexels: MAX_TEXELS,
+      samples: BAKE_SAMPLES
+    })
+    const t0 = performance.now()
+    const maps = await baker.bakeAsync(onProgress)
+    entry = { maps: meshes.map((mesh) => maps.get(mesh)), ms: performance.now() - t0 }
+    bakeCache.set(name, entry)
+  }
+  meshes.forEach((mesh, index) => {
+    mesh.geometry.setAttribute('uv', mesh.geometry.getAttribute('uv1'))
+    mesh.material = new THREE.MeshBasicMaterial({ map: entry.maps[index] })
+    scene.add(mesh)
+  })
+  return { scene, bakeMs: entry.ms }
+}
+
+const camera = new THREE.PerspectiveCamera(FOV_DEG, 1, NEAR, FAR)
+const controls = new OrbitControls(camera, els.overlay)
+let current = { name: null, litScene: null, bakedScene: null, tracer: null, token: 0 }
+let running = true
+
+function panelSize() {
+  const rect = els.canvases.A.parentElement.getBoundingClientRect()
+  return { width: Math.max(1, Math.floor(rect.width)), height: Math.max(1, Math.floor(rect.height)) }
+}
+
+function layout() {
+  const { width, height } = panelSize()
+  for (const renderer of Object.values(renderers)) renderer.setSize(width, height, false)
+  camera.aspect = width / height
+  camera.updateProjectionMatrix()
+}
+
+function describe(name, bakeMs) {
+  const m = MEASURED[name]
+  const ahead = name === 'room'
+  els.labels.A.innerHTML = `<b>A · raster</b> (lights + shadow map)<br>measured ΔE vs reference: <b>${m.A.toFixed(1)}</b>`
+  els.labels.B.innerHTML = `<b>B · baked</b> (no lights at runtime)<br>measured ΔE vs reference: <b>${m.B.toFixed(1)}</b> (A/B harness, spike baker) · bake ${(bakeMs / 1000).toFixed(1)} s`
+  els.labels.R.innerHTML = '<b>R · path-traced reference</b><br><span id="samples">compiling…</span>'
+  els.note.innerHTML = ahead
+    ? 'Enclosed interior: baking wins clearly (mean ΔE 39.3 → 3.5) because raster floods the room with unoccluded environment light. ΔE = colour distance to the reference, lower is closer.'
+    : 'Open outdoor scene: baking gives no gain (mean ΔE 3.4 raster vs 4.1 baked) — raster is already close to the reference. Bake of 60 m at 4 texels/m takes seconds on the CPU. Baking helps only in enclosed static interiors.'
+}
+
+async function loadScene(name) {
+  const token = ++current.token
+  const def = SCENES[name]
+  for (const [key, button] of Object.entries(els.buttons)) button.setAttribute('aria-pressed', String(key === name))
+  els.status.textContent = 'baking…'
+  current.tracer?.dispose()
+  current.tracer = null
+  layout()
+  camera.position.set(...def.camera)
+  controls.target.set(...def.target)
+  controls.update()
+
+  const litScene = buildLitScene(def)
+  const baked = await buildBakedScene(name, def, (p) => {
+    if (token === current.token) els.status.textContent = `baking mesh ${p.meshIndex + 1}/${p.meshCount}`
+  })
+  if (token !== current.token) return
+  current = { ...current, name, litScene, bakedScene: baked.scene }
+  describe(name, baked.bakeMs)
+
+  const tracer = new PathTracerRenderer(renderers.R, { maxSamples: REFERENCE_SAMPLES, offlineMode: true })
+  await tracer.setScene(litScene, camera)
+  if (token !== current.token) { tracer.dispose(); return }
+  current.tracer = tracer
+}
+
+function frame() {
+  if (!running) return
+  controls.update()
+  if (current.litScene) renderers.A.render(current.litScene, camera)
+  if (current.bakedScene) renderers.B.render(current.bakedScene, camera)
+  if (current.tracer) {
+    const samples = current.tracer.render()
+    const label = document.getElementById('samples')
+    if (label) label.textContent = current.tracer.compiling ? 'compiling shader…' : `offline mode · ${samples} / ${REFERENCE_SAMPLES} samples`
+    els.status.textContent = samples >= REFERENCE_SAMPLES ? 'reference converged' : 'reference accumulating'
+  }
+  requestAnimationFrame(frame)
+}
+
+function onControlsChange() {
+  current.tracer?.pathTracer.updateCamera()
+}
+
+function onResize() {
+  layout()
+  onControlsChange()
+}
+
+function dispose() {
+  running = false
+  window.removeEventListener('resize', onResize)
+  window.removeEventListener('pagehide', dispose)
+  controls.removeEventListener('change', onControlsChange)
+  controls.dispose()
+  current.tracer?.dispose()
+}
+
+els.buttons.room.addEventListener('click', () => loadScene('room'))
+els.buttons.outdoor.addEventListener('click', () => loadScene('outdoor'))
+controls.addEventListener('change', onControlsChange)
+window.addEventListener('resize', onResize)
+window.addEventListener('pagehide', dispose)
+
+window.__bake = { get scene() { return current.name }, get samples() { return current.tracer?.samples ?? 0 } }
+loadScene('room').catch((error) => { els.status.textContent = `error: ${error.message}` })
+frame()
+</script>
+</body>
+</html>

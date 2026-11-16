@@ -2,6 +2,9 @@ import { Vector3 }    from 'three'
 import { BaseForce }   from '../core/BaseForce.js'
 import type { Particle } from '../core/Particle.js'
 
+/** Default rest distance when `equilibrium` is omitted or invalid. */
+const DEFAULT_EQUILIBRIUM = 1
+
 /**
  * Lennard-Jones inter-particle force — attraction at long range, repulsion
  * at short range. Models molecular-like particle interaction.
@@ -19,10 +22,12 @@ export class LennardJonesForce extends BaseForce {
   } = {}) {
     super()
     this.position = new Vector3(opts.px ?? 0, opts.py ?? 0, opts.pz ?? 0)
+    const equilibrium = opts.equilibrium ?? DEFAULT_EQUILIBRIUM
     this.parameters = {
-      strength:    opts.strength    ?? 1,
-      equilibrium: opts.equilibrium ?? 1,
-      maxDistance: opts.maxDistance ?? 0,
+      strength:    Number.isFinite(opts.strength) ? opts.strength as number : 1,
+      // A non-finite or non-positive equilibrium makes r0/r blow up to NaN/Infinity.
+      equilibrium: Number.isFinite(equilibrium) && equilibrium > 0 ? equilibrium : DEFAULT_EQUILIBRIUM,
+      maxDistance: Number.isFinite(opts.maxDistance) && (opts.maxDistance as number) >= 0 ? opts.maxDistance as number : 0,
     }
   }
 

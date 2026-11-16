@@ -69,8 +69,12 @@ function loopSubdivide(geometry: BufferGeometry): BufferGeometry {
   const ia = idx.array
   for (let i = 0; i < ia.length; i += 3) tris.push([ia[i], ia[i+1], ia[i+2]])
 
+  // Numeric edge key (a < b): a * vCount + b. Avoids per-edge string allocation
+  // from template-literal keys, which dominated subdivision time on large meshes.
+  const edgeKey = (a: number, b: number): number => a < b ? a * vCount + b : b * vCount + a
+
   // Build adjacency
-  const edgeOpposites = new Map<string, number[]>()
+  const edgeOpposites = new Map<number, number[]>()
   const vertNeighbors: Set<number>[] = Array.from({ length: vCount }, () => new Set())
 
   for (const [a, b, c] of tris) {
@@ -79,7 +83,7 @@ function loopSubdivide(geometry: BufferGeometry): BufferGeometry {
     vertNeighbors[c].add(a); vertNeighbors[c].add(b)
 
     for (const [e0, e1, opp] of [[a,b,c],[b,c,a],[c,a,b]] as [number,number,number][]) {
-      const key = e0 < e1 ? `${e0}_${e1}` : `${e1}_${e0}`
+      const key = edgeKey(e0, e1)
       if (!edgeOpposites.has(key)) edgeOpposites.set(key, [])
       edgeOpposites.get(key)!.push(opp)
     }
@@ -98,9 +102,9 @@ function loopSubdivide(geometry: BufferGeometry): BufferGeometry {
   }
 
   // New edge midpoint vertices (Loop formula)
-  const edgeMidIndex = new Map<string, number>()
+  const edgeMidIndex = new Map<number, number>()
   for (const [key, opps] of edgeOpposites.entries()) {
-    const [ai, bi] = key.split('_').map(Number)
+    const ai = Math.floor(key / vCount), bi = key % vCount
     const pa = getP(ai), pb = getP(bi)
     const ua = getU(ai), ub = getU(bi)
     let np: number[], nu: number[]
@@ -134,7 +138,7 @@ function loopSubdivide(geometry: BufferGeometry): BufferGeometry {
     let isBoundary = false
     const boundaryNeighbors: number[] = []
     for (const nb of neighbors) {
-      const key = v < nb ? `${v}_${nb}` : `${nb}_${v}`
+      const key = edgeKey(v, nb)
       if ((edgeOpposites.get(key)?.length ?? 0) === 1) {
         isBoundary = true
         boundaryNeighbors.push(nb)
@@ -171,7 +175,7 @@ function loopSubdivide(geometry: BufferGeometry): BufferGeometry {
 
   // Build new index
   const outIdx: number[] = []
-  const getMid = (a: number, b: number) => edgeMidIndex.get(a < b ? `${a}_${b}` : `${b}_${a}`)!
+  const getMid = (a: number, b: number) => edgeMidIndex.get(edgeKey(a, b))!
   for (const [a, b, c] of tris) {
     const oa = origNewIndex[a], ob = origNewIndex[b], oc = origNewIndex[c]
     const ab = getMid(a, b), bc = getMid(b, c), ca = getMid(c, a)

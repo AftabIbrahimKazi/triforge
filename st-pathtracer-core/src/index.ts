@@ -1,5 +1,5 @@
-export { PathTracerRenderer }         from './PathTracerRenderer.js'
-export type { PathTracerRendererOptions } from './PathTracerRenderer.js'
+export { PathTracerRenderer, applyOfflineMode } from './PathTracerRenderer.js'
+export type { PathTracerRendererOptions, OfflineModeTarget } from './PathTracerRenderer.js'
 
 export { RenderManager }              from './RenderManager.js'
 export type { RenderMode, RenderManagerOptions, ModeChangeCallback } from './RenderManager.js'

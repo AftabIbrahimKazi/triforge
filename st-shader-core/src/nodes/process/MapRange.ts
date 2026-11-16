@@ -36,8 +36,8 @@ float _st_mapRange(float v, float fMin, float fMax, float tMin, float tMax, floa
   float range  = fMax - fMin;
   float t      = range == 0.0 ? 0.0 : (v - fMin) / range;
   if      (mode == 1) t = (steps > 0.0) ? floor(t * steps + 0.5) / steps : t;
-  else if (mode == 2) t = t * t * (3.0 - 2.0 * t);
-  else if (mode == 3) t = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+  else if (mode == 2) { t = clamp(t, 0.0, 1.0); t = t * t * (3.0 - 2.0 * t); }
+  else if (mode == 3) { t = clamp(t, 0.0, 1.0); t = t * t * t * (t * (t * 6.0 - 15.0) + 10.0); }
   if (doClamp) t = clamp(t, 0.0, 1.0);
   return tMin + t * (tMax - tMin);
 }`

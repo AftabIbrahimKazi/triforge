@@ -11,7 +11,7 @@ import {
   Vignette, FilmGrain, ColorBalance, HueSaturation,
   BrightnessContrast, Gamma, Exposure, Mix, Pixelate, Sharpen,
   AlphaOver, SetAlpha, ZCombine, SeparateRGBA, CombineRGBA, SSAO, SSR,
-  MotionBlur, LensFlare, GlareStreaks,
+  MotionBlur, LensFlare, GlareStreaks, CompositorOutput,
 } from '../dist/index.js'
 
 let passed = 0
@@ -349,6 +349,26 @@ test('SSAO _threePassDeps returns SSAOPass', () => {
 
 test('SSAO _buildThree throws when SSAOPass missing', () => {
   assert.throws(() => new SSAO()._buildThree(1, 1, {}), /SSAOPass not found/)
+})
+
+test('SSAO gives its normal render the same clipping planes it was given', () => {
+  const plane = { normal: { z: -1 }, constant: 0 }
+  class FakePass { constructor() { this.normalMaterial = {} } }
+  const built = new SSAO({ clippingPlanes: [plane] })._buildThree(1, 1, { SSAOPass: FakePass, _scene: {}, _camera: {} })
+  assert.deepStrictEqual(built.normalMaterial.clippingPlanes, [plane])
+  const plain = new SSAO()._buildThree(1, 1, { SSAOPass: FakePass, _scene: {}, _camera: {} })
+  assert.strictEqual(plain.normalMaterial.clippingPlanes, undefined, 'no planes given: the material is left alone')
+})
+
+test('CompositorOutput: the render target has no stencil by default, and gets one on request', async () => {
+  const renderer = { getSize: (v) => v.set(64, 64), getPixelRatio: () => 1, setSize() {}, getDrawingBufferSize: (v) => v.set(64, 64) }
+  const make = async (opts) => { const c = new CompositorOutput({ renderer, scene: {}, camera: {}, ...opts }); await c.compile(); return c._composer.renderTarget1 }
+  const off = await make({})
+  assert.strictEqual(off.stencilBuffer, false)
+  assert.strictEqual(off.samples, 0)
+  const on = await make({ stencil: true, samples: 4 })
+  assert.strictEqual(on.stencilBuffer, true)
+  assert.strictEqual(on.samples, 4)
 })
 
 test('SSAO _buildThree throws when scene missing', () => {

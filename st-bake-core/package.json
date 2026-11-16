@@ -1,0 +1,56 @@
+{
+  "name": "@triforge/bake-core",
+  "version": "0.1.0",
+  "description": "CPU light baker for Three.js — sun + sky + one diffuse bounce into per-mesh lightmaps, for enclosed static interiors",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "npm run build && node test/run-tests.js",
+    "bench": "npm run build && node bench/run-bench.js"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "three": ">=0.150.0"
+  },
+  "optionalDependencies": {
+    "three-mesh-bvh": ">=0.7.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "three": "^0.187.0",
+    "three-mesh-bvh": "^0.9.10",
+    "typescript": "^5.3.0"
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "st-bake-core"
+  },
+  "homepage": "https://github.com/AftabIbrahimKazi/triforge#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "threejs",
+    "three.js",
+    "lightmap",
+    "baking",
+    "global-illumination",
+    "typescript",
+    "blender"
+  ]
+}

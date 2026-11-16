@@ -24,6 +24,17 @@ export interface CompositorOutputOptions {
   renderer:  WebGLRenderer
   scene:     Scene
   camera:    Camera
+  /**
+   * 'three' backend only. Give the composer's render target a stencil buffer. Needed by scenes that use the stencil
+   * (capped clipping sections, masks, portals): without it a stencil-writing material is silently ignored.
+   * Default false, so existing scenes are unchanged.
+   */
+  stencil?:  boolean
+  /**
+   * 'three' backend only. MSAA sample count for the composer's render target (a WebGL2 multisampled target).
+   * Default 0, so existing scenes are unchanged.
+   */
+  samples?:  number
 }
 
 /**
@@ -58,12 +69,16 @@ export class CompositorOutput {
   private _passes:   BasePass[] = []
   private _composer: ComposerLike | null = null
   private _compiled  = false
+  private _stencil:  boolean
+  private _samples:  number
 
   constructor(opts: CompositorOutputOptions) {
     this.backend   = opts.backend ?? 'three'
     this._renderer = opts.renderer
     this._scene    = opts.scene
     this._camera   = opts.camera
+    this._stencil  = opts.stencil ?? false
+    this._samples  = opts.samples ?? 0
   }
 
   /** Add a pass node. Chainable. Resets compiled state. */
@@ -153,6 +168,8 @@ export class CompositorOutput {
       magFilter: LinearFilter,
       format:    RGBAFormat,
       type:      HalfFloatType,
+      stencilBuffer: this._stencil,
+      samples:       this._samples,
     })
 
     const composer = new EffectComposer(this._renderer, target)
@@ -182,8 +199,11 @@ export class CompositorOutput {
     let pkg: Record<string, unknown>
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pkg = await (Function('m', 'return import(m)') as (m: string) => Promise<any>)('postprocessing') as Record<string, unknown>
+      // A variable specifier (not a literal import('postprocessing')) keeps bundlers from resolving
+      // the optional dependency when it is absent. Function() would do the same but is banned by
+      // the ecosystem-wide no-eval/no-new-Function rule.
+      const moduleName = 'postprocessing'
+      pkg = await import(moduleName) as Record<string, unknown> // dynamic import resolves to the module namespace object
     } catch {
       throw new Error(
         '@st-compositor-core: backend "pmndrs" requires the "postprocessing" package.\n' +
