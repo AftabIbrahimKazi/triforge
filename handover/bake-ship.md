@@ -1,0 +1,21 @@
+# Handover — bake-ship (queued, next session)
+
+Dev decision (2026-11-16): offer approaches as opt-in options rather than pick one; do all of the below in a NEW session, in this order. Do not start any step in the A/B session.
+
+## Steps
+1. **Build `st-bake-core`** (new package, `@triforge/bake-core`). Spike to start from: `examples/ab-test/bake-lightmaps.js` (axis-aligned boxes only, CPU, analytic ray-box). Real version needs arbitrary meshes: ray casting through `three-mesh-bvh` (optional dependency, developer passes it in), developer supplies UV2 (cannot import `st-uv-core`), 1 diffuse bounce, sun + sky, texels-per-meter sizing, deterministic seed, returns textures (no mutation of inputs). Proposed API: `new LightBaker(meshes, { sun, sky, texelsPerMeter, samples })` -> `bake()` returns `Map<Mesh, DataTexture>`; expose `parameters`. Run every mandatory step in the root CLAUDE.md (security check, tests incl. edge cases, `npm run bench` with `bench/results-<date>.md`, package TUTORIAL.md, root TUTORIAL.md, BACKLOG.md). Known facts to respect: BoxGeometry face frames are local space (translate by the mesh position); outdoor bake of a 60 m scene at 4 texels/m took 4.0 s on the CPU (1.0 MB), the room 0.2 s (0.04 MB), so do it offline or in a worker.
+2. **Side-by-side example** `examples/bake/example-bake-compare.html`: same scene shown as raster | baked | path-traced reference (offline mode, progressive), switchable between the room and outdoor scenes, orbit controls, label each panel with its measured strength from the results file. Say clearly: baking wins only in enclosed static interiors (dE 39 -> 3.5), no gain outdoors (3.4 vs 4.1). No "DLSS-level" claim anywhere. Dev reviews it before step 3.
+3. **Audit every package** (only after the dev approves the example): per package `npm run build`, `npm test`, `npm audit`; grep for `eval`, `new Function`, unsanitised GLSL interpolation, unbounded GLSL loops, `any`, `@ts-ignore`; confirm versions follow `coding-standards/versioning-standards.md`. Known state: `st-compositor-core` has 1 failing test (SSAO clipping planes, probably the uncommitted SSAO.ts edit from another session); `st-metaball-core` has no `test/` folder; uncommitted work from other sessions (three 0.187 bump across package.json files, shader-core and compositor edits, `examples/example-matchstick-burn.html`, `examples/shader/example-image-texture-cubic.html`, `shot.png`) must be sorted out with the dev first: commit, stash or delete, never mix into audit fixes.
+4. **Release** (outward actions, ask the dev first each time): promote dev -> test -> beta -> main in full (never PR straight to main); push to GitHub; then npm publish package by package with the bumped versions (needs npm login/2FA, dev present). Addon repos are separate private repos and are not part of this.
+
+## Also still open (A/B)
+- Variant C (low-sample ray tracing + denoise) and any neural pass: not built, not measured; do not list as options until they exist and a results file backs them. The neural plan files named in the A/B plan are not in the repo.
+- Scene 3 (head) needs the dev's model + licence; weak laptop/phone runs need the dev's hardware.
+- `st-pathtracer-core` follow-ups: `_cameraChanged` compares position only; type declaration says `setScene` returns a Promise but 0.0.27 is synchronous; no benchmark written for offlineMode.
+- `KIT_GAPS.md` gaps 6–8 (Kaggle feedback loop, modern-web manual, standards not injected) are local-only (gitignored).
+- Cleanup: `.ab-out/` is untracked capture output; a `python -m http.server 8123` may still be running from the dev's terminal.
+
+## Resume point
+- Last completed step: A/B harness, variants A/B/R, scenes room+outdoor, results file committed (`8762f4a`), `offlineMode` shipped in st-pathtracer-core 0.2.0 (`f4caddc`).
+- Next step: claim the `bake-ship` board row per `handover/PROTOCOL.md` 1a, then step 1.
+- Locks: none held.
