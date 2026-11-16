@@ -10,6 +10,7 @@ interface Entry {
   key: string
   target: Record<string, unknown>
   original: number | boolean
+  written: number | boolean
   min: number
   max: number
   step: number
@@ -34,6 +35,7 @@ export class EditSession {
         key,
         target,
         original: value,
+        written: value,
         min,
         max,
         step: (max - min) / DEFAULT_STEP_DIVISOR,
@@ -63,6 +65,7 @@ export class EditSession {
     if (!entry || typeof value !== typeof entry.original) return false
     if (typeof value === 'number' && !Number.isFinite(value)) return false
     entry.target[entry.key] = value
+    entry.written = value
     return true
   }
 
@@ -70,13 +73,24 @@ export class EditSession {
     const changed: EditRecord[] = []
     for (const [id, entry] of this.entries) {
       const current = entry.target[entry.key] as number | boolean
-      if (current !== entry.original) changed.push({ id, from: entry.original, to: current })
+      if (current === entry.written && current !== entry.original) changed.push({ id, from: entry.original, to: current })
     }
     return changed
   }
 
   public reset(): void {
-    for (const entry of this.entries.values()) entry.target[entry.key] = entry.original
+    for (const entry of this.entries.values()) {
+      entry.target[entry.key] = entry.original
+      entry.written = entry.original
+    }
+  }
+
+  public driven(): string[] {
+    const ids: string[] = []
+    for (const [id, entry] of this.entries) {
+      if (entry.target[entry.key] !== entry.written) ids.push(id)
+    }
+    return ids
   }
 
   public destroy(): void {

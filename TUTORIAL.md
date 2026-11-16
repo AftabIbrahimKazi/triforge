@@ -44,7 +44,7 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 | `st-core-types` | Shared TypeScript interfaces — IModifier, ICurve, IStrand, IForce, IConstraint + 11 more | 8 |
 | `render-budget-core` | Engine-agnostic device/network profiling → render-quality budget (texture tier, shader complexity, context-count policy). No Three.js dependency. | 25 |
 | `context-pool-core` | Engine-agnostic scissor/viewport multiplexer — N logical canvases share 1 real rendering context, enforcing a context-count budget. `ThreeContextAdapter` is the only Three.js-specific part. | 20 |
-| `scene-doctor-core` | Dev-only scene linter + edit panel — script-based findings (NaN geometry, shader errors, leaks, black frames, source lint, console errors), slider panel, token-capped export for any AI. | 53 |
+| `scene-doctor-core` | Dev-only scene linter + edit panel — script-based findings (NaN geometry, shader errors, leaks, black frames, source lint, console errors), slider panel, token-capped export for any AI. | 63 |
 
 ---
 
@@ -1318,7 +1318,6 @@ const plan = await initRenderBudget({ allowDevOverride: !isProd })
 2. `saveData` (OS/browser data-saver signal) forces the most conservative **texture tier only** — shader complexity and context budget are hardware-only, unaffected by network conditions.
 3. Otherwise: `textureTier = min(hardwareTier, networkTier)` — whichever is more conservative wins; neither one categorically outranks the other.
 
-See `render-budget-core/CLAUDE.md` for the full internal design (injectable probe seams, caching strategy, the context-count/texture-size probing race this package works around).
 
 ---
 
@@ -1375,7 +1374,6 @@ pool.register({
 })
 ```
 
-See `context-pool-core/CLAUDE.md` for the full internal design (sticky-selection rules, the DOM-to-GL Y-flip, context-loss handling on the one shared context).
 
 ---
 

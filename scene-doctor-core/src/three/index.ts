@@ -24,6 +24,8 @@ export {
   nonFiniteTransform,
   zeroScale,
   unloadedTexture,
+  oversizedTexture,
+  oversizedShadowMap,
   sceneRules,
 } from './rules.js'
 export {

@@ -31,6 +31,7 @@ export interface SceneNode {
   visible: boolean
   geometry?: SceneGeometry
   material?: SceneMaterial | SceneMaterial[]
+  shadow?: { mapSize: { x: number; y: number } }
 }
 
 export interface SceneGl {
