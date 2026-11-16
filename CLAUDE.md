@@ -136,6 +136,9 @@ render-budget-core  ✓  — device/network profiling → render-quality budget
 context-pool-core  ✓   — scissor/viewport multiplexer sharing 1 context across N canvases
         ContextPool (visibility · sticky-active selection · budget enforcement, engine-agnostic) ·
         ThreeContextAdapter (/three subpath — shared WebGLRenderer, scissor/viewport, context-loss)
+scene-doctor-core  ✓   — dev-only scene linter + edit panel + token-capped AI export (never ships to prod)
+        SceneDoctor (rules → deduped findings) · Reporter (maxTokens cap, delta) · EditSession (sliders) ·
+        DevPanel (/panel) · static scanner + page collector + strip-check CLI (/node) · three rules (/three)
 ```
 
 Neither package imports the other, or any Three.js-shape into the engine-agnostic core — a
