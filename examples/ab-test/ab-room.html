@@ -32,6 +32,15 @@ import { createCameraPath, samplePath } from '../../tools/ab-test/src/camera-pat
 import { bakeBoxLightmaps, faceFramesFromBoxArrays } from './bake-lightmaps.js'
 
 const VARIANTS = ['A', 'B', 'R']
+const BALL_RADIUS = 0.4
+const BALL_COLOR_HEX = 0xc03030
+const BALL_Y = 0.4
+const BALL_Z = 1.5
+const BALL_X_RANGE = [-1.5, 1.5]
+const BALL_SEGMENTS = 32
+const REGION_RADIUS_SCALE = 3
+const PROBE_AMBIENT_HEX = 0x8899bb
+const PROBE_AMBIENT_INTENSITY = 0.15
 const BAKE_TEXELS = 24
 const BAKE_SAMPLES = 64
 const SUN_INTENSITY = 4
@@ -57,6 +66,7 @@ const MAX_ITERATION_FACTOR = 4
 
 const params = new URLSearchParams(location.search)
 const variant = params.get('variant') ?? 'A'
+const dynamic = params.get('dynamic') === '1'
 const poseCount = Number.parseInt(params.get('poses') ?? String(DEFAULT_POSES), 10)
 const refSamples = Number.parseInt(params.get('samples') ?? String(DEFAULT_REF_SAMPLES), 10)
 if (!VARIANTS.includes(variant)) throw new RangeError(`variant must be one of ${VARIANTS.join(', ')}`)
@@ -148,6 +158,17 @@ function bakeScene() {
   return maps
 }
 
+let ball = null
+function addBall(scene) {
+  if (!dynamic) return
+  ball = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, BALL_SEGMENTS, BALL_SEGMENTS),
+    new THREE.MeshStandardMaterial({ color: BALL_COLOR_HEX, roughness: 0.5 })
+  )
+  ball.castShadow = ball.receiveShadow = true
+  scene.add(ball)
+}
+
 function buildScene() {
   const scene = new THREE.Scene()
   const sky = makeSkyTexture()
@@ -166,6 +187,11 @@ function buildScene() {
       room.add(boxMesh(spec, materials))
     })
     scene.add(room)
+    scene.add(new THREE.AmbientLight(PROBE_AMBIENT_HEX, PROBE_AMBIENT_INTENSITY))
+    const probeSun = new THREE.DirectionalLight(SUN_COLOR_HEX, SUN_INTENSITY)
+    probeSun.position.set(...SUN_POSITION)
+    scene.add(probeSun)
+    addBall(scene)
     return scene
   }
 
@@ -185,6 +211,7 @@ function buildScene() {
   sun.shadow.camera.right = sun.shadow.camera.top = 8
   sun.shadow.camera.far = 30
   scene.add(sun, sun.target)
+  addBall(scene)
   return scene
 }
 
@@ -194,7 +221,7 @@ const POSES = samplePath(createCameraPath([
   { position: [2, 1.8, 1.5], target: [-2, 1.0, -2] }
 ]), poseCount)
 
-const state = { ready: false, frameTimes: [], renderPose: null, variant, poses: poseCount }
+const state = { ready: false, frameTimes: [], renderPose: null, variant, poses: poseCount, meta: { regions: [] } }
 const scene = buildScene()
 const camera = new THREE.PerspectiveCamera(FOV_DEG, innerWidth / innerHeight, NEAR, FAR)
 const hud = document.getElementById('hud')
@@ -205,6 +232,25 @@ function applyPose(index) {
   camera.position.set(...pose.position)
   camera.lookAt(...pose.target)
   camera.updateMatrixWorld()
+  if (ball) {
+    const t = index / (poseCount - 1)
+    ball.position.set(BALL_X_RANGE[0] + (BALL_X_RANGE[1] - BALL_X_RANGE[0]) * t, BALL_Y, BALL_Z)
+    ball.updateMatrixWorld()
+    state.meta.regions[index] = ballRegion()
+  }
+}
+
+function ballRegion() {
+  const centre = ball.position.clone().project(camera)
+  const size = renderer.getSize(new THREE.Vector2())
+  const distance = ball.position.distanceTo(camera.position)
+  const radiusPx = (BALL_RADIUS / (distance * Math.tan((FOV_DEG * Math.PI) / 360))) * (size.y / 2) * REGION_RADIUS_SCALE
+  return {
+    x: Math.round((centre.x * 0.5 + 0.5) * size.x - radiusPx),
+    y: Math.round((-centre.y * 0.5 + 0.5) * size.y - radiusPx),
+    width: Math.round(radiusPx * 2),
+    height: Math.round(radiusPx * 2)
+  }
 }
 
 const syncPixel = new Uint8Array(4)
@@ -230,6 +276,7 @@ const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve))
 
 async function renderPoseReference(index) {
   applyPose(index)
+  if (dynamic) tracer.setScene(scene, camera)
   tracer.setCamera(camera)
   const maxIterations = refSamples * MAX_ITERATION_FACTOR + MAX_COMPILE_FRAMES
   for (let i = 0; i < maxIterations && tracer.samples < refSamples; i++) {

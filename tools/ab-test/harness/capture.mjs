@@ -106,6 +106,8 @@ async function capture(options) {
 
     const frameTimes = await page.evaluate(() => window.__ab.frameTimes);
     await writeFile(join(outDir, `${variant}-frametimes.json`), JSON.stringify(frameTimes, null, JSON_INDENT));
+    const meta = await page.evaluate(() => window.__ab.meta ?? {});
+    await writeFile(join(outDir, `${variant}-meta.json`), JSON.stringify(meta, null, JSON_INDENT));
   } finally {
     await browser.close();
   }
