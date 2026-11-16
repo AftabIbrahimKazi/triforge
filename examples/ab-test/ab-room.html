@@ -207,6 +207,8 @@ function bakeScene() {
   state.bakeMs = performance.now() - t0
   const texelCount = maps.flat().reduce((sum, face) => sum + face.width * face.height, 0)
   state.bakeMB = (texelCount * BYTES_HALF_RGBA) / BYTES_PER_MB
+  state.meta.bakeMB = state.bakeMB
+  state.meta.bakeMs = state.bakeMs
   return maps
 }
 
