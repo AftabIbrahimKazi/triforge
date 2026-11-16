@@ -142,7 +142,7 @@ export type { CheckerTextureInputs }        from './nodes/process/CheckerTexture
 export type { MagicTextureInputs }          from './nodes/process/MagicTexture.js'
 export type { MusgraveTextureInputs, MusgraveType } from './nodes/process/MusgraveTexture.js'
 export type { WhiteNoiseInputs }            from './nodes/process/WhiteNoise.js'
-export type { ImageTextureInputs }          from './nodes/process/ImageTexture.js'
+export type { ImageTextureInputs, ImageInterpolation } from './nodes/process/ImageTexture.js'
 export type { EnvironmentTextureInputs }   from './nodes/process/EnvironmentTexture.js'
 export type { ColorRampInputs }             from './nodes/process/ColorRamp.js'
 export type { MixRGBInputs, MixRGBMode }    from './nodes/process/MixRGB.js'

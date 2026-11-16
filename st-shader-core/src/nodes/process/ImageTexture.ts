@@ -6,9 +6,19 @@ import type { NodeMetadata } from '../../core/ShaderNode.js'
 import type { CompileContext } from '../../core/CompileContext.js'
 import type { OutputSocket } from '../../core/OutputSocket.js'
 
+export type ImageInterpolation = 'linear' | 'cubic'
+
 export interface ImageTextureInputs {
   vector?:    OutputSocket
   uniformName: string   // name of the sampler2D uniform on the ShaderMaterial
+  /**
+   * Magnification filter. 'linear' (default) is the hardware bilinear sample.
+   * 'cubic' is a smooth B-spline sample (four bilinear taps) that removes the
+   * blocky look when a low-resolution texture is magnified. Requires textureSize.
+   */
+  interpolation?: ImageInterpolation
+  /** [width, height] in texels of the texture bound to the uniform. Required for 'cubic'. */
+  textureSize?:   [number, number]
 }
 
 /**
@@ -20,8 +30,12 @@ export interface ImageTextureInputs {
  *   // After mat.compile():
  *   mat.material.uniforms.uAlbedo = { value: new THREE.TextureLoader().load('path.jpg') }
  *
- * Inputs:  vector (UV), uniformName (string — name of sampler2D uniform)
+ * Inputs:  vector (UV), uniformName (string — name of sampler2D uniform),
+ *          interpolation ('linear' | 'cubic'), textureSize ([w, h], required for 'cubic')
  * Outputs: Color (color), Alpha (float)
+ *
+ * Two nodes may share one uniformName (e.g. to sample the same texture at two
+ * different UVs); the sampler is declared once.
  */
 export class ImageTexture extends ProcessNode {
   get nodeType() { return 'ImageTexture' }
@@ -32,6 +46,8 @@ export class ImageTexture extends ProcessNode {
   }
 
   private readonly uniformName: string
+  private readonly interpolation: ImageInterpolation
+  private readonly textureSize: [number, number]
   private readonly _inputs:  Record<string, import('../../core/InputSocket.js').InputSocket<unknown>>
   private readonly _outputs: Record<string, import('../../core/OutputSocket.js').OutputSocket>
 
@@ -48,7 +64,20 @@ export class ImageTexture extends ProcessNode {
     }
 
     assertGlslIdentifier(inputs.uniformName, 'ImageTexture uniformName')
-    this.uniformName = inputs.uniformName
+    this.uniformName   = inputs.uniformName
+    this.interpolation = inputs.interpolation ?? 'linear'
+    this.textureSize   = inputs.textureSize ?? [1, 1]
+
+    const [width, height] = this.textureSize
+    const hasValidSize = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    if (ShaderConfig.errorLevel !== 'off' && this.interpolation === 'cubic' && (!inputs.textureSize || !hasValidSize)) {
+      ShaderNodeError.throw({
+        nodeType: 'ImageTexture',
+        nodeId:   this.id,
+        problem:  'interpolation "cubic" requires a positive textureSize [width, height].',
+        fix:      'new ImageTexture({ uniformName: "uMap", interpolation: "cubic", textureSize: [2048, 1024] })',
+      })
+    }
     this._inputs     = this.createInputs(inputs as unknown as Record<string, unknown>, { vector: ['vector', null] })
     this._outputs    = this.createOutputs({ Color: 'color', Alpha: 'float' })
   }
@@ -67,9 +96,34 @@ export class ImageTexture extends ProcessNode {
     const cv  = ctx.outputVar(this, 'Color')
     const av  = ctx.outputVar(this, 'Alpha')
     return [
-      `vec4 _it_${this.id} = texture2D(${this.uniformName}, ${uv});`,
+      this.sampleLine(uv),
       `vec3  ${cv} = _it_${this.id}.rgb;`,
       `float ${av} = _it_${this.id}.a;`,
+    ].join('\n  ')
+  }
+
+  private sampleLine(uv: string): string {
+    const id = this.id
+    if (this.interpolation === 'linear') return `vec4 _it_${id} = texture2D(${this.uniformName}, ${uv});`
+
+    const size = `vec2(${this.textureSize[0].toFixed(1)}, ${this.textureSize[1].toFixed(1)})`
+    const tap  = (x: string, y: string): string => `texture2D(${this.uniformName}, vec2(_it_h${x}_${id}.x, _it_h${y}_${id}.y))`
+    return [
+      `vec2 _it_p_${id}  = (${uv}) * ${size} - 0.5;`,
+      `vec2 _it_f_${id}  = fract(_it_p_${id});`,
+      `vec2 _it_c_${id}  = floor(_it_p_${id}) + 0.5;`,
+      `vec2 _it_f2_${id} = _it_f_${id} * _it_f_${id};`,
+      `vec2 _it_f3_${id} = _it_f2_${id} * _it_f_${id};`,
+      `vec2 _it_w0_${id} = (1.0 - _it_f_${id}) * (1.0 - _it_f_${id}) * (1.0 - _it_f_${id}) / 6.0;`,
+      `vec2 _it_w1_${id} = (4.0 - 6.0 * _it_f2_${id} + 3.0 * _it_f3_${id}) / 6.0;`,
+      `vec2 _it_w2_${id} = (1.0 + 3.0 * _it_f_${id} + 3.0 * _it_f2_${id} - 3.0 * _it_f3_${id}) / 6.0;`,
+      `vec2 _it_w3_${id} = _it_f3_${id} / 6.0;`,
+      `vec2 _it_g0_${id} = _it_w0_${id} + _it_w1_${id};`,
+      `vec2 _it_g1_${id} = _it_w2_${id} + _it_w3_${id};`,
+      `vec2 _it_h0_${id} = (_it_c_${id} - 1.0 + _it_w1_${id} / _it_g0_${id}) / ${size};`,
+      `vec2 _it_h1_${id} = (_it_c_${id} + 1.0 + _it_w3_${id} / _it_g1_${id}) / ${size};`,
+      `vec4 _it_${id} = _it_g0_${id}.y * (_it_g0_${id}.x * ${tap('0', '0')} + _it_g1_${id}.x * ${tap('1', '0')})`,
+      `               + _it_g1_${id}.y * (_it_g0_${id}.x * ${tap('0', '1')} + _it_g1_${id}.x * ${tap('1', '1')});`,
     ].join('\n  ')
   }
 }
