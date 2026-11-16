@@ -1,10 +1,12 @@
 {
   "name": "@triforge/scene-doctor-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Dev-only, AI-agnostic scene linter and probe — script-based findings, deduplicated and token-capped reports, no AI required",
   "type": "module",
   "main": "./dist/index.js",
-  "bin": { "scene-doctor": "./dist/node/cli.js" },
+  "bin": {
+    "scene-doctor": "./dist/node/cli.js"
+  },
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -15,7 +17,10 @@
       "types": "./dist/node/index.d.ts",
       "import": "./dist/node/index.js"
     },
-    "./panel": { "types": "./dist/panel/index.d.ts", "import": "./dist/panel/index.js" },
+    "./panel": {
+      "types": "./dist/panel/index.d.ts",
+      "import": "./dist/panel/index.js"
+    },
     "./three": {
       "types": "./dist/three/index.d.ts",
       "import": "./dist/three/index.js"
