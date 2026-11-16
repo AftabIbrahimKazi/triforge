@@ -30,6 +30,7 @@ export class CompileContext {
   private visiting:     Set<string>                        = new Set()
   private order:        ShaderNode[]                       = []
   private emittedDefs:  Set<string>                        = new Set()
+  private emittedInstanceDefs: Set<string>                = new Set()
   private defs:         string[]                           = []
   /**
    * `#extension` pragmas collected from any node's compileDefs() output.
@@ -189,8 +190,13 @@ export class CompileContext {
     const defsSource = node.compileDefs()
 
     if (isInstanceSpecific) {
-      // Each instance emits its own uniquely named function — no dedup
-      if (defsSource.trim()) this.defs.push(this._extractExtensions(defsSource))
+      // Each instance emits its own uniquely named function. Instances whose defs are
+      // byte-identical (e.g. two ImageTexture nodes sharing one sampler uniformName)
+      // are emitted once — repeating them is a GLSL redefinition error.
+      if (defsSource.trim() && !this.emittedInstanceDefs.has(defsSource)) {
+        this.emittedInstanceDefs.add(defsSource)
+        this.defs.push(this._extractExtensions(defsSource))
+      }
     } else {
       // Shared function — emit once per node type
       const key = node.nodeType
@@ -318,7 +324,7 @@ ${customAssigns}
 
     return `
 ${extensionsBlock}
-precision mediump float;
+precision highp float;
 
 varying vec2 vUv;
 varying vec3 vNormal;

@@ -11,6 +11,16 @@ declare module 'three-gpu-pathtracer' {
   export class WebGLPathTracer {
     /** Total samples accumulated since last scene update */
     samples: number
+    /** Milliseconds to wait after a reset before sampling (default 100) */
+    renderDelay: number
+    /** Samples to accumulate before the path-traced image is shown (default 5) */
+    minSamples: number
+    /** Milliseconds to cross-fade from the raster fallback (default 500) */
+    fadeDuration: number
+    /** Draw the raster scene while the path tracer warms up (default true) */
+    rasterizeScene: boolean
+    /** True while the path-tracing shader is compiling */
+    readonly isCompiling: boolean
     /** Samples to render each frame */
     samplesPerFrame: number
     /** Whether to use physical lighting units (default false) */

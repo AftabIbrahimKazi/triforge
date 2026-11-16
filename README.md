@@ -306,6 +306,7 @@ triforge/
 ├── st-hair-core/            hair/fur/grass strands
 ├── st-fluid-core/           FLIP + SPH fluid simulation
 ├── st-metaball-core/        organic iso-surfaces
+├── st-bake-core/            CPU light baker (lightmaps for static interiors)
 ├── st-volume-core/          ray-marched volumetrics
 ├── st-core-types/           shared TypeScript interfaces (types only)
 ├── radius-parametric-geometry/   parametric shape generator

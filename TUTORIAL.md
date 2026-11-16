@@ -38,8 +38,9 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 | `st-physics-core` | Cloth, soft body, rigid body — BallSocket, ConeTwist, Hinge, Spring, Slider constraints | 63 |
 | `st-hair-core` | Hair/fur/grass — tube/ribbon/line render, kink, clump, HairDynamics (Verlet + collision) | 51 |
 | `st-fluid-core` | FLIP fluid (PCG pressure), SPH, marching cubes surface reconstruction | — |
-| `st-pathtracer-core` | Raster ↔ path-tracer toggle; LightPathController multi-pass rendering | — |
+| `st-pathtracer-core` | Raster ↔ path-tracer toggle; LightPathController multi-pass rendering; opt-in `offlineMode` for clean captures | 5 |
 | `st-metaball-core` | Organic iso-surfaces — MetaballWorld, positive + negative blobs | — |
+| `st-bake-core` | CPU light baker — sun + sky + one diffuse bounce into per-mesh lightmaps (enclosed static interiors) | 34 |
 | `st-core-types` | Shared TypeScript interfaces — IModifier, ICurve, IStrand, IForce, IConstraint + 11 more | 8 |
 | `render-budget-core` | Engine-agnostic device/network profiling → render-quality budget (texture tier, shader complexity, context-count policy). No Three.js dependency. | 25 |
 | `context-pool-core` | Engine-agnostic scissor/viewport multiplexer — N logical canvases share 1 real rendering context, enforcing a context-count budget. `ThreeContextAdapter` is the only Three.js-specific part. | 20 |
@@ -1374,6 +1375,29 @@ pool.register({
 ```
 
 See `context-pool-core/CLAUDE.md` for the full internal design (sticky-selection rules, the DOM-to-GL Y-flip, context-loss handling on the one shared context).
+
+---
+
+## `st-bake-core` — Baked Lightmaps
+
+Bakes sun, sky and one bounce of light into a texture per mesh, once, so the scene needs no real-time lighting. It helps most in **enclosed static interiors** (measured error vs a path-traced reference: 39 → 3.5). Outdoors it gives no real gain (3.4 vs 4.1). You supply a second UV set (`uv1`) with no overlapping islands.
+
+```javascript
+import { LightBaker } from '@triforge/bake-core'
+
+const baker = new LightBaker(meshes, {
+  sun: { direction: [-0.5, 0.8, 0.3], color: [1, 0.95, 0.85], intensity: 3 },
+  sky: (d) => [0.3, 0.45, 0.7],
+  texelsPerMeter: 4,
+})
+const lightmaps = baker.bake()               // Map<Mesh, DataTexture>
+for (const [mesh, texture] of lightmaps) {
+  mesh.material = new THREE.MeshBasicMaterial({ map: texture })
+  mesh.geometry.setAttribute('uv', mesh.geometry.getAttribute('uv1'))
+}
+```
+
+Slow scene? `await baker.bakeAsync(p => console.log(p.rowsDone))` keeps the page responsive. Big meshes can opt in to `three-mesh-bvh` with `createIntersector: meshBVHIntersector(MeshBVH)`. Full guide: `st-bake-core/TUTORIAL.md`.
 
 ---
 

@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Procedural Burning Matchstick — @st-shader-core / @st-particle-core / @st-keyframe</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #ffffff; overflow: hidden; font: 11px/1.6 monospace; color: #333; }
+  canvas { display: block; }
+  #hint {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    color: rgba(0,0,0,0.3); font: 11px/1 monospace; letter-spacing: 0.08em;
+    pointer-events: none;
+  }
+  #panel {
+    position: absolute; top: 12px; right: 12px;
+    background: rgba(255,255,255,0.92); border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    width: 300px; max-height: calc(100vh - 24px);
+    display: flex; flex-direction: column;
+  }
+  #panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 12px; border-bottom: 1px solid rgba(0,0,0,0.08);
+    cursor: pointer; user-select: none;
+  }
+  #panel-head b { color: #a0401a; font-size: 12px; }
+  #panel-toggle { font-size: 11px; color: #777; }
+  #panel-body { overflow-y: auto; padding: 8px 12px 12px; }
+  #panel.collapsed #panel-body { display: none; }
+  #panel.collapsed { width: auto; }
+  details { margin: 6px 0; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 4px; }
+  details:first-child { border-top: none; }
+  summary {
+    cursor: pointer; font-weight: bold; color: #555; padding: 3px 0;
+    letter-spacing: 0.03em; font-size: 10.5px; text-transform: uppercase;
+  }
+  label { display: flex; justify-content: space-between; gap: 8px; align-items: center; line-height: 2.1; }
+  input[type=range] { width: 130px; }
+  label span.v { min-width: 42px; text-align: right; color: #111; }
+  .col-row { display: flex; justify-content: space-between; align-items: center; line-height: 2.1; }
+  .col-row input[type=color] {
+    width: 54px; height: 18px; border: 1px solid #ccc; border-radius: 3px;
+    background: none; cursor: pointer; padding: 0;
+  }
+  .btn-row { display: flex; gap: 6px; padding: 6px 0 2px; }
+  .ctl-btn {
+    flex: 1; padding: 5px 0; border: 1px solid #ccc; border-radius: 4px;
+    background: #f7f7f7; color: #444; font: 10px monospace; cursor: pointer;
+    letter-spacing: 0.03em;
+  }
+  .ctl-btn:hover { background: #ededed; }
+  .ctl-btn.primary { background: #a0401a; color: #fff; border-color: #a0401a; }
+  .ctl-btn.primary:hover { background: #8a3614; }
+  #import-file { display: none; }
+  #progress-row { display: flex; align-items: center; gap: 6px; }
+  #progress-row input[type=range] { flex: 1; width: auto; }
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: rgba(20,10,0,0.88); color: #ffe; font: 11px monospace;
+    padding: 7px 18px; border-radius: 20px; pointer-events: none;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="hint">DRAG TO ORBIT &nbsp;·&nbsp; SCROLL TO ZOOM</div>
+<div id="toast"></div>
+
+<div id="panel">
+  <div id="panel-head">
+    <b>🔥 Matchstick Burn</b>
+    <span id="panel-toggle">▾ collapse</span>
+  </div>
+  <div id="panel-body">
+
+    <details open>
+      <summary>Playback</summary>
+      <label>Duration (s)   <input type="range" id="duration" min="2" max="30" step="0.5" value="9">   <span class="v" id="durationV">9.0</span></label>
+      <label>Playback speed <input type="range" id="speed"    min="0.1" max="3" step="0.05" value="1"> <span class="v" id="speedV">1.00</span></label>
+      <div id="progress-row">
+        <span>Progress</span>
+        <input type="range" id="progress" min="0" max="1" step="0.001" value="0">
+        <span class="v" id="progressV">0%</span>
+      </div>
+      <div class="btn-row">
+        <button class="ctl-btn primary" id="btn-play">⏸ Pause</button>
+        <button class="ctl-btn" id="btn-restart">⟲ Restart</button>
+      </div>
+      <label>Afterglow (s)   <input type="range" id="afterglow" min="0" max="6" step="0.1" value="2.5"> <span class="v" id="afterglowV">2.5</span></label>
+    </details>
+
+    <details>
+      <summary>Geometry</summary>
+      <label>Stick length  <input type="range" id="stickLength" min="3" max="10"   step="0.1"  value="6">    <span class="v" id="stickLengthV">6.0</span></label>
+      <label>Stick radius  <input type="range" id="stickRadius" min="0.03" max="0.16" step="0.005" value="0.065"><span class="v" id="stickRadiusV">0.065</span></label>
+      <label>Head radius   <input type="range" id="headRadius"  min="0.08" max="0.26" step="0.005" value="0.14"> <span class="v" id="headRadiusV">0.14</span></label>
+      <label>Stub left (%) <input type="range" id="stubFrac"    min="0.03" max="0.35" step="0.01" value="0.12"><span class="v" id="stubFracV">0.12</span></label>
+    </details>
+
+    <details>
+      <summary>Wood</summary>
+      <div class="col-row"><span>Dark grain</span>  <input type="color" id="woodDark"  value="#c9a06a"></div>
+      <div class="col-row"><span>Light grain</span>  <input type="color" id="woodLight" value="#ecd9ad"></div>
+      <label>Grain scale    <input type="range" id="grainScale" min="0.2" max="6"  step="0.1"  value="1.6"> <span class="v" id="grainScaleV">1.6</span></label>
+      <label>Grain detail   <input type="range" id="grainDetail" min="1" max="8"   step="1"    value="4">   <span class="v" id="grainDetailV">4</span></label>
+      <label>Grain roughness<input type="range" id="grainRough" min="0" max="1"    step="0.01" value="0.55"><span class="v" id="grainRoughV">0.55</span></label>
+    </details>
+
+    <details>
+      <summary>Char / Burn Edge</summary>
+      <div class="col-row"><span>Char color</span> <input type="color" id="charColor" value="#140f0a"></div>
+      <div class="col-row"><span>Ash color</span>  <input type="color" id="ashColor"  value="#6b6660"></div>
+      <label>Edge width     <input type="range" id="edgeWidth"   min="0.01" max="0.6" step="0.01" value="0.12"><span class="v" id="edgeWidthV">0.12</span></label>
+      <label>Jitter amount  <input type="range" id="jitterAmount" min="0" max="0.5"   step="0.01" value="0.14"><span class="v" id="jitterAmountV">0.14</span></label>
+      <label>Jitter scale   <input type="range" id="jitterScale" min="0.5" max="10"   step="0.1"  value="2.8"> <span class="v" id="jitterScaleV">2.8</span></label>
+      <label>Ash band       <input type="range" id="ashBand"     min="0.1" max="2"    step="0.05" value="0.55"><span class="v" id="ashBandV">0.55</span></label>
+    </details>
+
+    <details>
+      <summary>Ember Glow</summary>
+      <div class="col-row"><span>Ember color</span> <input type="color" id="emberColor" value="#ff5500"></div>
+      <label>Ember width    <input type="range" id="emberWidth"    min="0.02" max="0.5" step="0.01" value="0.09"><span class="v" id="emberWidthV">0.09</span></label>
+      <label>Ember intensity<input type="range" id="emberIntensity" min="0" max="8"     step="0.1"  value="3.2"><span class="v" id="emberIntensityV">3.2</span></label>
+      <label>Flicker speed  <input type="range" id="emberFlicker"  min="0" max="10"    step="0.1"  value="3"> <span class="v" id="emberFlickerV">3.0</span></label>
+    </details>
+
+    <details>
+      <summary>Flame</summary>
+      <div class="col-row"><span>Hot core</span> <input type="color" id="hotCoreColor" value="#fff2b0"></div>
+      <div class="col-row"><span>Tip color</span> <input type="color" id="tipColor"     value="#ff5a00"></div>
+      <label>Height       <input type="range" id="flameHeight" min="0.3" max="3"   step="0.05" value="1.05"><span class="v" id="flameHeightV">1.05</span></label>
+      <label>Width        <input type="range" id="flameWidth"  min="0.1" max="1"   step="0.02" value="0.32"><span class="v" id="flameWidthV">0.32</span></label>
+      <label>Intensity    <input type="range" id="flameIntensity" min="0" max="10" step="0.1"  value="4.5"> <span class="v" id="flameIntensityV">4.5</span></label>
+      <label>Turbulence   <input type="range" id="flameTurb"   min="50" max="900"  step="10"   value="380"> <span class="v" id="flameTurbV">380</span></label>
+      <label>Flicker speed<input type="range" id="flameFlicker" min="0" max="10"   step="0.1"  value="4.2"> <span class="v" id="flameFlickerV">4.2</span></label>
+      <label>Sway amount  <input type="range" id="flameSway"    min="0" max="1"    step="0.02" value="0.5"> <span class="v" id="flameSwayV">0.50</span></label>
+    </details>
+
+    <details>
+      <summary>Smoke</summary>
+      <label>Opacity   <input type="range" id="smokeOpacity" min="0" max="1" step="0.02" value="0.45"><span class="v" id="smokeOpacityV">0.45</span></label>
+      <label>Rise speed <input type="range" id="smokeRise"   min="0" max="5" step="0.1"  value="1.4"> <span class="v" id="smokeRiseV">1.4</span></label>
+      <label>Spread     <input type="range" id="smokeSpread" min="0" max="3" step="0.05" value="0.6"> <span class="v" id="smokeSpreadV">0.6</span></label>
+    </details>
+
+    <details>
+      <summary>Global</summary>
+      <label>Exposure     <input type="range" id="exposure" min="0.3" max="2" step="0.02" value="1"> <span class="v" id="exposureV">1.00</span></label>
+      <label>Auto-rotate  <input type="range" id="autorotate" min="0" max="1" step="0.02" value="0.15"><span class="v" id="autorotateV">0.15</span></label>
+    </details>
+
+    <div class="btn-row">
+      <button class="ctl-btn" id="btn-export">⬇ Export JSON</button>
+      <button class="ctl-btn" id="btn-import">⬆ Import JSON</button>
+    </div>
+    <input type="file" id="import-file" accept=".json">
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://unpkg.com/three@0.187.0/build/three.module.js",
+    "three/addons/":       "https://unpkg.com/three@0.187.0/examples/jsm/",
+    "@st-shader-core":     "../st-shader-core/dist/index.js",
+    "@st-particle-core":   "../st-particle-core/dist/index.js",
+    "@st-keyframe":        "../st-keyframe/dist/index.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls }     from 'three/addons/controls/OrbitControls.js'
+import { mergeGeometries }   from 'three/addons/utils/BufferGeometryUtils.js'
+import {
+  ShaderConfig, MaterialOutput, TextureCoordinate,
+  NoiseTexture, AnimatedNoiseTexture,
+  SeparateXYZ, MixRGB,
+  ShaderMath, MapRange,
+  Emission, PrincipledBSDF, AddShader, ShaderScript,
+} from '@st-shader-core'
+import {
+  ParticleSystem, PointEmitter, WindForce, TurbulenceForce, DragForce, BillboardRenderer,
+} from '@st-particle-core'
+import {
+  KeyframeTrack, AnimationClip, AnimationMixer, easeInOutSine, easeOutCubic, easeInQuad,
+} from '@st-keyframe'
+
+ShaderConfig.errorLevel = 'verbose'
+
+// ── Renderer / Scene ───────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+renderer.setSize(innerWidth, innerHeight)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.0
+renderer.outputColorSpace = THREE.SRGBColorSpace
+document.body.appendChild(renderer.domElement)
+
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0xffffff)
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.05, 100)
+camera.position.set(4.2, 4.6, 11.5)
+
+const orbitCtrl = new OrbitControls(camera, renderer.domElement)
+orbitCtrl.enableDamping = true
+orbitCtrl.dampingFactor = 0.07
+orbitCtrl.target.set(0, 3.0, 0)
+orbitCtrl.minDistance = 2
+orbitCtrl.maxDistance = 30
+
+// ──────────────────────────────────────────────────────────────────────────────
+// MATCHSTICK GEOMETRY  (rebuilt whenever geometry sliders change)
+// ──────────────────────────────────────────────────────────────────────────────
+let H = 0        // total height (object-space Y of the tip)
+let stubY = 0     // lowest Y the burn line is allowed to reach (unburnt stub left over)
+
+function buildMatchGeometry(stickLength, stickRadius, headRadius) {
+  const stick = new THREE.CylinderGeometry(stickRadius, stickRadius, stickLength, 20, 1)
+  stick.translate(0, stickLength / 2, 0)
+
+  const head = new THREE.SphereGeometry(headRadius, 18, 14)
+  head.scale(1, 1.3, 1)
+  head.translate(0, stickLength + headRadius * 0.55, 0)
+
+  const geo = mergeGeometries([stick, head], false)
+  geo.computeBoundingBox()
+  H = geo.boundingBox.max.y
+  return geo
+}
+
+const matchMesh = new THREE.Mesh(buildMatchGeometry(6, 0.065, 0.14))
+scene.add(matchMesh)
+
+// ──────────────────────────────────────────────────────────────────────────────
+// MATCHSTICK MATERIAL — wood grain → char → ash, with a jittered burn line
+// and a glowing ember crack right at the flame front.
+// ──────────────────────────────────────────────────────────────────────────────
+const tc  = new TextureCoordinate()
+const pos = tc.output('Generated')          // object-space position (vPosition)
+const sepPos = new SeparateXYZ({ vector: pos })
+
+// Wood grain (two live-tintable browns blended by noise)
+const grain    = new NoiseTexture({ vector: pos, scale: 1.6, detail: 4, roughness: 0.55 })
+const woodMix  = new MixRGB({ mode: 'MIX', fac: grain.output('Fac'), colorA: '#c9a06a', colorB: '#ecd9ad' })
+
+// Irregular burn-line jitter (per-pixel, so the char edge looks hand-burnt, not a clean ring)
+const jitterNoise  = new NoiseTexture({ vector: pos, scale: 2.8, detail: 3, roughness: 0.5 })
+const jitterSigned = new ShaderMath({ mode: 'SUBTRACT', a: jitterNoise.output('Fac'), b: 0.5 })
+const jitterVal    = new ShaderMath({ mode: 'MULTIPLY', a: jitterSigned.output('Value'), b: 0.14 })
+
+// maskBase.a (burnY) is overwritten every frame as the animation plays
+const maskBase  = new ShaderMath({ mode: 'SUBTRACT', a: H, b: sepPos.output('Y') })  // >0 = still wood, <0 = burnt
+const mask      = new ShaderMath({ mode: 'ADD', a: maskBase.output('Value'), b: jitterVal.output('Value') })
+
+// 0 at char edge → 1 into untouched wood
+// NOTE: mode left as the default LINEAR (not SMOOTHSTEP) — st-shader-core's
+// MapRange applies the smoothstep polynomial to the unclamped t *before*
+// clamping to [0,1], so values far outside [fromMin,fromMax] (e.g. the wood
+// deep below the burn line) blow up through the cubic and clamp to the wrong
+// end. A plain clamped linear ramp across edgeWidth has the same practical
+// effect here and sidesteps the bug.
+const edgeFac = new MapRange({ value: mask.output('Value'), fromMin: -0.12, fromMax: 0.12, toMin: 0, toMax: 1, clamp: true })
+// 0 at char edge → 1 deep into cooled ash
+const ashFac  = new MapRange({ value: mask.output('Value'), fromMin: -0.12, fromMax: -0.67, toMin: 0, toMax: 1, clamp: true })
+
+const charAsh    = new MixRGB({ mode: 'MIX', fac: ashFac.output('Result'), colorA: '#140f0a', colorB: '#6b6660' })
+const baseColor  = new MixRGB({ mode: 'MIX', fac: edgeFac.output('Result'), colorA: charAsh.output('Color'), colorB: woodMix.output('Color') })
+
+// Ember crack glow right at the burn front, with a subtle animated flicker
+const absMask      = new ShaderMath({ mode: 'ABSOLUTE', a: mask.output('Value') })
+const emberFlicker = new AnimatedNoiseTexture({ vector: pos, scale: 90, speed: 3.0 })
+const flickerScl   = new MapRange({ value: emberFlicker.output('Fac'), fromMin: 0, fromMax: 1, toMin: 0.5, toMax: 1.2 })
+const emberPulse   = new MapRange({ value: absMask.output('Value'), fromMin: 0, fromMax: 0.09, toMin: 1, toMax: 0, clamp: true })
+const emberLit     = new ShaderMath({ mode: 'MULTIPLY', a: emberPulse.output('Result'), b: flickerScl.output('Result') })
+const emberStrength = new ShaderMath({ mode: 'MULTIPLY', a: emberLit.output('Value'), b: 3.2 })
+const emberEmit     = new Emission({ color: '#ff5500', strength: emberStrength.output('Value') })
+
+const woodBSDF = new PrincipledBSDF({ baseColor: baseColor.output('Color'), metallic: 0, roughness: 0.65 })
+
+const matCombined = new AddShader({ shader1: woodBSDF.output('BSDF'), shader2: emberEmit.output('BSDF') })
+const matOut = new MaterialOutput({ surface: matCombined.output('BSDF') })
+matOut.compile()
+matOut.material.uniforms.time = { value: 0 }
+// The library's default sun/ambient (meant for a dark pathtracer-style scene) reads
+// as near-black against a white product-shot background — brighten both for this scene.
+matOut.material.uniforms.uSunDirection.value.set(0.5, 0.8, 1.0).normalize()
+matOut.material.uniforms.uSunColor.value.set(1.0, 0.97, 0.9).multiplyScalar(1.6)
+matOut.material.uniforms.uAmbientColor.value.set(0.5, 0.47, 0.42)
+matchMesh.material = matOut.material
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FLAME — alpha-blended (not additive) so it reads correctly over a white bg.
+// Built with a ShaderScript tap so brightness drives real alpha.
+// ──────────────────────────────────────────────────────────────────────────────
+const flameGeo = new THREE.ConeGeometry(0.3, 1.0, 20, 1, true)
+flameGeo.translate(0, 0.5, 0)
+const flameMesh = new THREE.Mesh(flameGeo)
+scene.add(flameMesh)
+
+// NOTE: the flame mesh translates + sways every frame to track the burn line,
+// so the shader must read local/UV-space coordinates, never world-space
+// vPosition (TextureCoordinate's "Generated" output) for anything that needs
+// to stay fixed relative to the flame's own shape — vPosition bakes in the
+// mesh's current modelMatrix and would otherwise drift as the flame moves.
+const ftc  = new TextureCoordinate()
+const fpos = ftc.output('Generated')   // fine here: only used as a noise lookup, not a coordinate frame
+const uvSplit = new ShaderScript({
+  inputs:  { uv: ftc.output('UV') },
+  outputs: { v: 'float' },
+  glsl:    'v = uv.y;',
+})
+
+const flameTurb   = new AnimatedNoiseTexture({ vector: fpos, scale: 380, speed: 4.2 })
+const turbSigned  = new ShaderMath({ mode: 'SUBTRACT', a: flameTurb.output('Fac'), b: 0.5 })
+const turbScaled  = new ShaderMath({ mode: 'MULTIPLY', a: turbSigned.output('Value'), b: 0.22 })
+const heightNoisy = new ShaderMath({ mode: 'ADD', a: uvSplit.output('v'), b: turbScaled.output('Value'), clamp: true })
+
+const edgeFade  = new MapRange({ value: heightNoisy.output('Value'), fromMin: 0.6, fromMax: 1.0, toMin: 1, toMax: 0, clamp: true })
+const baseFadeIn = new MapRange({ value: heightNoisy.output('Value'), fromMin: 0, fromMax: 0.08, toMin: 0, toMax: 1, clamp: true })
+const baseBright = new ShaderMath({ mode: 'MULTIPLY', a: edgeFade.output('Result'), b: baseFadeIn.output('Result') })
+
+const flameColor = new MixRGB({ mode: 'MIX', fac: heightNoisy.output('Value'), colorA: '#fff2b0', colorB: '#ff5a00' })
+
+const flameAlpha = new ShaderScript({
+  inputs: {
+    col:    flameColor.output('Color'),
+    bright: baseBright.output('Value'),
+    gain:   ['float', 4.5],
+  },
+  outputs: { lit: 'shader' },
+  glsl: `
+    float a = clamp(bright, 0.0, 1.0);
+    lit = vec4(col * (0.5 + 0.5 * a) * (gain * 0.22 + 0.55), a);
+  `,
+})
+const flameOut = new MaterialOutput({ surface: flameAlpha.output('lit') })
+flameOut.compile()
+flameOut.material.uniforms.time = { value: 0 }
+flameOut.material.transparent = true
+flameOut.material.depthWrite  = false
+flameOut.material.side        = THREE.DoubleSide
+flameMesh.material = flameOut.material
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SMOKE — @st-particle-core, alpha-blended grey wisps (not additive, white bg)
+// ──────────────────────────────────────────────────────────────────────────────
+function makeSmokeSprite(size = 64) {
+  const c = document.createElement('canvas')
+  c.width = c.height = size
+  const ctx = c.getContext('2d')
+  const r = size / 2
+  const grad = ctx.createRadialGradient(r, r, 0, r, r, r)
+  grad.addColorStop(0,    'rgba(140,140,140,0.9)')
+  grad.addColorStop(0.5,  'rgba(140,140,140,0.35)')
+  grad.addColorStop(1,    'rgba(140,140,140,0)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, size, size)
+  return new THREE.CanvasTexture(c)
+}
+const smokeSprite = makeSmokeSprite(64)
+
+const smokeSys = new ParticleSystem({
+  count: 160, start: 0, end: 999,
+  lifetime: 3.2, lifetimeRandom: 0.4,
+  size: 0.22, sizeRandom: 0.5,
+  gravity: 0, drag: 0,
+  physics: 'newtonian', seed: 21,
+})
+const smokeEmitter = new PointEmitter({ position: { x: 0, y: 0, z: 0 }, normalVelocity: 0.3, randomVelocity: 0.3 })
+const smokeWind  = new WindForce({ x: 0, y: 1, z: 0, strength: 1.4 })
+const smokeTurb  = new TurbulenceForce({ strength: 0.6, scale: 0.6, speed: 0.5 })
+const smokeDrag  = new DragForce({ linear: 0.5 })
+const smokeRender = new BillboardRenderer({
+  maxCount: 160, map: smokeSprite, color: 0x999999, opacity: 0.45,
+  additive: false, fadeOut: true, sizeAttenuation: true,
+})
+smokeSys.addEmitter(smokeEmitter).addForce(smokeWind).addForce(smokeTurb).addForce(smokeDrag).setRenderer(smokeRender)
+scene.add(smokeRender.object3D)
+
+// ──────────────────────────────────────────────────────────────────────────────
+// ANIMATION — single @st-keyframe track drives burnProgress 0→1, 'once' wrap.
+// Flame/ember/smoke envelopes are derived from progress each frame (no extra tracks).
+// ──────────────────────────────────────────────────────────────────────────────
+const animState = { burnProgress: 0 }
+let track, clip, mixer, action
+
+function rebuildClip(duration) {
+  track = new KeyframeTrack(animState, 'burnProgress', [
+    { time: 0,               value: 0,    easing: easeInQuad },
+    { time: duration * 0.08, value: 0.05, easing: easeInOutSine },
+    { time: duration * 0.92, value: 0.93, easing: easeInOutSine },
+    { time: duration,        value: 1,    easing: easeOutCubic },
+  ])
+  clip   = new AnimationClip('burn', [track])
+  mixer  = new AnimationMixer()
+  action = mixer.play(clip, { wrapMode: 'once', timeScale: params.speed })
+}
+
+let afterglowT = 0
+let wasPlaying = true
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PARAMETERS + UI WIRING
+// ──────────────────────────────────────────────────────────────────────────────
+const params = {
+  duration: 9, speed: 1, afterglow: 2.5,
+  stickLength: 6, stickRadius: 0.065, headRadius: 0.14, stubFrac: 0.12,
+  woodDark: '#c9a06a', woodLight: '#ecd9ad', grainScale: 1.6, grainDetail: 4, grainRough: 0.55,
+  charColor: '#140f0a', ashColor: '#6b6660', edgeWidth: 0.12, jitterAmount: 0.14, jitterScale: 2.8, ashBand: 0.55,
+  emberColor: '#ff5500', emberWidth: 0.09, emberIntensity: 3.2, emberFlicker: 3,
+  hotCoreColor: '#fff2b0', tipColor: '#ff5a00', flameHeight: 1.05, flameWidth: 0.32, flameIntensity: 4.5,
+  flameTurb: 380, flameFlicker: 4.2, flameSway: 0.5,
+  smokeOpacity: 0.45, smokeRise: 1.4, smokeSpread: 0.6,
+  exposure: 1, autorotate: 0.15,
+}
+
+function hexToFloats(hex) {
+  return [parseInt(hex.slice(1,3),16)/255, parseInt(hex.slice(3,5),16)/255, parseInt(hex.slice(5,7),16)/255]
+}
+
+function el(id) { return document.getElementById(id) }
+
+function bind(id, dec, fn) {
+  const input = el(id), vEl = el(id + 'V')
+  input.addEventListener('input', () => {
+    const v = parseFloat(input.value)
+    if (vEl) vEl.textContent = dec === 'pct' ? Math.round(v * 100) + '%' : v.toFixed(dec)
+    params[id] = v
+    fn(v)
+  })
+}
+function bindColor(id, fn) {
+  el(id).addEventListener('input', e => { params[id] = e.target.value; fn(e.target.value) })
+}
+
+function rebuildGeometry() {
+  matchMesh.geometry.dispose()
+  matchMesh.geometry = buildMatchGeometry(params.stickLength, params.stickRadius, params.headRadius)
+  stubY = params.stubFrac * params.stickLength
+  maskBase.parameters.a = H
+}
+
+// Playback
+bind('duration', 1, v => rebuildClip(v))
+bind('speed',    2, v => { if (action) action.timeScale = v })
+el('progress').addEventListener('input', e => {
+  const v = parseFloat(e.target.value)
+  el('progressV').textContent = Math.round(v * 100) + '%'
+  if (action) { action.playing = false; action.time = v * params.duration; clip.evaluate(action.time) }
+  el('btn-play').textContent = '▶ Play'
+})
+bind('afterglow', 1, () => {})
+
+el('btn-play').addEventListener('click', () => {
+  if (!action) return
+  action.playing = !action.playing
+  el('btn-play').textContent = action.playing ? '⏸ Pause' : '▶ Play'
+})
+el('btn-restart').addEventListener('click', () => {
+  rebuildClip(params.duration)
+  afterglowT = 0
+  el('progress').value = 0
+  el('progressV').textContent = '0%'
+  el('btn-play').textContent = '⏸ Pause'
+})
+
+// Geometry
+bind('stickLength', 1, rebuildGeometry)
+bind('stickRadius', 3, rebuildGeometry)
+bind('headRadius',  3, rebuildGeometry)
+bind('stubFrac', 2, () => { stubY = params.stubFrac * params.stickLength })
+
+// Wood
+bindColor('woodDark',  v => woodMix.parameters.colorA = hexToFloats(v))
+bindColor('woodLight', v => woodMix.parameters.colorB = hexToFloats(v))
+bind('grainScale',  2, v => grain.parameters.scale = v)
+bind('grainDetail', 0, v => grain.parameters.detail = v)
+bind('grainRough',  2, v => grain.parameters.roughness = v)
+
+// Char / burn edge
+bindColor('charColor', v => charAsh.parameters.colorA = hexToFloats(v))
+bindColor('ashColor',  v => charAsh.parameters.colorB = hexToFloats(v))
+bind('edgeWidth', 2, v => { edgeFac.parameters.fromMin = -v; edgeFac.parameters.fromMax = v })
+bind('jitterAmount', 2, v => jitterVal.parameters.b = v)
+bind('jitterScale',  2, v => jitterNoise.parameters.scale = v)
+bind('ashBand', 2, v => { ashFac.parameters.fromMin = -params.edgeWidth; ashFac.parameters.fromMax = -(params.edgeWidth + v) })
+
+// Ember
+bindColor('emberColor', v => emberEmit.parameters.color = hexToFloats(v))
+bind('emberWidth', 2, v => { emberPulse.parameters.fromMax = v })
+bind('emberIntensity', 2, v => {})  // applied live each frame (envelope-scaled)
+bind('emberFlicker', 1, v => {})    // speed is baked at construction; scale via flicker noise 'scale' slider instead if needed
+
+// Flame
+bindColor('hotCoreColor', v => flameColor.parameters.colorA = hexToFloats(v))
+bindColor('tipColor',     v => flameColor.parameters.colorB = hexToFloats(v))
+bind('flameHeight', 2, () => flameGeo2Rebuild())
+bind('flameWidth',  2, () => flameGeo2Rebuild())
+bind('flameIntensity', 2, v => {}) // envelope-scaled live
+bind('flameTurb',   0, v => flameTurb.parameters.scale = v)
+bind('flameFlicker',1, v => {})    // baked speed; see flameTurb note above
+bind('flameSway',   2, v => {})
+
+// Smoke
+bind('smokeOpacity', 2, v => {})
+bind('smokeRise',    2, v => smokeWind.parameters.strength = v)
+bind('smokeSpread',  2, v => smokeTurb.parameters.strength = v)
+
+// Global
+bind('exposure', 2, v => renderer.toneMappingExposure = v)
+bind('autorotate', 2, v => { orbitCtrl.autoRotateSpeed = v * 4; orbitCtrl.autoRotate = v > 0 })
+
+// Rebuild the flame cone geometry to match height/width sliders
+function flameGeo2Rebuild() {
+  flameMesh.geometry.dispose()
+  const g = new THREE.ConeGeometry(params.flameWidth, params.flameHeight, 20, 1, true)
+  g.translate(0, params.flameHeight / 2, 0)
+  flameMesh.geometry = g
+}
+
+// ── Panel collapse ─────────────────────────────────────────────────────────────
+el('panel-head').addEventListener('click', () => {
+  const p = el('panel')
+  p.classList.toggle('collapsed')
+  el('panel-toggle').textContent = p.classList.contains('collapsed') ? '▸' : '▾ collapse'
+})
+
+// ── Toast ───────────────────────────────────────────────────────────────────────
+let toastTimer
+function toast(msg) {
+  const t = el('toast')
+  t.textContent = msg; t.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200)
+}
+
+// ── JSON export / import ────────────────────────────────────────────────────────
+function getSettings() { return { ...params } }
+function applySettings(s) {
+  Object.keys(s).forEach(id => {
+    const input = document.getElementById(id)
+    if (!input) return
+    input.value = s[id]
+    input.dispatchEvent(new Event('input'))
+  })
+}
+el('btn-export').addEventListener('click', () => {
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([JSON.stringify(getSettings(), null, 2)], { type: 'application/json' })),
+    download: 'matchstick-burn-settings.json',
+  })
+  a.click()
+  toast('Exported matchstick-burn-settings.json')
+})
+el('btn-import').addEventListener('click', () => el('import-file').click())
+el('import-file').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return
+  const reader = new FileReader()
+  reader.onload = ev => {
+    try { applySettings(JSON.parse(ev.target.result)); toast(`Loaded ${file.name}`) }
+    catch { toast('Invalid JSON file') }
+  }
+  reader.readAsText(file)
+  e.target.value = ''
+})
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize(innerWidth, innerHeight)
+})
+
+// ──────────────────────────────────────────────────────────────────────────────
+// RENDER LOOP
+// ──────────────────────────────────────────────────────────────────────────────
+rebuildClip(params.duration)
+stubY = params.stubFrac * params.stickLength
+flameGeo2Rebuild()
+
+const clock = new THREE.Clock()
+const _tmpV = new THREE.Vector3()
+
+;(function loop() {
+  requestAnimationFrame(loop)
+  const dt = Math.min(clock.getDelta(), 0.05)
+  const t  = clock.elapsedTime
+
+  if (action) {
+    if (action.playing) {
+      mixer.update(dt)
+      afterglowT = 0
+    } else if (wasPlaying && action.time >= clip.duration) {
+      // just finished naturally — start the afterglow countdown
+      afterglowT = 0
+    } else if (action.time >= clip.duration) {
+      afterglowT += dt
+    }
+    wasPlaying = action.playing
+
+    el('progress').value = (action.time / clip.duration).toFixed(3)
+    el('progressV').textContent = Math.round((action.time / clip.duration) * 100) + '%'
+    if (!action.playing && action.time < clip.duration) el('btn-play').textContent = '▶ Play'
+  }
+
+  const progress = animState.burnProgress
+  const burnY    = H - progress * (H - stubY)
+  maskBase.parameters.a = burnY
+
+  // Procedural envelopes derived from progress (and real-time afterglow decay)
+  const ignite  = THREE.MathUtils.smoothstep(progress, 0, 0.05)
+  const burnout = 1 - THREE.MathUtils.smoothstep(progress, 0.9, 1.0)
+  const finished = progress >= 0.999
+  const afterglowFac = finished ? Math.max(0, 1 - afterglowT / Math.max(0.0001, params.afterglow)) : 1
+
+  const flameEnv = finished ? 0 : ignite * burnout
+  const emberEnv = ignite * afterglowFac
+  const smokeEnv = ignite * (0.3 + 0.7 * (1 - flameEnv)) * afterglowFac
+
+  emberStrength.parameters.b = params.emberIntensity * emberEnv
+  flameAlpha.parameters.gain = params.flameIntensity * flameEnv
+  flameMesh.visible = flameEnv > 0.01
+  flameMesh.scale.setScalar(0.7 + 0.3 * flameEnv)
+  flameMesh.rotation.z = Math.sin(t * params.flameFlicker * 2.0) * 0.1 * params.flameSway
+  flameMesh.rotation.x = Math.cos(t * params.flameFlicker * 1.7) * 0.06 * params.flameSway
+
+  // Position flame + smoke source at the current (world-space) burn point
+  _tmpV.set(0, burnY, 0).applyMatrix4(matchMesh.matrixWorld)
+  flameMesh.position.copy(_tmpV)
+  flameMesh.position.y += params.flameHeight * 0.08
+  smokeEmitter.parameters.positionX = _tmpV.x
+  smokeEmitter.parameters.positionY = _tmpV.y
+  smokeEmitter.parameters.positionZ = _tmpV.z
+
+  smokeRender.object3D.material.opacity = params.smokeOpacity * smokeEnv
+  smokeSys.update(dt)
+
+  // AnimatedNoiseTexture-driven nodes need their shared `time` uniform ticked
+  if (matOut.material.uniforms.time)   matOut.material.uniforms.time.value = t
+  if (flameOut.material.uniforms.time) flameOut.material.uniforms.time.value = t
+
+  orbitCtrl.update()
+  renderer.render(scene, camera)
+})()
+</script>
+</body>
+</html>

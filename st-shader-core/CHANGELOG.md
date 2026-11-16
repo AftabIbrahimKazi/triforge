@@ -5,6 +5,42 @@ Format follows `coding-standards/versioning-standards.md` (RULE V-08).
 
 ---
 
+## [0.5.0] — 2026-11-17
+
+### Fixed
+- **`MapRange` SMOOTHSTEP / SMOOTHERSTEP gave garbage outside the input range.**
+  The smooth curve was applied to the un-clamped factor, so a value below
+  `fromMin` returned a large positive number and a value above `fromMax` a
+  negative one (the later `clamp` then snapped them to 1 and 0 — inverted).
+  The factor is now clamped to [0, 1] before the curve, matching Blender's
+  Map Range node, whose smooth modes always clamp the factor. Found when a
+  day/night terminator built from `smoothstep(sunDot, -0.08, 0.28)` treated deep
+  night as fully lit.
+- **Two `ImageTexture` nodes sharing one `uniformName` failed to compile**
+  (`'uName' : redefinition`). Instance-specific defs were emitted once per
+  node, so the identical `uniform sampler2D` line appeared twice. `CompileContext`
+  now emits byte-identical instance defs once, so one texture can be sampled at
+  several UVs (e.g. a texture and its shifted shadow tap) without a second
+  uniform name.
+- **Compiled fragment shaders declared `precision mediump float`**, which loses
+  texture-UV precision on mobile GPUs. They now declare `precision highp float`
+  (guaranteed in WebGL2, the only target three.js still compiles against).
+
+### Added
+- **`ImageTexture({ interpolation: 'cubic', textureSize: [w, h] })`** — a smooth
+  B-spline magnification sample (four bilinear taps) for low-resolution textures
+  shown large. Default stays `'linear'` (hardware bilinear), so existing graphs
+  are unchanged. `'cubic'` without a valid `textureSize` throws a
+  `ShaderNodeError`. New example: `examples/shader/example-image-texture-cubic.html`.
+
+### Notes
+- `Mapping.location` subtracting in the default `TEXTURE` mode matches Blender's
+  Mapping node (Texture mode applies the inverse transform); not a bug.
+
+3 new tests (94/94 passing, up from 91); the precision assertion was updated.
+
+---
+
 ## [0.4.2] — 2026-07-08
 
 ### Fixed
