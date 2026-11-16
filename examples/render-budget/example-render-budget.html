@@ -62,11 +62,17 @@ scene.add(cube)
 
 function applyPlan(plan) {
   cube.material.color.setHex(TIER_COLORS[plan.textureTier])
-  document.getElementById('output').innerHTML =
-    `<span class="tier-${plan.textureTier}"><b>textureTier</b>: ${plan.textureTier} (${plan.textureFormat})</span>\n` +
-    `<b>shaderComplexity</b>: ${plan.shaderComplexity}\n` +
-    `<b>maxConcurrentContexts</b>: ${plan.maxConcurrentContexts}\n` +
-    `<b>source</b>: ${plan.source}`
+  const output = document.getElementById('output')
+  output.textContent = ''
+
+  const tierLine = document.createElement('span')
+  tierLine.className = `tier-${plan.textureTier}`
+  tierLine.textContent = `textureTier: ${plan.textureTier} (${plan.textureFormat})`
+  output.appendChild(tierLine)
+
+  output.appendChild(document.createTextNode(`\nshaderComplexity: ${plan.shaderComplexity}`))
+  output.appendChild(document.createTextNode(`\nmaxConcurrentContexts: ${plan.maxConcurrentContexts}`))
+  output.appendChild(document.createTextNode(`\nsource: ${plan.source}`))
 }
 
 async function runProfile() {
