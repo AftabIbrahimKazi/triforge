@@ -44,6 +44,7 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 | `st-core-types` | Shared TypeScript interfaces — IModifier, ICurve, IStrand, IForce, IConstraint + 11 more | 8 |
 | `render-budget-core` | Engine-agnostic device/network profiling → render-quality budget (texture tier, shader complexity, context-count policy). No Three.js dependency. | 25 |
 | `context-pool-core` | Engine-agnostic scissor/viewport multiplexer — N logical canvases share 1 real rendering context, enforcing a context-count budget. `ThreeContextAdapter` is the only Three.js-specific part. | 20 |
+| `scene-doctor-core` | Dev-only scene linter + edit panel — script-based findings (NaN geometry, shader errors, leaks, black frames, source lint, console errors), slider panel, token-capped export for any AI. | 53 |
 
 ---
 
@@ -1375,6 +1376,31 @@ pool.register({
 ```
 
 See `context-pool-core/CLAUDE.md` for the full internal design (sticky-selection rules, the DOM-to-GL Y-flip, context-loss handling on the one shared context).
+
+---
+
+## `scene-doctor-core` — Find Scene Bugs Without Spending AI Tokens
+
+A dev-only helper. Plain scripts find the bugs (NaN geometry, shader errors, leaks, black frames, lint, console errors). A slider panel lets you tweak the scene. One click exports a tiny report for any AI.
+
+```typescript
+import { SceneDoctor } from '@triforge/scene-doctor-core'
+import { defaultRules } from '@triforge/scene-doctor-core/three'
+
+const doctor = new SceneDoctor({ rules: defaultRules })
+console.log(doctor.report(doctor.run({ scene, renderer }), { maxTokens: 400 }))
+// # scene-doctor 0E 1W 0I
+// W zero-scale Scene/Cube: visible object has a zero scale axis and renders nothing | ...
+```
+
+Source lint and the production-build guard run from the command line:
+
+```bash
+npx scene-doctor scan ./src
+npx scene-doctor strip-check ./dist
+```
+
+It never imports another triforge package, and never ships: it only exists when you create it (for example behind `?doctor=1`). Full guide: `scene-doctor-core/TUTORIAL.md`. Demo: `examples/scene-doctor/example-scene-doctor.html`.
 
 ---
 

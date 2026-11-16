@@ -1,0 +1,54 @@
+{
+  "name": "@triforge/scene-doctor-core",
+  "version": "0.1.0",
+  "description": "Dev-only, AI-agnostic scene linter and probe — script-based findings, deduplicated and token-capped reports, no AI required",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": { "scene-doctor": "./dist/node/cli.js" },
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
+    },
+    "./panel": { "types": "./dist/panel/index.d.ts", "import": "./dist/panel/index.js" },
+    "./three": {
+      "types": "./dist/three/index.d.ts",
+      "import": "./dist/three/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node test/run-tests.js && node test/run-tests-b.js && node test/run-tests-c.js",
+    "bench": "node bench/run-bench.js"
+  },
+  "keywords": [
+    "three.js",
+    "threejs",
+    "linter",
+    "debug",
+    "devtools",
+    "scene",
+    "typescript"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.3.0"
+  },
+  "author": "Aftab Ibrahim Kazi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AftabIbrahimKazi/triforge.git",
+    "directory": "scene-doctor-core"
+  }
+}
