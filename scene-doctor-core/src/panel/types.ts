@@ -20,6 +20,7 @@ export interface DocumentLike {
 
 export interface DevPanelApi {
   list(): Array<{ id: string; value: number | boolean }>
+  driven(): string[]
   set(id: string, value: number | boolean): boolean
   edits(): Array<{ id: string; from: number | boolean; to: number | boolean }>
   scan(): string

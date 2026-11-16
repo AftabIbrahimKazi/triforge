@@ -26,7 +26,7 @@ E non-finite-geometry Scene/Blob: 12 NaN/Infinity values in position attribute |
 W zero-scale Scene/Cube: visible object has a zero scale axis and renders nothing | ...
 ```
 
-Checked for you: NaN/Infinity geometry and transforms, zero scale, textures with no image,
+Checked for you: NaN/Infinity geometry and transforms, zero scale, textures with no image, textures over 4096 or not a power of two, shadow maps over 4096,
 shader compile errors, draw-call and triangle budgets, resource leaks (`ResourceTracker`),
 black or flat frames (`readFrameSample`).
 
@@ -66,6 +66,8 @@ if (isDoctorEnabled(location.search)) {          // only with ?doctor=1
   panel.expose(window)                            // window.__sceneDoctor for AI or Playwright
 }
 ```
+
+Anything your own code rewrites every frame (an animated position) is detected as "driven" and left out of the edits, so only real slider changes reach the AI.
 
 Click **Export** and paste the result to any AI. It contains only the capped report and the
 net slider changes (`id`, old value `f`, new value `t`), nothing else.

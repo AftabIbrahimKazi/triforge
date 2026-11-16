@@ -44,7 +44,7 @@ radius-parametric-geometry  →  st-modifier-core  →  st-shader-core
 | `st-core-types` | Shared TypeScript interfaces — IModifier, ICurve, IStrand, IForce, IConstraint + 11 more | 8 |
 | `render-budget-core` | Engine-agnostic device/network profiling → render-quality budget (texture tier, shader complexity, context-count policy). No Three.js dependency. | 25 |
 | `context-pool-core` | Engine-agnostic scissor/viewport multiplexer — N logical canvases share 1 real rendering context, enforcing a context-count budget. `ThreeContextAdapter` is the only Three.js-specific part. | 20 |
-| `scene-doctor-core` | Dev-only scene linter + edit panel — script-based findings (NaN geometry, shader errors, leaks, black frames, source lint, console errors), slider panel, token-capped export for any AI. | 53 |
+| `scene-doctor-core` | Dev-only scene linter + edit panel — script-based findings (NaN geometry, shader errors, leaks, black frames, source lint, console errors), slider panel, token-capped export for any AI. | 63 |
 
 ---
 
