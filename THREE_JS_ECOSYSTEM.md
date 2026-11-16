@@ -108,6 +108,9 @@ st-hair-core               — hair, fur, grass strand rendering + dynamics
 st-fluid-core              — FLIP fluid + SPH simulation
   FLIPSimulator (PCG pressure solve) · SPHSimulator · MarchingCubes · FluidEmitter
 
+st-bake-core               — CPU light baker (sun + sky + 1 bounce → per-mesh lightmaps)
+  LightBaker (bake / bakeAsync) · BuiltInIntersector · meshBVHIntersector (opt-in)
+
 st-metaball-core           — organic iso-surface
   MetaballWorld · MetaballObject (positive + negative) · live update()
 

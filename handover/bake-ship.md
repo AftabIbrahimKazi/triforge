@@ -16,6 +16,6 @@ Dev decision (2026-11-16): offer approaches as opt-in options rather than pick o
 - Cleanup: `.ab-out/` is untracked capture output; a `python -m http.server 8123` may still be running from the dev's terminal.
 
 ## Resume point
-- Last completed step: A/B harness, variants A/B/R, scenes room+outdoor, results file committed (`8762f4a`), `offlineMode` shipped in st-pathtracer-core 0.2.0 (`f4caddc`).
-- Next step: claim the `bake-ship` board row per `handover/PROTOCOL.md` 1a, then step 1.
-- Locks: none held.
+- Last completed step: step 1 done. st-bake-core built (src, 34 tests passing, bench/results-2026-11-16.md, package CLAUDE.md + TUTORIAL.md, root TUTORIAL/README/CLAUDE/THREE_JS_ECOSYSTEM entries, BACKLOG.md). Not yet committed. Example file (CLAUDE.md step 3) is deferred to step 2.
+- Next step: step 2 — write examples/bake/example-bake-compare.html (raster | baked | path-traced offline), then dev review. Need an atlas-UV helper for BoxGeometry (see test/run-tests.js box room).
+- Locks: st-bake-core/**, examples/bake/**, doc-file lock row in handover/locks.md (release doc row once committed).
