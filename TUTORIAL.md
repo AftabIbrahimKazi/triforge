@@ -1318,7 +1318,6 @@ const plan = await initRenderBudget({ allowDevOverride: !isProd })
 2. `saveData` (OS/browser data-saver signal) forces the most conservative **texture tier only** — shader complexity and context budget are hardware-only, unaffected by network conditions.
 3. Otherwise: `textureTier = min(hardwareTier, networkTier)` — whichever is more conservative wins; neither one categorically outranks the other.
 
-See `render-budget-core/CLAUDE.md` for the full internal design (injectable probe seams, caching strategy, the context-count/texture-size probing race this package works around).
 
 ---
 
@@ -1375,7 +1374,6 @@ pool.register({
 })
 ```
 
-See `context-pool-core/CLAUDE.md` for the full internal design (sticky-selection rules, the DOM-to-GL Y-flip, context-loss handling on the one shared context).
 
 ---
 

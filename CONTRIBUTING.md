@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing. Triforge is a modular ecosystem of independent
 npm packages (`@triforge/*`) that bring Blender-style node workflows to Three.js — please
-read the root [CLAUDE.md](CLAUDE.md) and [THREE_JS_ECOSYSTEM.md](THREE_JS_ECOSYSTEM.md)
+read [THREE_JS_ECOSYSTEM.md](THREE_JS_ECOSYSTEM.md)
 first to understand how the packages relate to each other before opening a PR.
 
 ## Before you start
@@ -33,8 +33,7 @@ protected and only receives merges from `beta` after review.
 
 1. Fork the repo and branch off `dev`.
 2. Pick the smallest package your change actually belongs in — see the table in
-   [README.md](README.md#packages) and the "What Belongs Where" table in
-   [CLAUDE.md](CLAUDE.md) if you're unsure.
+   [README.md](README.md#packages) and [THREE_JS_ECOSYSTEM.md](THREE_JS_ECOSYSTEM.md) if you're unsure.
 3. Run that package's own test suite before and after your change:
    ```bash
    cd st-<package-name>

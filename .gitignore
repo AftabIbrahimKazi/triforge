@@ -25,6 +25,7 @@ handover.md
 # AI session coordination and agent instruction files: local only, not part of the project
 handover/
 AGENTS.md
+CLAUDE.md
 .claude/
 
 # ai-dev-kit: installed skill copies — local tooling, not a project deliverable
