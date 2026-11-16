@@ -29,8 +29,19 @@
 import * as THREE from 'three'
 import { WebGLPathTracer } from 'three-gpu-pathtracer'
 import { createCameraPath, samplePath } from '../../tools/ab-test/src/camera-path.js'
+import { bakeBoxLightmaps, faceFramesFromBoxArrays } from './bake-lightmaps.js'
 
-const VARIANTS = ['A', 'R']
+const VARIANTS = ['A', 'B', 'R']
+const BAKE_TEXELS = 24
+const BAKE_SAMPLES = 64
+const SUN_INTENSITY = 4
+const SUN_COLOR_HEX = 0xfff1dd
+const SUN_POSITION = [2.5, 6, 12]
+const SKY_RED = [0.9, 0.5]
+const SKY_GREEN = [1.2, 0.5]
+const SKY_BLUE = [1.8, 0.4]
+const BYTES_HALF_RGBA = 8
+const BYTES_PER_MB = 1048576
 const DEFAULT_POSES = 4
 const DEFAULT_REF_SAMPLES = 256
 const WARMUP_FRAMES = 3
@@ -52,6 +63,7 @@ if (!VARIANTS.includes(variant)) throw new RangeError(`variant must be one of ${
 if (!Number.isInteger(poseCount) || poseCount < 2 || poseCount > MAX_POSES) throw new RangeError('poses must be an integer in [2, 64]')
 if (!Number.isInteger(refSamples) || refSamples < 1) throw new RangeError('samples must be a positive integer')
 
+const envIntensity = Number.parseFloat(params.get('env') ?? '0.4')
 const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true })
 renderer.setPixelRatio(1)
 renderer.setSize(innerWidth, innerHeight)
@@ -60,15 +72,20 @@ renderer.shadowMap.enabled = variant === 'A'
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
 document.body.appendChild(renderer.domElement)
 
+function skyRadiance(direction) {
+  const v = 0.5 + Math.asin(Math.max(-1, Math.min(1, direction[1]))) / Math.PI
+  return [SKY_RED, SKY_GREEN, SKY_BLUE].map(([base, slope]) => (base - slope * v) * envIntensity)
+}
+
 function makeSkyTexture() {
   const data = new Float32Array(SKY_SIZE * SKY_SIZE * 4)
   for (let y = 0; y < SKY_SIZE; y++) {
     const t = y / (SKY_SIZE - 1)
     for (let x = 0; x < SKY_SIZE; x++) {
       const i = (y * SKY_SIZE + x) * 4
-      data[i] = 0.9 - 0.5 * t
-      data[i + 1] = 1.2 - 0.5 * t
-      data[i + 2] = 1.8 - 0.4 * t
+      data[i] = SKY_RED[0] - SKY_RED[1] * t
+      data[i + 1] = SKY_GREEN[0] - SKY_GREEN[1] * t
+      data[i + 2] = SKY_BLUE[0] - SKY_BLUE[1] * t
       data[i + 3] = 1
     }
   }
@@ -79,36 +96,88 @@ function makeSkyTexture() {
   return tex
 }
 
-function box(w, h, d, x, y, z, color) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: 0.85 }))
+const BOX_SPECS = [
+  [6, 0.2, 6, 0, -0.1, 0, 0xcfc8bc],
+  [6, 0.2, 6, 0, 3.1, 0, 0xf2f0ea],
+  [0.2, 3, 6, -3.1, 1.5, 0, 0xb0603c],
+  [0.2, 3, 6, 3.1, 1.5, 0, 0x4a6fa5],
+  [6, 3, 0.2, 0, 1.5, -3.1, 0xe6e2da],
+  [2.1, 3, 0.2, -1.95, 1.5, 3.1, 0xe6e2da],
+  [2.1, 3, 0.2, 1.95, 1.5, 3.1, 0xe6e2da],
+  [1.8, 1.0, 0.2, 0, 0.5, 3.1, 0xe6e2da],
+  [1.8, 0.9, 0.2, 0, 2.55, 3.1, 0xe6e2da],
+  [1.2, 0.5, 1.2, -1, 0.25, -0.5, 0x808080],
+  [0.8, 1.2, 0.8, 1.4, 0.6, -1.5, 0xd8c05a]
+]
+
+function boxMesh([w, h, d, x, y, z], materials) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), materials)
   mesh.position.set(x, y, z)
   mesh.castShadow = mesh.receiveShadow = true
   return mesh
+}
+
+function boxSpecToBake([w, h, d, x, y, z, hex]) {
+  const color = new THREE.Color(hex)
+  return { min: [x - w / 2, y - h / 2, z - d / 2], max: [x + w / 2, y + h / 2, z + d / 2], albedo: [color.r, color.g, color.b] }
+}
+
+function bakedMaterials(boxSpec) {
+  const geometry = new THREE.BoxGeometry(boxSpec[0], boxSpec[1], boxSpec[2])
+  return { geometry, frames: faceFramesFromBoxArrays(geometry.attributes.position.array, geometry.attributes.uv.array, geometry.attributes.normal.array) }
+}
+
+function bakeScene() {
+  const t0 = performance.now()
+  const boxes = BOX_SPECS.map(boxSpecToBake)
+  const faceFrames = BOX_SPECS.map((spec) =>
+    bakedMaterials(spec).frames.map((frame) => ({ ...frame, origin: frame.origin.map((value, i) => value + spec[3 + i]) }))
+  )
+  const sunColor = new THREE.Color(SUN_COLOR_HEX)
+  const sunDirection = new THREE.Vector3(...SUN_POSITION).normalize()
+  const maps = bakeBoxLightmaps({
+    boxes,
+    faceFrames,
+    sun: { direction: sunDirection.toArray(), color: [sunColor.r, sunColor.g, sunColor.b], intensity: SUN_INTENSITY },
+    sky: skyRadiance,
+    texels: BAKE_TEXELS,
+    samples: BAKE_SAMPLES
+  })
+  state.bakeMs = performance.now() - t0
+  state.bakeMB = (BOX_SPECS.length * 6 * BAKE_TEXELS * BAKE_TEXELS * BYTES_HALF_RGBA) / BYTES_PER_MB
+  return maps
 }
 
 function buildScene() {
   const scene = new THREE.Scene()
   const sky = makeSkyTexture()
   scene.background = sky
-  scene.environment = sky
-  scene.environmentIntensity = Number.parseFloat(params.get('env') ?? '0.4')
-
   const room = new THREE.Group()
-  room.add(box(6, 0.2, 6, 0, -0.1, 0, 0xcfc8bc))
-  room.add(box(6, 0.2, 6, 0, 3.1, 0, 0xf2f0ea))
-  room.add(box(0.2, 3, 6, -3.1, 1.5, 0, 0xb0603c))
-  room.add(box(0.2, 3, 6, 3.1, 1.5, 0, 0x4a6fa5))
-  room.add(box(6, 3, 0.2, 0, 1.5, -3.1, 0xe6e2da))
-  room.add(box(2.1, 3, 0.2, -1.95, 1.5, 3.1, 0xe6e2da))
-  room.add(box(2.1, 3, 0.2, 1.95, 1.5, 3.1, 0xe6e2da))
-  room.add(box(1.8, 1.0, 0.2, 0, 0.5, 3.1, 0xe6e2da))
-  room.add(box(1.8, 0.9, 0.2, 0, 2.55, 3.1, 0xe6e2da))
-  room.add(box(1.2, 0.5, 1.2, -1, 0.25, -0.5, 0x808080))
-  room.add(box(0.8, 1.2, 0.8, 1.4, 0.6, -1.5, 0xd8c05a))
+
+  if (variant === 'B') {
+    const maps = bakeScene()
+    BOX_SPECS.forEach((spec, boxIndex) => {
+      const materials = maps[boxIndex].map((data) => {
+        const tex = new THREE.DataTexture(data, BAKE_TEXELS, BAKE_TEXELS, THREE.RGBAFormat, THREE.FloatType)
+        tex.magFilter = tex.minFilter = THREE.LinearFilter
+        tex.needsUpdate = true
+        return new THREE.MeshBasicMaterial({ map: tex })
+      })
+      room.add(boxMesh(spec, materials))
+    })
+    scene.add(room)
+    return scene
+  }
+
+  scene.environment = sky
+  scene.environmentIntensity = envIntensity
+  for (const spec of BOX_SPECS) {
+    room.add(boxMesh(spec, new THREE.MeshStandardMaterial({ color: spec[6], roughness: 0.85 })))
+  }
   scene.add(room)
 
-  const sun = new THREE.DirectionalLight(0xfff1dd, 4)
-  sun.position.set(2.5, 6, 12)
+  const sun = new THREE.DirectionalLight(SUN_COLOR_HEX, SUN_INTENSITY)
+  sun.position.set(...SUN_POSITION)
   sun.target.position.set(0, 0, 0)
   sun.castShadow = true
   sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
@@ -125,10 +194,10 @@ const POSES = samplePath(createCameraPath([
   { position: [2, 1.8, 1.5], target: [-2, 1.0, -2] }
 ]), poseCount)
 
+const state = { ready: false, frameTimes: [], renderPose: null, variant, poses: poseCount }
 const scene = buildScene()
 const camera = new THREE.PerspectiveCamera(FOV_DEG, innerWidth / innerHeight, NEAR, FAR)
 const hud = document.getElementById('hud')
-const state = { ready: false, frameTimes: [], renderPose: null, variant, poses: poseCount }
 window.__ab = state
 
 function applyPose(index) {
