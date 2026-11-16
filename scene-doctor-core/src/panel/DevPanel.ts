@@ -63,6 +63,7 @@ export class DevPanel<TContext> {
       list: () => session.list().map((d) => ({ id: d.id, value: d.value })),
       set: (id, value) => session.set(id, value),
       edits: () => session.edits(),
+      driven: () => session.driven(),
       scan: () => this.scan(),
       export: (format = 'json') => this.exportText(format),
       reset: () => session.reset(),

@@ -7,8 +7,8 @@ labels: enhancement
 
 ## Package
 
-Which `@triforge/*` package should this live in? If you're not sure, check the "What
-Belongs Where" table in the root `CLAUDE.md`, or leave this blank and we'll help place it.
+Which `@triforge/*` package should this live in? If you're not sure, check the package table in the
+README, or leave this blank and we'll help place it.
 
 ## Blender equivalent (if any)
 

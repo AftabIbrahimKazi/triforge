@@ -76,9 +76,80 @@ export const unloadedTexture: Rule<ThreeSceneContext> = {
   },
 }
 
+const MAX_TEXTURE_SIZE = 4096
+const MAX_SHADOW_MAP_SIZE = 4096
+
+interface SizedImage {
+  width?: number
+  height?: number
+}
+
+function isPowerOfTwo(value: number): boolean {
+  return value > 0 && (value & (value - 1)) === 0
+}
+
+export const oversizedTexture: Rule<ThreeSceneContext> = {
+  id: 'oversized-texture',
+  check(context, emit) {
+    walkScene(context.scene, (node, path) => {
+      for (const material of asMaterialList(node.material)) {
+        for (const [slot, value] of Object.entries(material)) {
+          const texture = value as SceneTexture | null | undefined // probing an arbitrary material slot; isTexture check below narrows it
+          if (!texture || texture.isTexture !== true || !texture.image) continue
+          const { width, height } = texture.image as SizedImage // image shape differs per loader; only the size fields are read
+          if (typeof width !== 'number' || typeof height !== 'number') continue
+          if (Math.max(width, height) > MAX_TEXTURE_SIZE) {
+            emit({
+              rule: 'oversized-texture',
+              severity: 'warn',
+              path,
+              message: `texture in slot "${slot}" is ${width}x${height}`,
+              cause: 'downscale or compress it; many mobile GPUs cap at 4096 and it costs memory',
+            })
+          } else if (!isPowerOfTwo(width) || !isPowerOfTwo(height)) {
+            emit({
+              rule: 'npot-texture',
+              severity: 'info',
+              path,
+              message: `texture in slot "${slot}" is ${width}x${height}, not a power of two`,
+              cause: 'mipmaps and repeat wrapping can be slower or unsupported on older devices',
+            })
+          }
+        }
+      }
+    })
+  },
+}
+
+export const oversizedShadowMap: Rule<ThreeSceneContext> = {
+  id: 'oversized-shadow-map',
+  check(context, emit) {
+    walkScene(context.scene, (node, path) => {
+      const size = node.shadow?.mapSize
+      if (!size || Math.max(size.x, size.y) <= MAX_SHADOW_MAP_SIZE) return
+      emit({
+        rule: 'oversized-shadow-map',
+        severity: 'warn',
+        path,
+        message: `shadow map is ${size.x}x${size.y}`,
+        cause: 'each light shadow map this large costs tens of MB of GPU memory; use 2048 or tighter shadow camera bounds',
+      })
+    })
+  },
+}
+
 export const sceneRules: Array<Rule<ThreeSceneContext>> = [
+
   nonFiniteGeometry,
+
   nonFiniteTransform,
+
   zeroScale,
+
   unloadedTexture,
+
+  oversizedTexture,
+
+  oversizedShadowMap,
+
 ]

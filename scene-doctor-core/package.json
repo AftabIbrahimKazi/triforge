@@ -28,7 +28,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "node test/run-tests.js && node test/run-tests-b.js && node test/run-tests-c.js",
+    "test": "node test/run-tests.js && node test/run-tests-b.js && node test/run-tests-c.js && node test/run-tests-d.js",
     "bench": "node bench/run-bench.js"
   },
   "keywords": [
